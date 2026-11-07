@@ -1,0 +1,8 @@
+node_modules/
+dist/
+dist-electron/
+release/
+data/
+.env
+infra/entra-ergebnis.env
+infra/desktop-config.json
