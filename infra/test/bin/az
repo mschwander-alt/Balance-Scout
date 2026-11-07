@@ -1,2 +1,3 @@
 #!/bin/sh
-exec python3 /work/bs/infra/test/fake-az.py "$@"
+# Leitet Aufrufe an die nachgebildete Azure CLI weiter (Pfad relativ zu dieser Datei)
+exec python3 "$(dirname "$0")/../fake-az.py" "$@"
