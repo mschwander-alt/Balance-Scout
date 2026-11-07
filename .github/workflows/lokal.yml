@@ -22,7 +22,9 @@ jobs:
       - name: App – bauen
         working-directory: app
         run: |
-          npm ci --install-links
+          npm ci
+          # Engine als echte Kopie statt Verknüpfung einbinden (nötig fürs Verpacken)
+          npm install --install-links --no-save
           npm run typecheck
           npm run build
       - name: App – Ende-zu-Ende (echtes Fenster, Hintergrundprozess, Texterkennung, Ablage)
@@ -50,7 +52,8 @@ jobs:
       - name: App bauen
         working-directory: app
         run: |
-          npm ci --install-links
+          npm ci
+          npm install --install-links --no-save
           npm run build
       - name: Installer erzeugen (MSI + EXE)
         working-directory: app
