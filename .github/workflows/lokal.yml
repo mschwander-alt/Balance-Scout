@@ -8,6 +8,7 @@ jobs:
   tests:
     name: Engine und App testen (Linux)
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -40,6 +41,7 @@ jobs:
     name: Windows-Installer bauen und prüfen
     needs: tests
     runs-on: windows-latest
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -57,6 +59,7 @@ jobs:
           npm run build
       - name: Installer erzeugen (MSI + EXE)
         working-directory: app
+        timeout-minutes: 20
         shell: pwsh
         env:
           WIN_CERT_PFX_BASE64: ${{ secrets.WIN_CERT_PFX_BASE64 }}
@@ -72,6 +75,9 @@ jobs:
           npx electron-builder --win --x64 --publish never
       - name: Installierte Windows-Version prüfen (kompletter Lauf inkl. Texterkennung)
         working-directory: app
+        timeout-minutes: 10
+        env:
+          DEBUG: pw:browser
         run: node test/e2e/packaged.e2e.mjs "release/win-unpacked/Balance Scout.exe"
       - uses: actions/upload-artifact@v4
         with:
