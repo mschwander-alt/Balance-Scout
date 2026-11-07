@@ -52,7 +52,11 @@ let currentRunId: string | null = null;
 
 function getEngine(): UtilityProcess {
   if (engine) return engine;
-  const p = utilityProcess.fork(enginePath(), [], { serviceName: 'Balance Scout Prüf-Engine', stdio: 'inherit' });
+  // Eigene Ausgabekanäle (nicht 'inherit'): sonst hält der Hintergrundprozess unter Windows
+  // die Kanäle der App offen, und das Beenden wirkt unvollständig.
+  const p = utilityProcess.fork(enginePath(), [], { serviceName: 'Balance Scout Prüf-Engine', stdio: 'pipe' });
+  p.stdout?.on('data', (d: Buffer) => process.stdout.write(`[engine] ${d}`));
+  p.stderr?.on('data', (d: Buffer) => process.stderr.write(`[engine] ${d}`));
   p.on('message', (m: { id?: string; kind: string; progress?: Progress; result?: unknown; error?: string }) => {
     if (m.kind === 'progress' && m.progress) {
       win?.webContents.send('bsb:progress', m.progress);

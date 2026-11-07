@@ -57,11 +57,30 @@ assert.match(denied, /nur für Belege der geöffneten Prüfung/);
 console.log('Vorschau ok, fremde Datei abgewiesen');
 mark('App wird beendet');
 const pid = app.process().pid;
-// Regulär beenden; falls das nicht innert 20 s gelingt, gilt das als Fehler (App bliebe im Hintergrund hängen)
-const closed = await Promise.race([app.close().then(() => true), new Promise(r => setTimeout(() => r(false), 20_000))]);
-if (!closed) {
+const alive = id => { try { process.kill(id, 0); return true; } catch { return false; } };
+const listApp = async () => {
+  const cp = await import('node:child_process');
+  try {
+    return process.platform === 'win32'
+      ? cp.execSync('tasklist /FI "IMAGENAME eq Balance Scout.exe" /FO CSV /NH').toString().trim()
+      : cp.execSync('pgrep -af balance-scout-lokal || true').toString().trim();
+  } catch { return '(Liste nicht verfügbar)'; }
+};
+// Wie ein Benutzer: App zum Beenden auffordern und prüfen, ob der Prozess wirklich verschwindet
+await app.evaluate(({ app }) => app.quit()).catch(() => {});
+let gone = false;
+for (let i = 0; i < 40 && !gone; i++) {
+  await new Promise(r => setTimeout(r, 500));
+  gone = !alive(pid);
+}
+step(`App-Prozess beendet: ${gone ? 'ja' : 'NEIN'}`);
+const rest = await listApp();
+if (rest && !/INFO:|Keine Aufgaben|No tasks/i.test(rest)) step(`Noch laufende Balance-Scout-Prozesse:\n${rest}`);
+// Verbindung des Testwerkzeugs lösen, ohne auf offene Kanäle zu warten
+await Promise.race([app.close().catch(() => {}), new Promise(r => setTimeout(r, 5000))]);
+if (!gone) {
   try { process.platform === 'win32' ? (await import('node:child_process')).execSync(`taskkill /PID ${pid} /T /F`) : process.kill(pid, 'SIGKILL'); } catch {}
-  console.error('FEHLER: App hat sich nicht innert 20 s beendet.');
+  console.error('FEHLER: App-Prozess hat sich nach "Beenden" nicht innert 20 s beendet.');
   process.exit(1);
 }
 mark('Beendet');
