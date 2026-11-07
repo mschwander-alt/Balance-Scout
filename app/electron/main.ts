@@ -267,6 +267,12 @@ app.on('second-instance', showWindow);
 app.on('before-quit', () => {
   quitting = true;
   engine?.kill();
+  engine = null;
+  tray?.destroy();
+  tray = null;
+  // Sicherheitsnetz (v. a. Windows): falls sich die App nicht innert 3 s selbst beendet, hart beenden,
+  // damit kein unsichtbarer Prozess zurückbleibt.
+  setTimeout(() => app.exit(0), 3000).unref();
 });
 app.on('window-all-closed', () => {
   if (!settings().autoStart) app.quit();
