@@ -60,10 +60,39 @@ assert.match(kpis[4], /4 mit Texterkennung/);
 const stored = JSON.parse(readFileSync(readdirSync(userData).filter(f => f.startsWith('result-')).map(f => path.join(userData, f))[0], 'utf8'));
 const errs = stored.documents.filter(d => d.status === 'error').map(d => d.relPath);
 assert.deepEqual(errs, ['Diverses/defekt.pdf'], 'nur die absichtlich defekte Datei darf fehlschlagen: ' + JSON.stringify(stored.documents.filter(d => d.status === 'error').map(d => [d.relPath, d.warnings])));
-await page.getByRole('cell', { name: 'Bank UBS Kontokorrent' }).click();
-await page.getByText('Fundstelle', { exact: true }).waitFor();
-assert.match(await page.locator('.panel').innerText(), /Schlusssaldo zu Ihren Gunsten/);
-await page.screenshot({ path: `${shots}-5-detail.png` });
+// Belegvorschau mit markierter Fundstelle – je Belegart
+const pv = async (konto, sel, file, shot) => {
+  await page.getByRole('cell', { name: konto, exact: true }).click();
+  await page.locator('.preview-panel ' + sel).first().waitFor({ state: 'visible', timeout: 30_000 });
+  assert.match(await page.locator('.preview-panel .cand-head').innerText(), new RegExp(file.replace(/[.]/g, '\\.')));
+  if (shot) await page.screenshot({ path: `${shots}-${shot}.png` });
+  step(`Vorschau ${konto}: ${sel} sichtbar`);
+};
+await pv('Bank UBS Kontokorrent', '.hl-box', 'Bank/UBS/Kontoauszug.pdf', '5-vorschau-pdf');
+await pv('Kasse', '.hl-box', 'Kasse/IMG_4471.jpg', '5b-vorschau-foto');
+await pv('Bank ZKB Privatkonto', '.hl-box', 'Bank/ZKB/Scan_20260112.pdf', '5c-vorschau-scan');
+await pv('Forderungen aus Lieferungen und Leistungen', 'tr.hl-row', 'OP_Debitoren', '5d-vorschau-excel');
+await pv('Verbindlichkeiten aus Lieferungen und Leistungen', '.textdoc .hl-row', 'Kreditoren_OP.docx', '5e-vorschau-word');
+// Markierung liegt im sichtbaren Bereich der Vorschau (automatisch hingescrollt)
+const inView = await page.evaluate(() => {
+  const m = document.querySelector('.preview-panel .hl-row'); const v = document.querySelector('.viewer-body');
+  const a = m.getBoundingClientRect(), b = v.getBoundingClientRect(); return a.top >= b.top - 2 && a.bottom <= b.bottom + 2;
+});
+assert.ok(inView, 'Fundstelle muss im sichtbaren Bereich sein');
+// Pfeiltaste: nächstes Konto, Vorschau folgt
+const before = await page.locator('.preview-panel h3').innerText();
+await page.keyboard.press('ArrowDown');
+await page.waitForFunction(b => document.querySelector('.preview-panel h3')?.textContent !== b, before);
+step(`Pfeiltaste: ${before} → ${await page.locator('.preview-panel h3').innerText()}`);
+// Seitenwechsel im PDF und zurück zur Fundstelle
+await page.getByRole('cell', { name: 'Bank UBS Kontokorrent', exact: true }).click();
+await page.locator('.preview-panel .hl-box').waitFor();
+await page.getByRole('button', { name: 'vorherige Seite' }).click();
+await page.getByText('zur Fundstelle').waitFor();
+assert.equal(await page.locator('.preview-panel .hl-box').count(), 0);
+await page.getByText('zur Fundstelle').click();
+await page.locator('.preview-panel .hl-box').waitFor();
+step('Seitenwechsel und zurück zur Fundstelle');
 await page.getByRole('tab', { name: 'Belegverzeichnis' }).click();
 await page.getByText('IMG_4471.jpg').waitFor();
 await page.screenshot({ path: `${shots}-6-belege.png` });

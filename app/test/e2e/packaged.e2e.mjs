@@ -35,5 +35,12 @@ assert.deepEqual([result.summary.counts.BELEGT, result.summary.counts.PRUEFEN, r
 assert.equal(ocr, 4);
 assert.deepEqual(errs, ['Diverses/defekt.pdf']);
 assert.equal(readdirSync(target).filter(f => f.endsWith('.xlsx')).length, 1);
+// Belegvorschau in der verpackten App (Scan-PDF -> Bild) und Schutz gegen fremde Dateien
+const scan = result.documents.find(d => d.relPath === 'Bank/ZKB/Scan_20260112.pdf');
+const pv = await win.evaluate(p => window.bsb.engine.filePreview(p, 1), scan.placement.newPath);
+assert.equal(pv.kind, 'image');
+const denied = await win.evaluate(() => window.bsb.engine.filePreview('/etc/passwd', 1).then(() => 'erlaubt', e => e.message));
+assert.match(denied, /nur für Belege der geöffneten Prüfung/);
+console.log('Vorschau ok, fremde Datei abgewiesen');
 await app.close();
 console.log('VERPACKTE APP: ALLE PRÜFUNGEN BESTANDEN');

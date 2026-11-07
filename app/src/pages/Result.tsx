@@ -1,8 +1,10 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { bsb } from '../bridge';
 import type { AccountRow, AuditResult, DocRow, Status } from '../types';
 import { chf, date, pct } from '../format';
 import { FLAG_LABEL, StatusBadge, useToast } from '../components/ui';
+import { DocumentPreview } from '../components/DocumentPreview';
+import type { Best } from '../types';
 
 type Tab = 'konten' | 'belege' | 'saldobilanz' | 'diagnose';
 
@@ -19,6 +21,24 @@ export function Result({ result, onRepeat }: { result: AuditResult; onRepeat?: (
     [result.documents, docFilter],
   );
   const sel = result.accounts.find(a => a.accountNumber === open) ?? null;
+  // ↑/↓ wechselt das Konto in der gefilterten Liste; Esc schliesst die Vorschau
+  useEffect(() => {
+    if (tab !== 'konten') return;
+    const h = (e: KeyboardEvent) => {
+      if ((e.target as HTMLElement)?.tagName === 'INPUT') return;
+      if (e.key === 'Escape') return setOpen(null);
+      if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
+      e.preventDefault();
+      const i = accounts.findIndex(a => a.accountNumber === open);
+      const next = accounts[Math.min(accounts.length - 1, Math.max(0, i + (e.key === 'ArrowDown' ? 1 : -1)))];
+      if (next) {
+        setOpen(next.accountNumber);
+        document.querySelector(`[data-konto="${next.accountNumber}"]`)?.scrollIntoView({ block: 'nearest' });
+      }
+    };
+    window.addEventListener('keydown', h);
+    return () => window.removeEventListener('keydown', h);
+  }, [tab, accounts, open]);
   const target = result.documents.find(d => d.placement?.newPath)?.placement?.newPath;
   const ocrDocs = result.documents.filter(d => d.ocrPages > 0).length;
   const problemDocs = result.documents.filter(d => d.status !== 'ok').length;
@@ -47,7 +67,7 @@ export function Result({ result, onRepeat }: { result: AuditResult; onRepeat?: (
       </nav>
 
       {tab === 'konten' && (
-        <div className={`result-layout ${sel ? '' : 'nopanel'}`}>
+        <div className={`result-layout ${sel ? 'withpreview' : 'nopanel'}`}>
           <div className="stack">
             <div className="row filter">
               {(['ALLE', 'BELEGT', 'PRUEFEN', 'KEIN_NACHWEIS', 'NULLSALDO', 'NICHT_IM_UMFANG'] as const).map(f => (
@@ -59,7 +79,7 @@ export function Result({ result, onRepeat }: { result: AuditResult; onRepeat?: (
                 <thead><tr><th>Konto</th><th>Bezeichnung</th><th className="num">Saldo</th><th>Status</th><th>Datei</th><th>Seite</th><th>Hinweise</th></tr></thead>
                 <tbody>
                   {accounts.map(a => (
-                    <tr key={a.accountNumber} className={open === a.accountNumber ? 'selected' : ''} onClick={() => setOpen(a.accountNumber)}>
+                    <tr key={a.accountNumber} data-konto={a.accountNumber} className={open === a.accountNumber ? 'selected' : ''} onClick={() => setOpen(a.accountNumber)}>
                       <td className="mono">{a.accountNumber}</td>
                       <td>{a.accountName}</td>
                       <td className="num mono">{chf(a.balance)}</td>
@@ -73,7 +93,7 @@ export function Result({ result, onRepeat }: { result: AuditResult; onRepeat?: (
               </table>
             </div>
           </div>
-          {sel && <AccountPanel a={sel} onClose={() => setOpen(null)} />}
+          {sel && <AccountPanel key={sel.accountNumber} a={sel} onClose={() => setOpen(null)} />}
         </div>
       )}
 
@@ -136,31 +156,50 @@ function DocLine({ d }: { d: DocRow }) {
 }
 
 function AccountPanel({ a, onClose }: { a: AccountRow; onClose: () => void }) {
-  const b = a.best;
-  const file = b?.newPath ?? b?.absPath ?? null;
+  const found = a.status === 'BELEGT' || a.status === 'PRUEFEN';
+  const all: Best[] = found && a.best ? [a.best, ...a.candidates] : a.candidates;
+  const [idx, setIdx] = useState(0);
+  const c = all[idx];
+  const file = c ? c.newPath ?? c.absPath : null;
   return (
-    <aside className="panel">
+    <aside className="panel preview-panel">
       <header className="panel-head">
-        <div><h3>{a.accountNumber} {a.accountName}</h3><p className="mono">{chf(a.balance)}{a.balancePreviousYear !== null && <span className="muted small"> · VJ {chf(a.balancePreviousYear)}</span>}</p></div>
-        <button className="icon-btn" aria-label="Schliessen" onClick={onClose}>✕</button>
+        <div>
+          <h3>{a.accountNumber} {a.accountName}</h3>
+          <p className="mono">{chf(a.balance)}{a.balancePreviousYear !== null && <span className="muted small"> · VJ {chf(a.balancePreviousYear)}</span>} <StatusBadge status={a.status} /></p>
+        </div>
+        <button className="icon-btn" aria-label="Schliessen (Esc)" onClick={onClose}>✕</button>
       </header>
-      <section><StatusBadge status={a.status} /><ul className="reasons">{a.reasons.map((r, i) => <li key={i}>{r}</li>)}</ul></section>
-      {b && (a.status === 'BELEGT' || a.status === 'PRUEFEN') && (
-        <div className="cand">
-          <h4>Fundstelle</h4>
-          <div className="cand-head"><span>{b.relPath ?? b.filename} · {b.pageLabel ?? `S. ${b.page}`} · Z. {b.lineNo}{b.source !== 'text-layer' ? ' · Texterkennung' : ''}</span><span className="score" title="Punktzahl">{b.score}</span></div>
-          <pre className="line">{b.line}</pre>
-          <p className="small">Beleg {chf(b.evidenceCents)} · Differenz {chf(b.differenceCents)}</p>
-          <ul className="reasons small">{b.reasons.map((r, i) => <li key={i}>{r}</li>)}</ul>
-          {file && <button className="btn btn-sm" onClick={() => bsb().app.openPath(file)}>Beleg öffnen</button>}
+      {a.reasons.length > 0 && <ul className="reasons small">{a.reasons.map((r, i) => <li key={i}>{r}</li>)}</ul>}
+      {all.length > 1 && (
+        <div className="row filter">
+          {all.map((x, i) => (
+            <button key={i} className={`chip ${i === idx ? 'active' : ''}`} onClick={() => setIdx(i)} title={x.line}>
+              {i === 0 && found ? 'Fundstelle' : `Weitere ${found ? i : i + 1}`} · {x.filename} S.{x.page}
+            </button>
+          ))}
         </div>
       )}
-      {a.candidates.length > 0 && (
-        <details><summary>{a.candidates.length} weitere Fundstelle(n)</summary>
-          {a.candidates.map((c, i) => <div key={i} className="cand"><div className="cand-head"><span>{c.filename} · S. {c.page}</span><span className="score">{c.score}</span></div><pre className="line">{c.line}</pre></div>)}
-        </details>
+      {c && file ? (
+        <>
+          <div className="cand-head small">
+            <span title={c.relPath ?? ''}>{c.relPath ?? c.filename} · {c.pageLabel ?? `S. ${c.page}`} · Z. {c.lineNo}{c.source !== 'text-layer' ? ' · Texterkennung' : ''}</span>
+            <span className="score" title="Punktzahl">{c.score}</span>
+          </div>
+          <div className="small">
+            Beleg <strong className="mono">{chf(c.evidenceCents)}</strong> · Differenz <span className="mono">{chf(c.differenceCents)}</span>
+            {c.flags.map(f => <span key={f} className="flag" style={{ marginLeft: 6 }}>{FLAG_LABEL[f] ?? f}</span>)}
+          </div>
+          <DocumentPreview file={file} page={c.page} lineNo={c.lineNo} bbox={c.bbox} line={c.line} />
+          <div className="row">
+            <button className="btn btn-sm" onClick={() => bsb().app.openPath(file)}>Beleg öffnen</button>
+            <details className="small"><summary>Begründung</summary><ul className="reasons">{c.reasons.map((r, i) => <li key={i}>{r}</li>)}</ul></details>
+          </div>
+        </>
+      ) : (
+        <p className="muted">{a.status === 'KEIN_NACHWEIS' ? 'Kein passender Betrag in den Unterlagen gefunden.' : 'Für dieses Konto ist kein Nachweis nötig.'}</p>
       )}
-      <p className="small muted">Prüfer-Entscheid und Kommentar werden in der Excel-Dokumentation (grüne Spalten) erfasst.</p>
+      <p className="small muted">↑/↓ nächstes Konto · Esc schliessen · Prüfer-Entscheid in der Excel-Dokumentation (grüne Spalten).</p>
     </aside>
   );
 }

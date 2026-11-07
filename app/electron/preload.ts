@@ -13,6 +13,7 @@ const bridge: BsbBridge & { app: BsbBridge['app'] & { loadResult(id: string): Pr
     previewTrialBalance: (p, s, m) => ipcRenderer.invoke('engine:preview', p, s, m),
     run: input => ipcRenderer.invoke('engine:run', input),
     cancel: () => ipcRenderer.invoke('engine:cancel'),
+    filePreview: (p: string, page: number) => ipcRenderer.invoke('engine:filePreview', p, page),
     onProgress: cb => {
       const h = (_e: IpcRendererEvent, p: Progress) => cb(p);
       ipcRenderer.on('bsb:progress', h);

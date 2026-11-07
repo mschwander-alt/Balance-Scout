@@ -1,14 +1,15 @@
 export type Status = 'BELEGT' | 'PRUEFEN' | 'KEIN_NACHWEIS' | 'NULLSALDO' | 'NICHT_IM_UMFANG';
 
+export interface BBox { x0: number; y0: number; x1: number; y1: number }
 export interface Best {
   documentId: string; filename: string; page: number; lineNo: number; source: string; line: string; raw: string;
   evidenceCents: number; differenceCents: number; kind: string; score: number; flags: string[]; reasons: string[];
-  relPath: string | null; absPath: string | null; newPath: string | null; pageLabel: string | null;
+  relPath: string | null; absPath: string | null; newPath: string | null; pageLabel: string | null; ext: string | null; bbox?: BBox;
 }
 export interface AccountRow {
   accountNumber: string; accountName: string; groupName: string | null; category: string;
   balance: number; balancePreviousYear: number | null; status: Status; reasons: string[];
-  best: Best | null; candidates: { filename: string; page: number; line: string; score: number; evidenceCents: number; flags: string[] }[];
+  best: Best | null; candidates: Best[];
 }
 export interface DocRow {
   id: string; filename: string; relPath: string; absPath: string; ext: string; size: number; status: string; method: string;

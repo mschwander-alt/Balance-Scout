@@ -95,6 +95,20 @@ function resetActivity(): void {
   setActivity(null);
 }
 
+// ------------------------------------------------------------------ Belegvorschau
+/** Nur Dateien der geöffneten Prüfung dürfen in der Vorschau angezeigt werden */
+const previewAllowed = new Set<string>();
+const previewCache = new Map<string, unknown>();
+function allowPreviewFor(result: unknown): void {
+  previewAllowed.clear();
+  previewCache.clear();
+  const docs = (result as { documents?: { absPath?: string; placement?: { newPath?: string | null } | null }[] } | null)?.documents ?? [];
+  for (const d of docs) {
+    if (d.absPath) previewAllowed.add(path.resolve(d.absPath));
+    if (d.placement?.newPath) previewAllowed.add(path.resolve(d.placement.newPath));
+  }
+}
+
 // ------------------------------------------------------------------ Fenster & Taskleiste
 function createWindow(): void {
   win = new BrowserWindow({
@@ -196,6 +210,7 @@ function registerIpc(): void {
       };
       writeJson('history.json', [entry, ...history().filter(h => h.excelPath !== entry.excelPath)].slice(0, 50));
       writeJson(`result-${currentRunId}.json`, result);
+      allowPreviewFor(result);
       if (settings().notifications && Notification.isSupported() && !win?.isFocused()) {
         const n = new Notification({ title: 'Prüfung abgeschlossen', body: `${input.mandate}: ${result.summary.counts.BELEGT} belegt, ${result.summary.counts.PRUEFEN} prüfen, ${result.summary.counts.KEIN_NACHWEIS} ohne Nachweis.`, icon: res('build', 'icon.png') });
         n.on('click', showWindow);
@@ -221,7 +236,22 @@ function registerIpc(): void {
     updateTray();
     return h;
   });
-  ipcMain.handle('app:loadResult', (_e, id: string) => readJson<unknown>(`result-${id}.json`, null));
+  ipcMain.handle('app:loadResult', (_e, id: string) => {
+    const r = readJson<unknown>(`result-${id}.json`, null);
+    allowPreviewFor(r);
+    return r;
+  });
+  ipcMain.handle('engine:filePreview', async (_e, p: string, page: number) => {
+    const abs = path.resolve(p);
+    if (!previewAllowed.has(abs)) throw new Error('Vorschau nur für Belege der geöffneten Prüfung.');
+    if (!existsSync(abs)) throw new Error('Datei nicht mehr vorhanden (verschoben oder gelöscht).');
+    const key = `${abs}#${page}`;
+    if (previewCache.has(key)) return previewCache.get(key);
+    const pv = await call<unknown>({ type: 'preview', absPath: abs, page });
+    previewCache.set(key, pv);
+    if (previewCache.size > 40) previewCache.delete(previewCache.keys().next().value!);
+    return pv;
+  });
   ipcMain.handle('app:settings', () => settings());
   ipcMain.handle('app:saveSettings', (_e, s: Partial<AppSettings>) => {
     const next = { ...settings(), ...s };

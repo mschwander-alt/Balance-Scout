@@ -49,6 +49,12 @@ export interface TbPreview {
   } | null;
 }
 
+export type FilePreview =
+  | { kind: 'image'; dataUrl: string; width: number; height: number; page: number; pageCount: number; pageLabel?: string }
+  | { kind: 'table'; rows: string[][]; page: number; pageCount: number; pageLabel?: string; truncated: boolean }
+  | { kind: 'text'; lines: string[]; page: number; pageCount: number }
+  | { kind: 'unsupported'; message: string; page: number; pageCount: number };
+
 export interface HistoryEntry {
   id: string;
   at: string;
@@ -82,6 +88,8 @@ export interface BsbBridge {
     previewTrialBalance(path: string, signConvention: SignConvention, mapping?: TbPreview['detected']): Promise<TbPreview>;
     run(input: JobInput): Promise<unknown>;
     cancel(): Promise<void>;
+    /** Vorschau einer Belegseite (nur Belege der geöffneten Prüfung) */
+    filePreview(path: string, page: number): Promise<FilePreview>;
     onProgress(cb: (p: Progress) => void): () => void;
   };
   app: {
