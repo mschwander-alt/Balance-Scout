@@ -1,0 +1,24 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: bsb
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-bsb}
+      POSTGRES_DB: bsb
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U bsb"]
+      interval: 5s
+      retries: 10
+  server:
+    build: .
+    depends_on:
+      db: { condition: service_healthy }
+    environment:
+      DATABASE_URL: postgresql://bsb:${POSTGRES_PASSWORD:-bsb}@db:5432/bsb
+      API_TOKENS: ${API_TOKENS:?API_TOKENS setzen, z. B. "meintoken:m.schwander"}
+    volumes: [files:/data/files]
+    ports: ["8080:8080"]
+volumes:
+  pgdata:
+  files:
