@@ -1,0 +1,32 @@
+name: Windows-Installer
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - name: Abhängigkeiten
+        working-directory: desktop
+        run: npm ci
+      - name: Tests
+        working-directory: desktop
+        run: npm test
+      - name: Installer bauen (MSI + EXE)
+        working-directory: desktop
+        run: npm run dist:win
+        env:
+          # Optional: Code-Signatur (z. B. Azure Trusted Signing oder PFX-Zertifikat)
+          CSC_LINK: ${{ secrets.WIN_CERT_PFX_BASE64 }}
+          CSC_KEY_PASSWORD: ${{ secrets.WIN_CERT_PASSWORD }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: balance-scout-windows
+          path: |
+            desktop/release/*.msi
+            desktop/release/*.exe
