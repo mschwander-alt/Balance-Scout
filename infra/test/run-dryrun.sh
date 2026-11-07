@@ -41,3 +41,9 @@ assert env['WORKIQ_CONFIGURED'] == ('true' if wiq else 'false') and env['API_CLI
 assert stat.S_IMODE(os.stat(sys.argv[2]).st_mode) == 0o600, 'Ergebnisdatei muss nur für den Besitzer lesbar sein'
 print(f"Trockenlauf OK (Work IQ {'aktiv' if wiq else 'nicht aktiviert'}): 2 Apps, Rollen, Scopes, Vorautorisierung, WAM-Umleitung, Zustimmung, Zuweisungen, Datei 600")
 PY
+
+# Fehlerfälle (fehlende Rechte, falsches Verzeichnis) einmal mitprüfen
+if [[ "$FAKE_WORKIQ" == "1" ]]; then
+  bash ./run-failcases.sh >/dev/null || { echo "Fehlerfälle NICHT OK – Details: ./test/run-failcases.sh" >&2; exit 1; }
+  echo "Fehlerfälle OK: Abbruch ohne Änderungen bei fehlender Rolle und bei verweigertem Zugriff"
+fi

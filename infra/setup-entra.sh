@@ -39,39 +39,95 @@ GRAPH="https://graph.microsoft.com/v1.0"
 GRAPH_APP_ID="00000003-0000-0000-c000-000000000000"
 uuid() { cat /proc/sys/kernel/random/uuid; }
 step() { echo; echo "▶ $*"; }
+die() { echo; echo "✗ $*" >&2; exit 1; }
 
-TENANT_ID="$(az account show --query tenantId -o tsv)"
-step "Tenant: ${TENANT_ID}"
+# Graph-Aufruf mit verständlicher Fehlermeldung; bricht bei jedem Fehler ab
+graph() {
+  local method="$1" url="$2" body="${3:-}" out
+  if [[ -n "$body" ]]; then
+    out="$(az rest --method "$method" --url "${GRAPH}${url}" --body "$body" 2>&1)" || graph_fail "$method $url" "$out"
+  else
+    out="$(az rest --method "$method" --url "${GRAPH}${url}" 2>&1)" || graph_fail "$method $url" "$out"
+  fi
+  printf '%s' "$out"
+}
+graph_fail() {
+  local what="$1" out="$2"
+  if grep -q "Authorization_RequestDenied\|Insufficient privileges" <<<"$out"; then
+    die "Keine Berechtigung für: ${what}
+  Ihr Konto hat in diesem Verzeichnis nicht die nötige Administratorrolle.
+  Benötigt: Globaler Administrator – oder Anwendungsadministrator UND Administrator für privilegierte Rollen.
+  Falls die Rolle über Privileged Identity Management (PIM) zugewiesen ist: zuerst aktivieren."
+  fi
+  die "Fehler bei ${what}:
+$(grep -o '"message":"[^"]*"' <<<"$out" | head -1 | sed 's/"message":"//;s/"$//')"
+}
+
+TENANT_ID="$(az account show --query tenantId -o tsv)" || die "Nicht bei Azure angemeldet (az login)."
+
+# ---------------------------------------------------------------- Vorabprüfung
+step "Vorabprüfung"
+ORG="$(graph GET "/organization?\$select=displayName,verifiedDomains")"
+ORG_NAME="$(jq -r '.value[0].displayName' <<<"$ORG")"
+DOMAINS="$(jq -r '[.value[0].verifiedDomains[].name] | join(", ")' <<<"$ORG")"
+ME_UPN="$(graph GET "/me?\$select=userPrincipalName" | jq -r .userPrincipalName)"
+echo "  Verzeichnis: ${ORG_NAME} (${TENANT_ID})"
+echo "  Domänen:     ${DOMAINS}"
+echo "  Angemeldet:  ${ME_UPN}"
+if [[ "$DOMAINS" != *.* || "$DOMAINS" =~ ^[^,]*\.onmicrosoft\.com$ ]]; then
+  echo "  ⚠ Dieses Verzeichnis hat nur eine onmicrosoft.com-Domäne. Ist das wirklich das Verzeichnis eurer"
+  echo "    Microsoft-365-Konten? Ein Testabo legt manchmal ein neues, leeres Verzeichnis an."
+fi
+if [[ "$ME_UPN" == *"#EXT#"* ]]; then
+  echo "  ⚠ Sie sind hier als Gastbenutzer angemeldet – vermutlich das falsche Verzeichnis."
+fi
+# Rollen-Vorlagen-IDs (fest bei Microsoft)
+GA="62e90394-69f5-4237-9190-012177145e10"; APPADM="9b895d92-2cd3-44c7-9d02-a6ac2d5ea5c3"
+CLOUDAPP="158c047a-c907-4556-b7ef-446551a6b5f7"; PRA="e8611ab8-c189-46e8-94e1-60213ab1f814"
+ROLES="$(graph GET "/me/memberOf/microsoft.graph.directoryRole?\$select=displayName,roleTemplateId" | jq -r '[.value[].roleTemplateId] | join(" ")')"
+has() { [[ " $ROLES " == *" $1 "* ]]; }
+if has "$GA"; then
+  echo "  Rolle:       Globaler Administrator ✓"
+elif (has "$APPADM" || has "$CLOUDAPP") && has "$PRA"; then
+  echo "  Rolle:       Anwendungs- und Rollenadministrator ✓"
+else
+  die "Ihr Konto (${ME_UPN}) hat in diesem Verzeichnis nicht die nötige Rolle.
+  Benötigt: Globaler Administrator – oder Anwendungsadministrator UND Administrator für privilegierte Rollen.
+  Aktive Rollen: $(graph GET "/me/memberOf/microsoft.graph.directoryRole?\$select=displayName" | jq -r '[.value[].displayName] | if length==0 then "keine" else join(", ") end')
+  Falls die Rolle über PIM zugewiesen ist: im Entra-Portal unter 'Meine Rollen' aktivieren."
+fi
 
 # Bestehende App gleichen Namens wiederverwenden (Skript ist wiederholbar)
-find_app() { az rest --method GET --url "${GRAPH}/applications?\$filter=displayName eq '$1'&\$select=id,appId" | jq -r '.value[0] // empty | "\(.id) \(.appId)"'; }
+find_app() { graph GET "/applications?\$filter=displayName eq '$1'&\$select=id,appId" | jq -r '.value[0] // empty | "\(.id) \(.appId)"'; }
 ensure_sp() {
   local appId="$1" sp
-  sp="$(az rest --method GET --url "${GRAPH}/servicePrincipals?\$filter=appId eq '${appId}'&\$select=id" | jq -r '.value[0].id // empty')"
+  sp="$(graph GET "/servicePrincipals?\$filter=appId eq '${appId}'&\$select=id" | jq -r '.value[0].id // empty')"
   if [[ -z "$sp" ]]; then
-    sp="$(az rest --method POST --url "${GRAPH}/servicePrincipals" --body "{\"appId\":\"${appId}\"}" | jq -r '.id')"
+    sp="$(graph POST "/servicePrincipals" "{\"appId\":\"${appId}\"}" | jq -r '.id')"
   fi
   echo "$sp"
 }
 # Delegierte Berechtigung (Scope) eines Ressourcen-Service-Principals nachschlagen
 scope_id() {
   local filter="$1" scope="$2"
-  az rest --method GET --url "${GRAPH}/servicePrincipals?\$filter=${filter}&\$select=appId,oauth2PermissionScopes" |
+  graph GET "/servicePrincipals?\$filter=${filter}&\$select=appId,oauth2PermissionScopes" |
     jq -r --arg s "$scope" '.value[0] // empty | "\(.appId) \((.oauth2PermissionScopes[] | select(.value==$s) | .id) // "")"'
 }
 
 # ---------------------------------------------------------------- API-App
 step "App-Registrierung: ${API_NAME}"
-read -r API_OBJ API_APP_ID <<<"$(find_app "$API_NAME" || true)"
+FOUND="$(find_app "$API_NAME")"
+read -r API_OBJ API_APP_ID <<<"$FOUND" || true
 if [[ -z "${API_OBJ:-}" ]]; then
-  read -r API_OBJ API_APP_ID <<<"$(az rest --method POST --url "${GRAPH}/applications" \
-    --body "{\"displayName\":\"${API_NAME}\",\"signInAudience\":\"AzureADMyOrg\"}" | jq -r '"\(.id) \(.appId)"')"
+  CREATED="$(graph POST "/applications" "{\"displayName\":\"${API_NAME}\",\"signInAudience\":\"AzureADMyOrg\"}")"
+  read -r API_OBJ API_APP_ID <<<"$(jq -r '"\(.id) \(.appId)"' <<<"$CREATED")"
+  [[ -n "$API_APP_ID" && "$API_APP_ID" != null ]] || die "App '${API_NAME}' konnte nicht angelegt werden."
   echo "  angelegt: ${API_APP_ID}"
 else
   echo "  vorhanden: ${API_APP_ID}"
 fi
 
-EXISTING="$(az rest --method GET --url "${GRAPH}/applications/${API_OBJ}?\$select=api,appRoles")"
+EXISTING="$(graph GET "/applications/${API_OBJ}?\$select=api,appRoles")"
 SCOPE_ID="$(jq -r '.api.oauth2PermissionScopes[]? | select(.value=="access_as_user") | .id' <<<"$EXISTING")"
 ADMIN_ROLE_ID="$(jq -r '.appRoles[]? | select(.value=="BalanceScout.Admin") | .id' <<<"$EXISTING")"
 USER_ROLE_ID="$(jq -r '.appRoles[]? | select(.value=="BalanceScout.User") | .id' <<<"$EXISTING")"
@@ -81,19 +137,22 @@ USER_ROLE_ID="${USER_ROLE_ID:-$(uuid)}"
 API_URI="api://${API_APP_ID}"
 
 # Delegierte Rechte, die der Server im Namen des Benutzers nutzt (On-Behalf-Of)
-read -r _ SITES_RW <<<"$(scope_id "appId eq '${GRAPH_APP_ID}'" "Sites.ReadWrite.All")"
-read -r _ USER_READ <<<"$(scope_id "appId eq '${GRAPH_APP_ID}'" "User.Read")"
-read -r _ OFFLINE <<<"$(scope_id "appId eq '${GRAPH_APP_ID}'" "offline_access")"
+GRAPH_SCOPES="$(graph GET "/servicePrincipals?\$filter=appId eq '${GRAPH_APP_ID}'&\$select=oauth2PermissionScopes")"
+gscope() { jq -r --arg s "$1" '.value[0].oauth2PermissionScopes[] | select(.value==$s) | .id' <<<"$GRAPH_SCOPES"; }
+SITES_RW="$(gscope Sites.ReadWrite.All)"; USER_READ="$(gscope User.Read)"; OFFLINE="$(gscope offline_access)"
+[[ -n "$SITES_RW" && -n "$USER_READ" && -n "$OFFLINE" ]] || die "Microsoft-Graph-Berechtigungen konnten nicht ermittelt werden."
 RRA="$(jq -n --arg g "$GRAPH_APP_ID" --arg a "$SITES_RW" --arg b "$USER_READ" --arg c "$OFFLINE" \
   '[{resourceAppId:$g, resourceAccess:[{id:$a,type:"Scope"},{id:$b,type:"Scope"},{id:$c,type:"Scope"}]}]')"
 
-read -r WORKIQ_APP WORKIQ_SCOPE <<<"$(scope_id "servicePrincipalNames/any(n:n eq 'api://workiq.svc.cloud.microsoft')" "WorkIQAgent.Ask" || true)"
+WIQ="$(scope_id "servicePrincipalNames/any(n:n eq 'api://workiq.svc.cloud.microsoft')" "WorkIQAgent.Ask" 2>/dev/null || true)"
+read -r WORKIQ_APP WORKIQ_SCOPE <<<"$WIQ" || true
 if [[ -n "${WORKIQ_APP:-}" && -n "${WORKIQ_SCOPE:-}" ]]; then
   RRA="$(jq --arg r "$WORKIQ_APP" --arg s "$WORKIQ_SCOPE" '. + [{resourceAppId:$r, resourceAccess:[{id:$s,type:"Scope"}]}]' <<<"$RRA")"
   echo "  Work IQ gefunden – Berechtigung WorkIQAgent.Ask wird hinzugefügt."
 else
   WORKIQ_MISSING=1
-  echo "  ⚠ Work IQ ist im Tenant nicht aktiviert. Copilot-Funktionen erst nach Aktivierung (siehe README) – Skript danach erneut ausführen."
+  echo "  ℹ Work IQ ist (noch) nicht aktiviert – Copilot-Funktionen bleiben aus, alles andere funktioniert."
+  echo "    Nach der Aktivierung (siehe README) dieses Skript einfach erneut ausführen."
 fi
 
 BODY="$(jq -n --arg uri "$API_URI" --arg scope "$SCOPE_ID" --arg ra "$ADMIN_ROLE_ID" --arg ru "$USER_ROLE_ID" --argjson rra "$RRA" '{
@@ -114,23 +173,26 @@ BODY="$(jq -n --arg uri "$API_URI" --arg scope "$SCOPE_ID" --arg ra "$ADMIN_ROLE
   ],
   requiredResourceAccess: $rra
 }')"
-az rest --method PATCH --url "${GRAPH}/applications/${API_OBJ}" --body "$BODY" >/dev/null
+graph PATCH "/applications/${API_OBJ}" "$BODY" >/dev/null
 API_SP="$(ensure_sp "$API_APP_ID")"
 # Nur zugewiesene Benutzer/Gruppen dürfen sich anmelden
-az rest --method PATCH --url "${GRAPH}/servicePrincipals/${API_SP}" --body '{"appRoleAssignmentRequired": true}' >/dev/null
+graph PATCH "/servicePrincipals/${API_SP}" '{"appRoleAssignmentRequired": true}' >/dev/null
 echo "  Audience: ${API_URI}"
 
 step "Client-Secret für den Server (2 Jahre gültig)"
-SECRET="$(az rest --method POST --url "${GRAPH}/applications/${API_OBJ}/addPassword" \
-  --body '{"passwordCredential":{"displayName":"balance-scout-server","endDateTime":"'"$(date -u -d '+2 years' +%Y-%m-%dT%H:%M:%SZ)"'"}}' | jq -r '.secretText')"
+SECRET="$(graph POST "/applications/${API_OBJ}/addPassword" \
+  '{"passwordCredential":{"displayName":"balance-scout-server","endDateTime":"'"$(date -u -d '+2 years' +%Y-%m-%dT%H:%M:%SZ)"'"}}' | jq -r '.secretText')"
+[[ -n "$SECRET" && "$SECRET" != null ]] || die "Client-Secret konnte nicht erstellt werden."
 echo "  erstellt (wird nur in ${OUT_FILE} abgelegt – danach in den Key Vault übernehmen und Datei löschen)"
 
 # ------------------------------------------------------------ Desktop-App
 step "App-Registrierung: ${DESKTOP_NAME}"
-read -r DESK_OBJ DESK_APP_ID <<<"$(find_app "$DESKTOP_NAME" || true)"
+FOUND="$(find_app "$DESKTOP_NAME")"
+read -r DESK_OBJ DESK_APP_ID <<<"$FOUND" || true
 if [[ -z "${DESK_OBJ:-}" ]]; then
-  read -r DESK_OBJ DESK_APP_ID <<<"$(az rest --method POST --url "${GRAPH}/applications" \
-    --body "{\"displayName\":\"${DESKTOP_NAME}\",\"signInAudience\":\"AzureADMyOrg\"}" | jq -r '"\(.id) \(.appId)"')"
+  CREATED="$(graph POST "/applications" "{\"displayName\":\"${DESKTOP_NAME}\",\"signInAudience\":\"AzureADMyOrg\"}")"
+  read -r DESK_OBJ DESK_APP_ID <<<"$(jq -r '"\(.id) \(.appId)"' <<<"$CREATED")"
+  [[ -n "$DESK_APP_ID" && "$DESK_APP_ID" != null ]] || die "App '${DESKTOP_NAME}' konnte nicht angelegt werden."
   echo "  angelegt: ${DESK_APP_ID}"
 else
   echo "  vorhanden: ${DESK_APP_ID}"
@@ -140,18 +202,20 @@ DBODY="$(jq -n --arg api "$API_APP_ID" --arg scope "$SCOPE_ID" --arg cid "$DESK_
   publicClient: { redirectUris: ["http://localhost", ("ms-appx-web://Microsoft.AAD.BrokerPlugin/" + $cid)] },
   requiredResourceAccess: [{ resourceAppId: $api, resourceAccess: [{ id: $scope, type: "Scope" }] }]
 }')"
-az rest --method PATCH --url "${GRAPH}/applications/${DESK_OBJ}" --body "$DBODY" >/dev/null
+graph PATCH "/applications/${DESK_OBJ}" "$DBODY" >/dev/null
 ensure_sp "$DESK_APP_ID" >/dev/null
 
 step "Desktop-App bei der API vorab autorisieren"
-az rest --method PATCH --url "${GRAPH}/applications/${API_OBJ}" --body "$(jq -n --arg d "$DESK_APP_ID" --arg s "$SCOPE_ID" '{
+graph PATCH "/applications/${API_OBJ}" "$(jq -n --arg d "$DESK_APP_ID" --arg s "$SCOPE_ID" '{
   api: { knownClientApplications: [$d], preAuthorizedApplications: [{ appId: $d, delegatedPermissionIds: [$s] }] }
 }')" >/dev/null
 
 step "Administratorzustimmung"
 sleep 10 # Replikation in Entra abwarten
-az ad app permission admin-consent --id "$API_APP_ID" && echo "  API: erteilt"
-az ad app permission admin-consent --id "$DESK_APP_ID" && echo "  Desktop: erteilt"
+az ad app permission admin-consent --id "$API_APP_ID" >/dev/null 2>&1 && echo "  API: erteilt" \
+  || echo "  ⚠ API: Zustimmung nicht möglich – im Entra-Portal unter App-Registrierungen › ${API_NAME} › API-Berechtigungen › 'Administratorzustimmung erteilen'."
+az ad app permission admin-consent --id "$DESK_APP_ID" >/dev/null 2>&1 && echo "  Desktop: erteilt" \
+  || echo "  ⚠ Desktop: Zustimmung nicht möglich – im Entra-Portal wie oben für ${DESKTOP_NAME}."
 
 assign() {
   local group="$1" role="$2" label="$3"

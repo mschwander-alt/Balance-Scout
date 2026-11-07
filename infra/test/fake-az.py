@@ -20,6 +20,16 @@ if args[0] == 'rest':
     body = json.loads(body) if body else None
     st['log'].append([method, url.replace('https://graph.microsoft.com/v1.0', ''), body])
     path = url.replace('https://graph.microsoft.com/v1.0', '')
+    if path.startswith('/organization'):
+        out({'value': [{'displayName': os.environ.get('FAKE_ORG', 'Aumico AG'), 'verifiedDomains': [{'name': d} for d in os.environ.get('FAKE_DOMAINS', 'aumico.io,aumico.onmicrosoft.com').split(',')]}]})
+    if path.startswith('/me/memberOf'):
+        roles = [r for r in os.environ.get('FAKE_ROLES', '62e90394-69f5-4237-9190-012177145e10').split(',') if r]
+        out({'value': [{'displayName': 'Rolle ' + r[:8], 'roleTemplateId': r} for r in roles]})
+    if path.startswith('/me'):
+        out({'userPrincipalName': os.environ.get('FAKE_UPN', 'michael@aumico.io')})
+    if method == 'POST' and path == '/applications' and os.environ.get('FAKE_FORBIDDEN_CREATE') == '1':
+        st['log'].pop()  # abgelehnter Versuch ist keine Änderung
+        print('ERROR: Forbidden({"error":{"code":"Authorization_RequestDenied","message":"Insufficient privileges to complete the operation."}})', file=sys.stderr); save(); sys.exit(1)
     if method == 'GET' and path.startswith('/applications?'):
         name = path.split("displayName eq '")[1].split("'")[0]
         a = [x for x in st['apps'].values() if x['displayName'] == name]
