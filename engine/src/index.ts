@@ -4,3 +4,4 @@ export { diagnosticReport } from './report/diagnostics.js';
 export { LocalOcr, defaultLangPath } from './ingest/ocr.js';
 export { ASSIGNED_DIR, UNASSIGNED_DIR, type FileMode } from './organize/placeFiles.js';
 export { parseAmount, formatChf } from './domain/amount.js';
+export { renderPreview, type Preview } from './preview.js';

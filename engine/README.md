@@ -33,7 +33,12 @@ Zwei realistische Testsätze mit vorab festgelegter Soll-Lösung (`test/fixtures
 - **Praxisfallen**: Zufallstreffer, Betrag auf Folgezeile, deutsches Zahlenformat, Kontoüberzug,
   Beträge als Text, sehr schlechter Scan, falscher Stichtag, Saldobilanz als CSV ohne Vorzeichen – 9/9.
 
-`npm test` – 76 Tests (Beträge, Saldobilanz, Abgleich, Testsätze, Ablage, Datumserkennung, Excel, Diagnose).
+`npm test` – 92 Tests (Beträge, Saldobilanz, Abgleich, Testsätze, Ablage, Datumserkennung, Excel, Diagnose, Belegvorschau und Fundstellen-Positionen).
+
+## Belegvorschau
+`renderPreview(datei, seite)` liefert die Seite als Bild (PDF, Scan, Foto, Bild in Excel), als Tabelle (Excel, CSV)
+oder als Text (Word, TXT). Jede Fundstelle enthält ihre **Lage auf der Seite** (`bbox`, relativ 0–1) bzw. die
+Zeilennummer – so kann die App die Stelle markieren.
 
 ## Kommandozeile
 ```

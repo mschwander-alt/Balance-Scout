@@ -61,6 +61,8 @@ export interface ScoredCandidate {
   lineNo: number;
   /** Herkunft der Zeile (text-layer oder ocr:<anbieter>) */
   source: string;
+  /** Lage der Zeile auf der Seite (0–1), für die Vorschau */
+  bbox?: { x0: number; y0: number; x1: number; y1: number };
   line: string;
   raw: string;
   evidenceCents: Cents;
@@ -297,6 +299,7 @@ function scoreCandidate(
     page: c.page,
     lineNo: c.lineNo,
     source: c.source ?? 'text-layer',
+    bbox: c.bbox,
     line: c.line.slice(0, 300),
     raw: c.raw,
     evidenceCents: c.cents,

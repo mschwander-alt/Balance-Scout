@@ -8,7 +8,10 @@ import { runAudit, writeExcelReport, reportFileName, diagnosticReport, type RunI
 import { readGrid, detectMapping, parseTrialBalance, type ColumnMapping } from './domain/trialBalance/parser.js';
 import { classifyRows, validateTrialBalance, type SignConvention } from './domain/trialBalance/validate.js';
 
+import { renderPreview } from './preview.js';
+
 export type Request =
+  | { id: string; type: 'preview'; absPath: string; page: number }
   | { id: string; type: 'previewTrialBalance'; path: string; mapping?: { headerRowIndex: number; mapping: ColumnMapping }; signConvention?: SignConvention }
   | { id: string; type: 'run'; input: Omit<RunInput, 'onProgress'>; reportDir: string };
 
@@ -30,6 +33,11 @@ async function previewTrialBalance(r: Extract<Request, { type: 'previewTrialBala
 
 export function serializeResult(res: RunResult, excelPath: string, diagnostics: string) {
   const docBy = new Map(res.documents.map(d => [d.doc.id, d]));
+  // Fundstelle mit Dateipfaden und Position (für Vorschau und Markierung)
+  const withDoc = <T extends { documentId: string; page: number }>(c: T) => {
+    const doc = docBy.get(c.documentId);
+    return { ...c, relPath: doc?.doc.relPath ?? null, absPath: doc?.doc.absPath ?? null, newPath: doc?.placement?.newPath ?? null, pageLabel: doc?.doc.pageLabels[c.page] ?? null, ext: doc?.doc.ext ?? null };
+  };
   return {
     excelPath,
     diagnostics,
@@ -39,12 +47,11 @@ export function serializeResult(res: RunResult, excelPath: string, diagnostics: 
     validation: res.validation,
     accounts: res.accounts.map(a => {
       const m = res.byAccount.get(`${a.accountNumber}#${a.rowIndex}`)!;
-      const doc = m.best ? docBy.get(m.best.documentId) : undefined;
       return {
         accountNumber: a.accountNumber, accountName: a.accountName, groupName: a.groupName, category: a.category,
         balance: a.balanceCurrentYear, balancePreviousYear: a.balancePreviousYear, status: m.status, reasons: m.reasons,
-        best: m.best ? { ...m.best, relPath: doc?.doc.relPath ?? null, absPath: doc?.doc.absPath ?? null, newPath: doc?.placement?.newPath ?? null, pageLabel: doc?.doc.pageLabels[m.best.page] ?? null } : null,
-        candidates: m.candidates.slice(1).map(c => ({ filename: c.filename, page: c.page, line: c.line, score: c.score, evidenceCents: c.evidenceCents, flags: c.flags })),
+        best: m.best ? withDoc(m.best) : null,
+        candidates: m.candidates.slice(1).map(withDoc),
       };
     }),
     documents: res.documents.map(d => ({
@@ -60,6 +67,7 @@ export type SerializedResult = ReturnType<typeof serializeResult>;
 
 async function handle(req: Request): Promise<unknown> {
   if (req.type === 'previewTrialBalance') return previewTrialBalance(req);
+  if (req.type === 'preview') return renderPreview(req.absPath, req.page);
   const res = await runAudit({ ...req.input, onProgress: p => send({ id: req.id, kind: 'progress', progress: p }) });
   const excelPath = path.join(req.reportDir, reportFileName(req.input.mandate, req.input.closingDate));
   send({ id: req.id, kind: 'progress', progress: { phase: 'bericht', message: 'Excel-Dokumentation wird erstellt …' } });

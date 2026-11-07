@@ -5,6 +5,8 @@ import { fileURLToPath } from 'node:url';
 export interface OcrLine {
   text: string;
   confidence: number; // 0–100
+  /** Lage relativ zur Bildgrösse (0–1) */
+  bbox?: { x0: number; y0: number; x1: number; y1: number };
 }
 
 export interface OcrOptions {
@@ -78,12 +80,19 @@ export class LocalOcr {
   private async recognizeRaw(image: Buffer): Promise<{ lines: OcrLine[]; confidence: number }> {
     const w = await this.get();
     const r = await w.recognize(image, {}, { blocks: true, text: true });
+    const { width, height } = await imageSize(image);
     const lines: OcrLine[] = [];
     for (const b of r.data.blocks ?? []) {
       for (const p of b.paragraphs ?? []) {
         for (const l of p.lines ?? []) {
           const text = l.text.replace(/\s+/g, ' ').trim();
-          if (text) lines.push({ text, confidence: l.confidence });
+          if (!text) continue;
+          const bb = l.bbox;
+          lines.push({
+            text,
+            confidence: l.confidence,
+            bbox: bb && width && height ? { x0: bb.x0 / width, y0: bb.y0 / height, x1: bb.x1 / width, y1: bb.y1 / height } : undefined,
+          });
         }
       }
     }
@@ -197,4 +206,15 @@ function otsu(g: Uint8Array): number {
     if (between > best) { best = between; thr = t; }
   }
   return thr;
+}
+
+/** Bildgrösse in Pixeln (für relative Positionen der erkannten Zeilen) */
+async function imageSize(image: Buffer): Promise<{ width: number; height: number }> {
+  try {
+    const { loadImage } = await import('@napi-rs/canvas');
+    const img = await loadImage(image);
+    return { width: img.width, height: img.height };
+  } catch {
+    return { width: 0, height: 0 };
+  }
 }

@@ -12,6 +12,8 @@ export interface AmountCandidate {
   explicitSign: boolean;
   /** Herkunft der Zeile (undefined = Textebene des Dokuments) */
   source?: string;
+  /** Lage der Zeile auf der Seite (0–1), falls bekannt */
+  bbox?: { x0: number; y0: number; x1: number; y1: number };
   /** Kontext-Hinweise aus derselben Zeile */
   context: {
     balanceKeyword: boolean; // Saldo, Total, Schlussbestand, Kontostand ...
@@ -54,7 +56,7 @@ export function extractAmounts(documentId: string, lines: EvidenceLine[]): Amoun
       // Reine Jahreszahl ohne Dezimalen (1990–2099) ignorieren
       if (parsed.decimals === 0 && /^(19|20)\d{2}$/.test(raw)) continue;
       if (parsed.cents === 0) continue;
-      out.push({ documentId, page: l.page, lineNo: l.lineNo, line: l.text, raw, cents: parsed.cents, decimals: parsed.decimals, explicitSign: parsed.explicitSign, source: l.source, context });
+      out.push({ documentId, page: l.page, lineNo: l.lineNo, line: l.text, raw, cents: parsed.cents, decimals: parsed.decimals, explicitSign: parsed.explicitSign, source: l.source, bbox: l.bbox, context });
     }
   }
   return out;

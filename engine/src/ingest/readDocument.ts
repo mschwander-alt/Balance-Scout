@@ -4,6 +4,14 @@ import path from 'node:path';
 import Papa from 'papaparse';
 import type { LocalOcr } from './ocr.js';
 
+/** Position auf der Seite, relativ zur Seitengrösse (0–1), Ursprung oben links */
+export interface BBox {
+  x0: number;
+  y0: number;
+  x1: number;
+  y1: number;
+}
+
 export interface EvidenceLine {
   page: number; // 1-basiert (bei Excel: Blatt-Nr.; eingebettete Bilder als zusätzliche "Seiten")
   lineNo: number;
@@ -12,6 +20,8 @@ export interface EvidenceLine {
   source?: string;
   /** Erkennungssicherheit 0–100 (nur OCR) */
   confidence?: number;
+  /** Lage der Zeile auf der Seite (PDF und Texterkennung), für die Vorschau */
+  bbox?: BBox;
 }
 
 export type ReadStatus = 'ok' | 'partial' | 'unreadable' | 'unsupported' | 'error';
@@ -136,23 +146,37 @@ async function readPdf(buf: Buffer, doc: EvidenceDocument, ctx: ReadContext): Pr
   for (let p = 1; p <= pdf.numPages; p++) {
     const page = await pdf.getPage(p);
     const tc = await page.getTextContent();
-    const rows: { y: number; items: { x: number; s: string }[] }[] = [];
+    const [vx0 = 0, vy0 = 0, vx1 = 595, vy1 = 842] = (page as unknown as { view: number[] }).view ?? [];
+    const pw = vx1 - vx0 || 1;
+    const ph = vy1 - vy0 || 1;
+    const rows: { y: number; items: { x: number; s: string; w: number; h: number }[] }[] = [];
     let chars = 0;
-    for (const it of tc.items as Array<{ str?: string; transform?: number[] }>) {
+    for (const it of tc.items as Array<{ str?: string; transform?: number[]; width?: number; height?: number }>) {
       if (!it.str?.trim() || !it.transform) continue;
       const x = it.transform[4] ?? 0;
       const y = it.transform[5] ?? 0;
       let row = rows.find(r => Math.abs(r.y - y) < 3);
       if (!row) rows.push((row = { y, items: [] }));
-      row.items.push({ x, s: it.str });
+      row.items.push({ x, s: it.str, w: it.width ?? 0, h: it.height || Math.abs(it.transform[3] ?? 10) });
       chars += it.str.trim().length;
     }
     if (chars >= minChars) {
       rows.sort((a, b) => b.y - a.y);
       let n = 0;
       for (const r of rows) {
-        const text = r.items.sort((a, b) => a.x - b.x).map(i => i.s).join(' ').replace(/\s+/g, ' ').trim();
-        if (text) doc.lines.push({ page: p, lineNo: ++n, text, source: 'text-layer' });
+        const items = r.items.sort((a, b) => a.x - b.x);
+        const text = items.map(i => i.s).join(' ').replace(/\s+/g, ' ').trim();
+        if (!text) continue;
+        const h = Math.max(...items.map(i => i.h));
+        const left = Math.min(...items.map(i => i.x));
+        const right = Math.max(...items.map(i => i.x + i.w));
+        const bbox = clampBox({
+          x0: (left - vx0) / pw,
+          x1: (right - vx0) / pw,
+          y0: (vy1 - r.y - h) / ph,
+          y1: (vy1 - r.y + h * 0.25) / ph,
+        });
+        doc.lines.push({ page: p, lineNo: ++n, text, source: 'text-layer', bbox });
       }
       continue;
     }
@@ -166,7 +190,7 @@ async function readPdf(buf: Buffer, doc: EvidenceDocument, ctx: ReadContext): Pr
     const png = await renderPageAsImage(pdf, p, { canvasImport: () => import('@napi-rs/canvas'), scale: 2.5 });
     const r = await ctx.ocr.recognize(Buffer.from(png));
     doc.ocrPages++;
-    r.lines.forEach((l, i) => doc.lines.push({ page: p, lineNo: i + 1, text: l.text, source: 'ocr', confidence: l.confidence }));
+    r.lines.forEach((l, i) => doc.lines.push({ page: p, lineNo: i + 1, text: l.text, source: 'ocr', confidence: l.confidence, bbox: l.bbox }));
   }
 }
 
@@ -177,7 +201,7 @@ async function readImage(buf: Buffer, doc: EvidenceDocument, ctx: ReadContext): 
   ctx.onProgress?.(`Texterkennung ${doc.filename}`);
   const r = await ctx.ocr.recognize(buf);
   doc.ocrPages = 1;
-  r.lines.forEach((l, i) => doc.lines.push({ page: 1, lineNo: i + 1, text: l.text, source: 'ocr', confidence: l.confidence }));
+  r.lines.forEach((l, i) => doc.lines.push({ page: 1, lineNo: i + 1, text: l.text, source: 'ocr', confidence: l.confidence, bbox: l.bbox }));
 }
 
 // ---------------------------------------------------------------- Excel (xlsx/xlsm), alle Blätter + eingebettete Bilder
@@ -197,9 +221,14 @@ async function readXlsx(buf: Buffer, doc: EvidenceDocument, ctx: ReadContext): P
     ctx.onProgress?.(`Texterkennung Bild in ${doc.filename}`);
     const r = await ctx.ocr.recognize(img);
     doc.ocrPages++;
-    r.lines.forEach((l, i) => doc.lines.push({ page, lineNo: i + 1, text: l.text, source: 'ocr', confidence: l.confidence }));
+    r.lines.forEach((l, i) => doc.lines.push({ page, lineNo: i + 1, text: l.text, source: 'ocr', confidence: l.confidence, bbox: l.bbox }));
   }
   doc.pageCount = page;
+}
+
+function clampBox(b: BBox): BBox {
+  const c = (v: number) => Math.max(0, Math.min(1, Number.isFinite(v) ? v : 0));
+  return { x0: c(b.x0), y0: c(b.y0), x1: c(b.x1), y1: c(b.y1) };
 }
 
 /** Zahl ohne Gleitkomma-Artefakte; ganze Zahlen ohne Nachkommastellen, sonst 2 Stellen */
