@@ -1,84 +1,41 @@
-# Balance Scout – Azure-Bereitstellung (Schweiz)
+# Balance Scout
 
-Alles läuft in **eurem eigenen Tenant** und in der Region **Schweiz Nord**.
-Belege, Datenbank, Protokolle und (optional) das KI-Modell bleiben in der Schweiz.
+Saldennachweis-Prüfung für Schweizer Revisionsstellen: Saldobilanz einlesen und abstimmen, Belege
+erfassen, Salden **nachvollziehbar** mit Belegen abgleichen, KI-gestützte Belegauswertung mit
+**Microsoft 365 Copilot**, **Azure AI Foundry (Schweiz)** oder **Ollama (lokal)**, Zusammenarbeit im Team.
 
-## Was bereitgestellt wird
-
-| Ressource | Zweck | Sicherheit |
-|---|---|---|
-| Container Apps (Consumption) | Balance-Scout-Server, 1–3 Instanzen | nur HTTPS; optional IP-Beschränkung (`--allow-ip`) |
-| PostgreSQL Flexible Server 16 | Daten, Prüfprotokoll | **kein öffentlicher Zugang**, nur über privates Netz; TLS erzwungen; 35 Tage Backup |
-| Azure Files (ZRS) | Belegdateien | TLS 1.2, kein öffentlicher Blob-Zugriff, Löschschutz 30 Tage |
-| Key Vault | DB-Verbindung, Client-Secret | RBAC, Purge Protection |
-| Container Registry | Server-Image | kein Admin-Zugang, Pull über verwaltete Identität |
-| Azure AI Foundry (optional) | Belegauswertung, Texterkennung | **keine Schlüssel** (nur verwaltete Identität), Bereitstellung `Standard` = Verarbeitung in der Region |
-| Log Analytics | Betriebsprotokolle | 90 Tage |
-
-## Schritt 1 – App-Registrierungen (Entra ID)
-
-In der **Azure Cloud Shell (Bash)** als Global Administrator (oder Application Administrator +
-Privileged Role Administrator):
-
-```bash
-git clone <repo> && cd balance-scout/infra
-./setup-entra.sh --admin-group <Objekt-ID Gruppe "Revision Leitung"> --user-group <Objekt-ID Gruppe "Revision">
+```
+┌──────────────────────────┐  HTTPS + Microsoft-Anmeldung    ┌──────────────────────────────────────────┐
+│ Windows-App (Taskleiste)  │ ─────────────────────────────▶ │ Azure Schweiz Nord (eigener Tenant)      │
+│  · Windows-SSO (WAM)      │ ◀── Live-Ereignisse (SSE) ──── │  Container Apps: Balance-Scout-Server    │
+│  · Benachrichtigungen     │                                │  PostgreSQL 16 (nur privat), Azure Files │
+└──────────────────────────┘                                 │  Key Vault, Azure AI Foundry (optional)  │
+                                                             └───────────────┬──────────────────────────┘
+                                                      im Namen des Benutzers │ (On-Behalf-Of)
+                                                                             ▼
+                                                     Microsoft 365 Copilot (Work IQ) · SharePoint
 ```
 
-Das Skript legt **„Balance Scout API“** und **„Balance Scout Desktop“** an, mit:
-- Scope `access_as_user`, App-Rollen `BalanceScout.Admin` / `BalanceScout.User`
-- **Nur zugewiesene** Benutzer/Gruppen dürfen sich anmelden
-- delegierte Rechte für SharePoint (`Sites.ReadWrite.All`) und – falls aktiviert – Copilot (`WorkIQAgent.Ask`)
-- Windows-SSO (WAM-Umleitung), Vorautorisierung der Desktop-App, Administratorzustimmung
-
-Das Skript ist wiederholbar (bestehende Apps werden aktualisiert, IDs bleiben gleich).
-Ergebnis: `entra-ergebnis.env` (enthält das Client-Secret, nur für den Besitzer lesbar).
-
-## Schritt 2 – Bereitstellung
-
-```bash
-./deploy.sh --resource-group rg-balance-scout \
-            [--sharepoint-drive <Drive-ID der Belegbibliothek>] \
-            [--allow-ip 203.0.113.0/24]   # Kanzlei-Standorte / VPN (optional, mehrfach möglich)
-```
-
-Dauer ca. 15–20 Minuten. Am Ende: Server-URL und `desktop-config.json`.
-**Danach `shred -u entra-ergebnis.env`.**
-
-Drive-ID einer SharePoint-Bibliothek ermitteln (Graph Explorer):
-`GET https://graph.microsoft.com/v1.0/sites/<kanzlei>.sharepoint.com:/sites/<Revision>:/drives`
-
-## Schritt 3 – Windows-App verteilen
-
-1. Installer aus GitHub Actions („Windows-Installer“, Artefakt `balance-scout-windows`): `.msi` für die
-   zentrale Verteilung (Intune/SCCM), `.exe` für Einzelinstallation.
-2. `desktop-config.json` als **`%ProgramData%\BalanceScout\config.json`** verteilen. Damit sind Server,
-   Tenant und Client-ID fest vorgegeben (für Benutzer gesperrt) und keine Einrichtung nötig.
-3. Code-Signatur: Ohne Zertifikat zeigt Windows „Unbekannter Herausgeber“. Empfehlung: **Azure Trusted
-   Signing** oder ein Code-Signing-Zertifikat als GitHub-Secret (`WIN_CERT_PFX_BASE64`, `WIN_CERT_PASSWORD`).
-
-## Schritt 4 – Microsoft 365 Copilot (optional)
-
-1. Microsoft-365-Copilot-Lizenzen den Prüferinnen und Prüfern zuweisen.
-2. **Work IQ** im Microsoft-365-Admin-Center aktivieren; Abrechnung über **Copilot Credits** einrichten.
-3. `./setup-entra.sh` erneut ausführen (fügt `WorkIQAgent.Ask` hinzu) und `./deploy.sh` erneut ausführen.
-4. In der App unter *Einstellungen › KI-Anbieter › Testen* prüfen.
-
-## Betrieb
-
-| Aufgabe | Befehl |
+| Ordner | Inhalt |
 |---|---|
-| Neue Server-Version | `./deploy.sh --resource-group rg-balance-scout` (baut und rollt aus) |
-| Protokolle | `az containerapp logs show -g rg-balance-scout -n balscout-server --follow` |
-| Datenbank-Backup wiederherstellen | Azure-Portal › PostgreSQL › Wiederherstellen (Zeitpunkt wählen) |
-| Client-Secret erneuern (alle 2 Jahre) | `./setup-entra.sh` → `./deploy.sh` |
+| [`server/`](server/README.md) | Server (Node.js/TypeScript): Prüfregeln, Matching, KI-Schicht, Zusammenarbeit, Prüfprotokoll |
+| [`desktop/`](desktop/README.md) | Windows-App (Electron/React) mit Taskleisten-Symbol |
+| [`infra/`](infra/README.md) | Azure-Infrastruktur (Bicep) und Einrichtungsskripte |
 
-## Annahmen / vor Produktivstart prüfen
+## Inbetriebnahme (Kurzfassung für die IT)
 
-- **Modellverfügbarkeit**: `gpt-4.1` mit Bereitstellungstyp `Standard` in Schweiz Nord ist als Standard
-  gesetzt. Verfügbarkeit im Azure-Portal prüfen; ggf. `openAiModelName`/`openAiModelVersion` anpassen.
-  `DataZoneStandard`/`GlobalStandard` können Daten **ausserhalb der Schweiz** verarbeiten.
-- **Work IQ**: Endpunkt und Berechtigung gemäss Microsoft-Dokumentation (Stand 2026); ein Test gegen
-  euren Tenant steht aus.
-- **Kosten** (Richtwerte, abhängig von Nutzung): Container Apps, PostgreSQL B2s, Speicher und Key Vault im
-  tiefen dreistelligen CHF-Bereich pro Monat; KI nach Verbrauch.
+1. **Entra ID** – in der Azure Cloud Shell: `infra/setup-entra.sh --admin-group <ID> --user-group <ID>`
+2. **Azure** – `infra/deploy.sh --resource-group rg-balance-scout` (Schweiz Nord)
+3. **Windows-App** – Installer aus GitHub Actions („Windows-Installer“) verteilen und
+   `infra/desktop-config.json` als `%ProgramData%\BalanceScout\config.json` ausrollen (Intune/GPO)
+4. **Copilot** (optional) – Work IQ im Microsoft-365-Admin-Center aktivieren, Schritt 1 wiederholen
+
+Details: [infra/README.md](infra/README.md)
+
+## Qualität
+
+| | Tests |
+|---|---|
+| Server | 99 (Fachlogik, KI-Anbieter gegen nachgebildete Schnittstellen, Microsoft-Token-Prüfung, Sperren, Live-Ereignisse über zwei Instanzen, SharePoint, PostgreSQL) |
+| Windows-App | 13 (Einstellungen/IT-Richtlinie, Pfadschutz, Oberfläche, Ende-zu-Ende gegen echten Server) |
+| Infrastruktur | Bicep-Build + Linter, ShellCheck, Trockenlauf der Entra-Einrichtung gegen nachgebildete Azure CLI |
