@@ -1,0 +1,102 @@
+{
+  "name": "balance-scout-desktop",
+  "productName": "Balance Scout",
+  "version": "0.3.0",
+  "private": true,
+  "description": "Balance Scout – Windows-App für die Saldennachweis-Prüfung",
+  "main": "dist-electron/main.js",
+  "author": "Balance Scout",
+  "scripts": {
+    "dev": "npm run build:main && concurrently -k \"vite\" \"wait-on tcp:5173 && cross-env VITE_DEV_SERVER_URL=http://localhost:5173 electron .\"",
+    "build:main": "tsc -p tsconfig.main.json",
+    "build:renderer": "vite build",
+    "build": "npm run build:main && npm run build:renderer",
+    "typecheck": "tsc -p tsconfig.main.json --noEmit && tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "dist:win": "npm run build && electron-builder --win --x64"
+  },
+  "dependencies": {
+    "@azure/msal-node": "^7.2.1",
+    "@azure/msal-node-extensions": "^5.6.1",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@testing-library/dom": "^10.4.2",
+    "@testing-library/react": "^16.3.3",
+    "@types/node": "^22.20.5",
+    "@types/react": "^18.3.31",
+    "@types/react-dom": "^18.3.7",
+    "@vitejs/plugin-react": "^4.7.0",
+    "concurrently": "^10.0.6",
+    "cross-env": "^10.1.0",
+    "electron": "^33.4.11",
+    "electron-builder": "^25.1.8",
+    "jsdom": "^29.1.1",
+    "typescript": "^5.9.3",
+    "vite": "^5.4.21",
+    "vitest": "^2.1.9",
+    "wait-on": "^9.5.1"
+  },
+  "build": {
+    "appId": "ch.balancescout.desktop",
+    "productName": "Balance Scout",
+    "copyright": "Balance Scout",
+    "directories": {
+      "output": "release",
+      "buildResources": "build"
+    },
+    "files": [
+      "dist/**",
+      "dist-electron/**",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "build/icon.png",
+        "to": "icon.png"
+      },
+      {
+        "from": "build/tray.png",
+        "to": "tray.png"
+      },
+      {
+        "from": "build/tray@2x.png",
+        "to": "tray@2x.png"
+      }
+    ],
+    "asar": true,
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "msi",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/icon.ico",
+      "artifactName": "BalanceScout-${version}-${arch}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "shortcutName": "Balance Scout",
+      "deleteAppDataOnUninstall": false
+    },
+    "msi": {
+      "perMachine": true,
+      "oneClick": false,
+      "createDesktopShortcut": true,
+      "shortcutName": "Balance Scout"
+    }
+  }
+}
