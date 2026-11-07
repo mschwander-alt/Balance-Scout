@@ -1,0 +1,45 @@
+name: CI
+on:
+  push:
+  pull_request:
+
+jobs:
+  server-und-app-tests:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: bsb_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s --health-retries 10
+    env:
+      TEST_DATABASE_URL: postgresql://postgres:test@localhost:5432/bsb_test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - name: Server
+        working-directory: server
+        run: |
+          npm ci
+          npm run typecheck
+          npm test
+          npm run build
+      - name: Windows-App (Logik, Oberfläche, Ende-zu-Ende gegen Server)
+        working-directory: desktop
+        env: { ELECTRON_SKIP_BINARY_DOWNLOAD: '1' }
+        run: |
+          npm ci
+          npm run typecheck
+          npm test
+      - name: Infrastruktur prüfen
+        working-directory: infra
+        run: |
+          # Ausführungsrechte setzen (gehen beim Hochladen über den Browser verloren)
+          chmod +x setup-entra.sh deploy.sh test/run-dryrun.sh test/bin/az test/fake-az.py
+          az bicep build --file main.bicep --stdout > /dev/null
+          bash -n setup-entra.sh && bash -n deploy.sh
+          ./test/run-dryrun.sh 1 && ./test/run-dryrun.sh 0
