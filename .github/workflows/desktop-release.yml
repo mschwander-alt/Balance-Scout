@@ -16,17 +16,29 @@ jobs:
         run: npm ci
       - name: Tests
         working-directory: desktop
-        run: npm test
+        # Ende-zu-Ende-Test braucht den Server – läuft im CI-Ablauf
+        run: npx vitest run --exclude "test/e2e.server.test.ts"
       - name: Installer bauen (MSI + EXE)
         working-directory: desktop
-        run: npm run dist:win
+        shell: pwsh
         env:
-          # Optional: Code-Signatur (z. B. Azure Trusted Signing oder PFX-Zertifikat)
-          CSC_LINK: ${{ secrets.WIN_CERT_PFX_BASE64 }}
-          CSC_KEY_PASSWORD: ${{ secrets.WIN_CERT_PASSWORD }}
+          WIN_CERT_PFX_BASE64: ${{ secrets.WIN_CERT_PFX_BASE64 }}
+          WIN_CERT_PASSWORD: ${{ secrets.WIN_CERT_PASSWORD }}
+        run: |
+          # Signieren nur, wenn ein Zertifikat als Secret hinterlegt ist
+          if ($env:WIN_CERT_PFX_BASE64) {
+            $env:CSC_LINK = $env:WIN_CERT_PFX_BASE64
+            $env:CSC_KEY_PASSWORD = $env:WIN_CERT_PASSWORD
+          } else {
+            $env:CSC_IDENTITY_AUTO_DISCOVERY = 'false'
+            Write-Host 'Kein Zertifikat hinterlegt – Installer wird unsigniert gebaut.'
+          }
+          npm run build
+          npx electron-builder --win --x64 --publish never
       - uses: actions/upload-artifact@v4
         with:
           name: balance-scout-windows
           path: |
             desktop/release/*.msi
             desktop/release/*.exe
+          if-no-files-found: error
