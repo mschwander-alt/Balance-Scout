@@ -1,0 +1,79 @@
+name: Balance Scout lokal
+on:
+  push:
+    paths: ['engine/**', 'app/**', '.github/workflows/lokal.yml']
+  workflow_dispatch:
+
+jobs:
+  tests:
+    name: Engine und App testen (Linux)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - name: Engine – Tests inkl. Testsätze mit Soll-Lösung
+        working-directory: engine
+        run: |
+          npm ci
+          npm run typecheck
+          npm test
+          npm run build
+      - name: App – bauen
+        working-directory: app
+        run: |
+          npm ci --install-links
+          npm run typecheck
+          npm run build
+      - name: App – Ende-zu-Ende (echtes Fenster, Hintergrundprozess, Texterkennung, Ablage)
+        working-directory: app
+        run: xvfb-run -a node test/e2e/app.e2e.mjs
+      - name: App – verpackt testen
+        working-directory: app
+        run: |
+          npx electron-builder --linux --dir --publish never
+          xvfb-run -a node test/e2e/packaged.e2e.mjs release/linux-unpacked/balance-scout-lokal
+
+  windows:
+    name: Windows-Installer bauen und prüfen
+    needs: tests
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - name: Engine
+        working-directory: engine
+        run: |
+          npm ci
+          npm run build
+      - name: App bauen
+        working-directory: app
+        run: |
+          npm ci --install-links
+          npm run build
+      - name: Installer erzeugen (MSI + EXE)
+        working-directory: app
+        shell: pwsh
+        env:
+          WIN_CERT_PFX_BASE64: ${{ secrets.WIN_CERT_PFX_BASE64 }}
+          WIN_CERT_PASSWORD: ${{ secrets.WIN_CERT_PASSWORD }}
+        run: |
+          if ($env:WIN_CERT_PFX_BASE64) {
+            $env:CSC_LINK = $env:WIN_CERT_PFX_BASE64
+            $env:CSC_KEY_PASSWORD = $env:WIN_CERT_PASSWORD
+          } else {
+            $env:CSC_IDENTITY_AUTO_DISCOVERY = 'false'
+            Write-Host 'Kein Zertifikat hinterlegt – Installer wird unsigniert gebaut.'
+          }
+          npx electron-builder --win --x64 --publish never
+      - name: Installierte Windows-Version prüfen (kompletter Lauf inkl. Texterkennung)
+        working-directory: app
+        run: node test/e2e/packaged.e2e.mjs "release/win-unpacked/Balance Scout.exe"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: balance-scout-lokal-windows
+          path: |
+            app/release/*.msi
+            app/release/*.exe
+          if-no-files-found: error
