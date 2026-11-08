@@ -5,7 +5,7 @@ import path from 'node:path';
 import * as XLSX from 'xlsx';
 import { placeFiles, planTargetNames } from '../src/organize/placeFiles.js';
 import { findDates, detectBalanceDate } from '../src/ingest/documentFacts.js';
-import { runAudit, writeExcelReport, diagnosticReport, reportFileName, type RunResult } from '../src/index.js';
+import { runAudit, writeExcelReport, diagnosticReport, reportFileName, uniqueReportPath, type RunResult } from '../src/index.js';
 import type { EvidenceDocument } from '../src/ingest/readDocument.js';
 import { createHash } from 'node:crypto';
 
@@ -127,5 +127,19 @@ describe('Excel-Bericht und Diagnose', () => {
     expect(d).toMatch(/DIAGNOSEBERICHT/);
     for (const secret of ["148'250", '148250', 'Alpenblick', 'Kontoauszug.pdf', 'UBS', 'Keller', 'Aebi']) expect(d).not.toContain(secret);
     expect(d.split('\n').filter(l => /^\d+ \|/.test(l))).toHaveLength(20);
+  });
+
+  it('bestehender Bericht wird nie überschrieben – Folgelauf erhält „(2)“, Zielordner wird angelegt', async () => {
+    const before = await readFile(file);
+    const next = await uniqueReportPath(target, res.input.mandate, res.input.closingDate);
+    expect(path.basename(next)).toBe('Saldenabstimmung_Alpenblick Treuhand AG_2025-12-31 (2).xlsx');
+    await expect(writeExcelReport(res, file)).rejects.toThrow(/nicht überschrieben/);
+    expect((await readFile(file)).equals(before)).toBe(true);
+    const fresh = path.join(target, 'neu', 'unter');
+    const p = await uniqueReportPath(fresh, 'Muster AG', null);
+    expect(path.dirname(p)).toBe(fresh);
+    expect(path.basename(p)).toBe('Saldenabstimmung_Muster AG_ohne-Stichtag.xlsx');
+    await writeExcelReport(res, p);
+    expect((await stat(p)).size).toBeGreaterThan(5000);
   });
 });

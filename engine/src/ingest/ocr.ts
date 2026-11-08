@@ -7,6 +7,8 @@ export interface OcrLine {
   confidence: number; // 0–100
   /** Lage relativ zur Bildgrösse (0–1) */
   bbox?: { x0: number; y0: number; x1: number; y1: number };
+  /** Einzelne Wörter mit Lage (für Tabellen, z. B. eingescannte Saldobilanz) */
+  words?: { text: string; bbox: { x0: number; y0: number; x1: number; y1: number } }[];
 }
 
 export interface OcrOptions {
@@ -88,10 +90,12 @@ export class LocalOcr {
           const text = l.text.replace(/\s+/g, ' ').trim();
           if (!text) continue;
           const bb = l.bbox;
+          const norm = (b: { x0: number; y0: number; x1: number; y1: number }) => ({ x0: b.x0 / width, y0: b.y0 / height, x1: b.x1 / width, y1: b.y1 / height });
           lines.push({
             text,
             confidence: l.confidence,
-            bbox: bb && width && height ? { x0: bb.x0 / width, y0: bb.y0 / height, x1: bb.x1 / width, y1: bb.y1 / height } : undefined,
+            bbox: bb && width && height ? norm(bb) : undefined,
+            words: width && height ? (l.words ?? []).filter(w => w.text.trim()).map(w => ({ text: w.text, bbox: norm(w.bbox) })) : undefined,
           });
         }
       }

@@ -1,7 +1,12 @@
-export { runAudit, type RunInput, type RunResult, type Progress, type DocumentSummary } from './run.js';
-export { writeExcelReport, reportFileName } from './report/excel.js';
+export { runAudit, loadTrialBalanceFor, tbPaths, type RunInput, type RunResult, type Progress, type DocumentSummary } from './run.js';
+export { writeExcelReport, reportFileName, uniqueReportPath, diagnosticsPathFor } from './report/excel.js';
 export { diagnosticReport } from './report/diagnostics.js';
 export { LocalOcr, defaultLangPath } from './ingest/ocr.js';
 export { ASSIGNED_DIR, UNASSIGNED_DIR, type FileMode } from './organize/placeFiles.js';
 export { parseAmount, formatChf } from './domain/amount.js';
 export { renderPreview, type Preview } from './preview.js';
+export { applyReview, placeReviewed, assignRegisters, finalizeAudit, IRRELEVANT_DIR, type ReviewDecisions, type Review } from './finalize.js';
+export { saveSnapshot, loadSnapshot } from './snapshot.js';
+export { loadTrialBalance, suggestDigits, type LoadedTrialBalance, type TbPartInfo } from './domain/trialBalance/load.js';
+export { KMU_GROUPS, defaultGroupLetters, classify } from './domain/trialBalance/accountGroups.js';
+export { notePdf, prependNote } from './report/notePdf.js';

@@ -1,4 +1,5 @@
 import ExcelJS from 'exceljs';
+import { mkdir, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import type { RunResult, DocumentSummary } from '../run.js';
 import type { AccountResult } from '../domain/matching/engine.js';
@@ -17,7 +18,7 @@ const STATUS_LABEL: Record<string, string> = {
 const FILL: Record<string, string> = {
   Belegt: 'FFE5F4EA', Prüfen: 'FFFFF4DC', 'Kein Nachweis': 'FFFDE8E7', Nullsaldo: 'FFEEF0F3', 'Nicht im Umfang': 'FFEEF0F3',
   Bestätigt: 'FFE5F4EA', Abweichung: 'FFFDE8E7', Offen: 'FFFFF4DC', 'Nicht anwendbar': 'FFEEF0F3',
-  Zugeordnet: 'FFE5F4EA', 'Nicht zugeordnet': 'FFFDE8E7',
+  Zugeordnet: 'FFE5F4EA', 'Nicht zugeordnet': 'FFFDE8E7', 'Nicht relevant': 'FFEEF0F3',
 };
 const FLAG_TEXT: Record<string, string> = {
   SIGN_CONFLICT: 'Vorzeichen prüfen',
@@ -33,15 +34,35 @@ export function reportFileName(mandate: string, closingDate: string | null): str
   return `Saldenabstimmung_${safe}_${closingDate ?? 'ohne-Stichtag'}.xlsx`;
 }
 
+/** Pfad der Diagnose-Datei zum Excel-Bericht. */
+export const diagnosticsPathFor = (excelPath: string) => excelPath.replace(/\.xlsx$/i, '_Diagnose.txt');
+
+/**
+ * Freier Dateiname für den Bericht im Zielordner (legt den Ordner bei Bedarf an).
+ * Ein bestehender Bericht – evtl. mit Einträgen der Prüferin/des Prüfers oder gerade in Excel geöffnet –
+ * wird nie überschrieben: Folgeläufe erhalten „ (2)“, „ (3)“ …
+ */
+export async function uniqueReportPath(dir: string, mandate: string, closingDate: string | null): Promise<string> {
+  await mkdir(dir, { recursive: true });
+  const base = reportFileName(mandate, closingDate).replace(/\.xlsx$/, '');
+  const exists = (p: string) => stat(p).then(() => true, () => false);
+  for (let n = 1; n < 10_000; n++) {
+    const candidate = path.join(dir, n === 1 ? `${base}.xlsx` : `${base} (${n}).xlsx`);
+    const taken = (await exists(candidate)) || (await exists(diagnosticsPathFor(candidate)));
+    if (!taken) return candidate;
+  }
+  throw new Error('Kein freier Dateiname für den Bericht gefunden.');
+}
+
 const isoToDate = (iso: string | null) => (iso ? new Date(`${iso}T00:00:00Z`) : null);
 
-function header(ws: ExcelJS.Worksheet, cols: { name: string; width: number }[], greenFrom?: number): void {
+function header(ws: ExcelJS.Worksheet, cols: { name: string; width: number }[], greenFrom?: number, greenTo = 99): void {
   ws.columns = cols.map(c => ({ header: c.name, width: c.width }));
   const row = ws.getRow(1);
   row.height = 32;
   row.eachCell((cell, i) => {
     cell.font = { bold: true, color: { argb: 'FFFFFFFF' } };
-    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: greenFrom && i >= greenFrom ? GREEN_HDR : BLUE } };
+    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: greenFrom && i >= greenFrom && i <= greenTo ? GREEN_HDR : BLUE } };
     cell.alignment = { wrapText: true, vertical: 'middle' };
   });
   ws.views = [{ state: 'frozen', ySplit: 1, xSplit: cols.length > 8 ? 2 : 0 }];
@@ -100,7 +121,8 @@ export async function writeExcelReport(res: RunResult, filePath: string): Promis
     ['Mandat', res.input.mandate],
     ['Kunde', res.input.client ?? ''],
     ['Bilanzstichtag', isoToDate(res.input.closingDate), DATE],
-    ['Saldobilanz (Datei)', path.basename(res.input.trialBalancePath)],
+    ['Saldobilanz (Datei)', (res.input.trialBalancePaths?.length ? res.input.trialBalancePaths : [res.input.trialBalancePath]).map(p => path.basename(p)).join('; ')],
+    ['Kontonummern', res.input.accountDigits ? `${res.input.accountDigits.min === res.input.accountDigits.max ? res.input.accountDigits.min : `${res.input.accountDigits.min}–${res.input.accountDigits.max}`} Ziffern (übrige Zeilen ausgeblendet: ${res.trialBalance?.excluded.length ?? 0})` : 'alle Zeilen mit Kontonummer'],
     ['Belegordner', res.input.evidencePaths.join('; ')],
     ['Zielordner', res.input.targetDir ?? '–'],
     ['Erstellt am', res.finishedAt, 'dd.mm.yyyy hh:mm'],
@@ -157,7 +179,7 @@ export async function writeExcelReport(res: RunResult, filePath: string): Promis
   ov.getCell(`C${r}`).value = { formula: `IF(ABS(B${r})<0.005,"✓ ausgeglichen","✗ Differenz – Saldobilanz prüfen")`, result: Math.abs(total) < 0.005 ? '✓ ausgeglichen' : '✗ Differenz – Saldobilanz prüfen' };
   r++;
   ov.getCell(`A${r}`).value = 'Prüfer-Entscheide erfasst';
-  ov.getCell(`B${r}`).value = { formula: `COUNTA('${S}'!O2:O${last})`, result: 0 };
+  ov.getCell(`B${r}`).value = { formula: `COUNTA('${S}'!O2:O${last})`, result: res.review ? res.review.manual.size + Object.keys(res.review.decisions.notes ?? {}).length : 0 };
   r++;
   ov.getCell(`A${r}`).value = 'Belege total / zugeordnet / nicht zugeordnet';
   ov.getCell(`B${r}`).value = `${res.documents.length} / ${res.documents.filter(d => d.assigned).length} / ${res.documents.filter(d => !d.assigned).length}`;
@@ -198,7 +220,9 @@ export async function writeExcelReport(res: RunResult, filePath: string): Promis
     { name: 'Fundstelle (Wortlaut)', width: 46 }, { name: 'Wert im Beleg', width: 15 }, { name: 'Differenz CHF', width: 13 },
     { name: 'Stichtag Beleg', width: 12 }, { name: 'Bemerkung (automatisch)', width: 44 },
     { name: 'Prüfer-Entscheid', width: 15 }, { name: 'Kommentar Prüfer', width: 40 }, { name: 'Visum', width: 8 }, { name: 'Datum', width: 11 },
-  ], 15);
+    { name: 'Register', width: 9 }, { name: 'Gruppe (KMU-Kontenrahmen)', width: 34 },
+  ], 15, 18);
+  const rv = res.review;
   res.accounts.forEach((a, i) => {
     const row = i + 2;
     const m = res.byAccount.get(`${a.accountNumber}#${a.rowIndex}`)!;
@@ -207,7 +231,7 @@ export async function writeExcelReport(res: RunResult, filePath: string): Promis
     const link = d?.placement?.newRelPath ?? d?.doc.absPath ?? null;
     const notes = [
       ...(b ? b.flags.map(f => FLAG_TEXT[f] ?? f) : []),
-      ...(m.status === 'PRUEFEN' || m.status === 'KEIN_NACHWEIS' ? m.reasons : []),
+      ...(m.status === 'PRUEFEN' || m.status === 'KEIN_NACHWEIS' || rv?.manual.has(a.accountNumber) ? m.reasons : []),
       ...(m.candidates.length > 1 ? [`weitere Fundstellen: ${m.candidates.slice(1, 4).map(c => `${c.filename} S.${c.page}`).join(', ')}`] : []),
     ];
     const values: ExcelJS.CellValue[] = [
@@ -216,12 +240,27 @@ export async function writeExcelReport(res: RunResult, filePath: string): Promis
       STATUS_LABEL[m.status], b?.filename ?? null,
       link ? { text: link, hyperlink: link.replace(/\\/g, '/') } : null,
       b ? pageLabel(d, b.page) : null, b?.line ?? null,
-      b ? b.evidenceCents / 100 : null, null,
+      b && Number.isFinite(b.evidenceCents) ? b.evidenceCents / 100 : null, null,
       isoToDate(d?.balanceDate ?? null), notes.join(' · ') || null,
     ];
     values.forEach((v, c) => (ws.getCell(row, c + 1).value = v));
-    ws.getCell(row, 12).value = b
-      ? { formula: `IF(OR(K${row}="",E${row}=""),"",ROUND(ABS(K${row})-ABS(E${row}),2))`, result: Math.round(Math.abs(b.evidenceCents) - Math.abs(a.balanceCurrentYear)) / 100 }
+    // Entscheide der Prüferin / des Prüfers (grüne Spalten)
+    const acc = rv?.decisions.accepted?.[a.accountNumber];
+    const asg = rv?.manual.get(a.accountNumber) === 'zugeordnet' ? Object.values(rv.decisions.assignments ?? {}).find(x => x.accountNumber === a.accountNumber) : undefined;
+    const note = rv?.decisions.notes?.[a.accountNumber];
+    const who = acc ?? asg ?? note;
+    if (rv?.manual.has(a.accountNumber)) ws.getCell(row, 15).value = 'Bestätigt';
+    const comment = [rv?.manual.get(a.accountNumber) === 'akzeptiert' ? `Manuell akzeptiert${acc?.comment ? `: ${acc.comment}` : ''}` : '', asg ? 'Beleg manuell zugeordnet' : '', note?.text ? `Notiz: ${note.text}` : ''].filter(Boolean).join(' · ');
+    if (comment) ws.getCell(row, 16).value = comment;
+    if (who && (rv?.manual.has(a.accountNumber) || note)) {
+      ws.getCell(row, 17).value = who.visum || null;
+      ws.getCell(row, 18).value = isoToDate(who.at.slice(0, 10));
+    }
+    ws.getCell(row, 19).value = b ? rv?.registers.get(b.documentId) ?? null : null;
+    ws.getCell(row, 20).value = a.groupName ? `${a.groupName}${a.groupSource === 'bezeichnung' ? ' (aus Bezeichnung)' : ''}` : null;
+    const hasDiff = b && Number.isFinite(b.evidenceCents);
+    ws.getCell(row, 12).value = hasDiff
+      ? { formula: `IF(OR(K${row}="",E${row}=""),"",ROUND(ABS(K${row})-ABS(E${row}),2))`, result: Math.round(Math.abs(b!.evidenceCents) - Math.abs(a.balanceCurrentYear)) / 100 }
       : { formula: `IF(OR(K${row}="",E${row}=""),"",ROUND(ABS(K${row})-ABS(E${row}),2))`, result: '' };
     for (const c of [4, 5, 11, 12]) ws.getCell(row, c).numFmt = CHF;
     ws.getCell(row, 13).numFmt = DATE;
@@ -235,7 +274,7 @@ export async function writeExcelReport(res: RunResult, filePath: string): Promis
   colorRule(ws, `O2:O${lastRow}`, ['Bestätigt', 'Abweichung', 'Offen', 'Nicht anwendbar']);
   ws.addConditionalFormatting({ ref: `L2:L${lastRow}`, rules: [{ type: 'expression', priority: 1, formulae: ['AND(L2<>"",ABS(L2)>=0.005)'], style: { font: { color: { argb: 'FFB3261E' }, bold: true } } }] });
   ws.addConditionalFormatting({ ref: `M2:M${lastRow}`, rules: [{ type: 'expression', priority: 1, formulae: ['AND(M2<>"",Übersicht!$B$6<>"",M2<>Übersicht!$B$6)'], style: { font: { color: { argb: 'FFB3261E' }, bold: true } } }] });
-  ws.autoFilter = { from: 'A1', to: { row: lastRow, column: 18 } };
+  ws.autoFilter = { from: 'A1', to: { row: lastRow, column: 20 } };
 
   // ---------------- Offene Punkte ----------------
   const op = wb.addWorksheet('Offene Punkte', { pageSetup: { orientation: 'landscape', paperSize: 9, fitToPage: true, fitToWidth: 1, fitToHeight: 0 } });
@@ -259,8 +298,8 @@ export async function writeExcelReport(res: RunResult, filePath: string): Promis
 
   // ---------------- Belegverzeichnis (Excel-Tabelle tblBelege) ----------------
   const bv = wb.addWorksheet('Belegverzeichnis', { pageSetup: { orientation: 'landscape', paperSize: 9, fitToPage: true, fitToWidth: 1, fitToHeight: 0 } });
-  const bcols = ['Datei', 'Quellpfad', 'Belegart', 'Stichtag', 'Gelesen', 'Texterkennung', 'Zugeordnete Konten', 'Zielordner', 'Zieldateiname', 'Bemerkung', 'Neuer Ablageort', 'Abgelegt am'];
-  [34, 50, 18, 12, 11, 14, 20, 17, 34, 40, 44, 16].forEach((w, i) => (bv.getColumn(i + 1).width = w));
+  const bcols = ['Datei', 'Quellpfad', 'Belegart', 'Stichtag', 'Gelesen', 'Texterkennung', 'Zugeordnete Konten', 'Zielordner', 'Zieldateiname', 'Bemerkung', 'Neuer Ablageort', 'Abgelegt am', 'Register'];
+  [34, 50, 18, 12, 11, 14, 20, 17, 34, 40, 44, 16, 9].forEach((w, i) => (bv.getColumn(i + 1).width = w));
   const gelesen = (d: DocumentSummary) => (d.doc.status === 'ok' ? 'Ja' : d.doc.status === 'partial' ? 'Teilweise' : 'Nein');
   const rows = res.documents.map(d => [
     d.doc.filename,
@@ -270,11 +309,12 @@ export async function writeExcelReport(res: RunResult, filePath: string): Promis
     gelesen(d),
     d.doc.ocrPages ? `${d.doc.ocrPages} S., ${d.doc.ocrConfidence ?? '–'} %` : '–',
     d.assignedAccounts.join(', '),
-    d.assigned ? 'Zugeordnet' : 'Nicht zugeordnet',
+    d.assigned ? 'Zugeordnet' : rv?.irrelevant.has(d.doc.id) ? 'Nicht relevant' : 'Nicht zugeordnet',
     d.targetName,
-    [...d.doc.warnings, d.placement?.status === 'fehler' ? `Ablage fehlgeschlagen: ${d.placement.message}` : d.placement?.status === 'bereits vorhanden' ? 'bereits im Zielordner vorhanden' : ''].filter(Boolean).join(' · '),
+    [...d.doc.warnings, rv?.decisions.assignments?.[d.doc.id] ? `manuell ${rv.decisions.assignments[d.doc.id]!.accountNumber ? 'zugeordnet' : 'als nicht relevant markiert'} (${rv.decisions.assignments[d.doc.id]!.visum})` : '', d.notePlacement?.newRelPath ? `Notiz: ${d.notePlacement.newRelPath}` : '', d.placement?.status === 'fehler' ? `Ablage fehlgeschlagen: ${d.placement.message}` : d.placement?.status === 'bereits vorhanden' ? 'bereits im Zielordner vorhanden' : ''].filter(Boolean).join(' · '),
     d.placement?.newRelPath ?? '',
     d.placement?.at ?? null,
+    rv?.registers.get(d.doc.id) ?? '',
   ]);
   bv.addTable({
     name: 'tblBelege',
@@ -292,7 +332,7 @@ export async function writeExcelReport(res: RunResult, filePath: string): Promis
     if (typeof rel === 'string' && rel) bv.getCell(`K${i}`).value = { text: rel, hyperlink: rel };
   }
   bv.views = [{ state: 'frozen', ySplit: 1, xSplit: 1 }];
-  colorRule(bv, `H2:H${rows.length + 1}`, ['Zugeordnet', 'Nicht zugeordnet']);
+  colorRule(bv, `H2:H${rows.length + 1}`, ['Zugeordnet', 'Nicht zugeordnet', 'Nicht relevant']);
 
   // ---------------- Anleitung ----------------
   const an = wb.addWorksheet('Anleitung');
@@ -305,7 +345,8 @@ export async function writeExcelReport(res: RunResult, filePath: string): Promis
     '4. Status "Belegt" nur bei exaktem Betrag mit ausreichendem Kontext (z. B. Saldo-Begriff, Kontonummer, Bilanzstichtag im Beleg) und ohne Warnhinweis.',
     '   Beträge aus Scans (Texterkennung) sind immer "Prüfen" – Betrag mit dem Original vergleichen.',
     '5. Differenz = |Wert im Beleg| − |Saldo Stichtag|. Rot = Differenz ≠ 0. Stichtag Beleg rot = weicht vom Bilanzstichtag ab.',
-    '6. Belegverzeichnis: alle gefundenen Dateien inkl. Unterordner; Ablage in 01_Zugeordnet bzw. 02_Nicht_zugeordnet.',
+    '6. Belegverzeichnis: alle gefundenen Dateien inkl. Unterordner; Ablage in 01_Zugeordnet, 02_Nicht_zugeordnet bzw. 03_Nicht_relevant.',
+    '7. Register (z. B. B.1): Buchstabe der Gruppe im KMU-Kontenrahmen + laufende Nummer; so beginnen auch die abgelegten Dateinamen. Notizen der Prüferin/des Prüfers stehen als erste Seite im PDF bzw. als separates Notiz-PDF.',
     'Hinweis: Automatische Vorbereitung – Fundstellen und Status sind durch die Prüferin/den Prüfer zu verifizieren.',
   ].forEach((t, i) => {
     const c = an.getCell(`A${i + 1}`);
@@ -315,5 +356,14 @@ export async function writeExcelReport(res: RunResult, filePath: string): Promis
   });
 
   for (const sh of [ws, op, bv]) sh.headerFooter.oddFooter = '&C&A – Seite &P von &N&RBalance Scout';
-  await wb.xlsx.writeFile(filePath);
+  await mkdir(path.dirname(filePath), { recursive: true });
+  const buf = Buffer.from(await wb.xlsx.writeBuffer());
+  try {
+    await writeFile(filePath, buf, { flag: 'wx' }); // nie überschreiben
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === 'EEXIST') {
+      throw new Error(`Der Bericht ${path.basename(filePath)} existiert bereits und wird nicht überschrieben.`);
+    }
+    throw e;
+  }
 }

@@ -4,31 +4,61 @@
  */
 import path from 'node:path';
 import { readFile, writeFile } from 'node:fs/promises';
-import { runAudit, writeExcelReport, reportFileName, diagnosticReport, type RunInput, type RunResult } from './index.js';
-import { readGrid, detectMapping, parseTrialBalance, type ColumnMapping } from './domain/trialBalance/parser.js';
+import { runAudit, writeExcelReport, uniqueReportPath, diagnosticsPathFor, diagnosticReport, loadTrialBalanceFor, type RunInput, type RunResult } from './index.js';
 import { classifyRows, validateTrialBalance, type SignConvention } from './domain/trialBalance/validate.js';
+import type { ExplicitMapping } from './domain/trialBalance/load.js';
+import { KMU_GROUPS, defaultGroupLetters } from './domain/trialBalance/accountGroups.js';
+import { finalizeAudit, type ReviewDecisions } from './finalize.js';
+import { loadSnapshot, saveSnapshot } from './snapshot.js';
+import type { FileMode } from './organize/placeFiles.js';
 
 import { renderPreview } from './preview.js';
 
 export type Request =
   | { id: string; type: 'preview'; absPath: string; page: number }
-  | { id: string; type: 'previewTrialBalance'; path: string; mapping?: { headerRowIndex: number; mapping: ColumnMapping }; signConvention?: SignConvention }
-  | { id: string; type: 'run'; input: Omit<RunInput, 'onProgress'>; reportDir: string };
+  | {
+      id: string; type: 'previewTrialBalance'; path?: string; paths?: string[]; mapping?: ExplicitMapping; mappings?: Record<string, ExplicitMapping>;
+      accountDigits?: { min: number; max: number }; signConvention?: SignConvention; ocr?: { langPath?: string };
+    }
+  /** Analyse (Lesen + Abgleich). Mit snapshotPath: ohne Ablage/Excel – Abschluss folgt nach der Durchsicht. */
+  | { id: string; type: 'run'; input: Omit<RunInput, 'onProgress'>; reportDir: string; snapshotPath?: string }
+  | { id: string; type: 'finalize'; snapshotPath: string; decisions: ReviewDecisions; targetDir: string | null; fileMode: FileMode; reportDir: string }
+  | { id: string; type: 'groups' };
 
 type Port = { postMessage(m: unknown): void; on(ev: 'message', cb: (m: unknown) => void): void };
 const parentPort: Port | undefined = (process as unknown as { parentPort?: Port }).parentPort;
 const send = (m: unknown) => (parentPort ? parentPort.postMessage(m) : process.send?.(m));
 
 async function previewTrialBalance(r: Extract<Request, { type: 'previewTrialBalance' }>) {
-  const grid = await readGrid(await readFile(r.path), path.basename(r.path));
-  const detected = detectMapping(grid);
-  const head = grid.slice(0, 40).map(row => row.slice(0, 12).map(c => (c === null ? '' : String(c))));
-  const mapping = r.mapping ?? detected;
-  if (!mapping) return { detected: null, head, accounts: [], validation: null };
-  const parsed = parseTrialBalance(grid, mapping);
-  const accounts = classifyRows(parsed.rows);
-  const validation = validateTrialBalance(accounts, parsed.issues, r.signConvention ?? 'signed');
-  return { detected: mapping, head, accounts: accounts.map(a => ({ accountNumber: a.accountNumber, accountName: a.accountName, balance: a.balanceCurrentYear, category: a.category })), validation };
+  const { LocalOcr } = await import('./ingest/ocr.js');
+  const ocr = new LocalOcr(r.ocr);
+  const paths = r.paths?.length ? r.paths : [r.path!];
+  let tb;
+  try {
+    tb = await (await import('./domain/trialBalance/load.js')).loadTrialBalance(paths, {
+      ocr, accountDigits: r.accountDigits,
+      mappings: r.mappings ?? (r.mapping ? { [paths[0]!]: r.mapping } : undefined),
+    });
+  } finally {
+    await ocr.close();
+  }
+  const first = tb.parts[0]!;
+  const accounts = classifyRows(tb.rows);
+  const validation = tb.rows.length ? validateTrialBalance(accounts, tb.issues, r.signConvention ?? 'signed') : null;
+  return {
+    // Kompatibilität (ein Teil): erkannte Zuordnung und Kopf des ersten Teils
+    detected: tb.rows.length && !tb.parts.some(p => p.status === 'zuordnen') ? first.used : null,
+    head: first.head,
+    parts: tb.parts,
+    accounts: accounts.map(a => ({
+      accountNumber: a.accountNumber, accountName: a.accountName, balance: a.balanceCurrentYear, balancePreviousYear: a.balancePreviousYear,
+      category: a.category, groupCode: a.groupCode, groupName: a.groupName, groupSource: a.groupSource, source: a.source ?? null,
+    })),
+    excluded: tb.excluded,
+    digitStats: tb.digitStats,
+    suggestedDigits: tb.suggestedDigits,
+    validation,
+  };
 }
 
 export function serializeResult(res: RunResult, excelPath: string, diagnostics: string) {
@@ -48,7 +78,8 @@ export function serializeResult(res: RunResult, excelPath: string, diagnostics: 
     accounts: res.accounts.map(a => {
       const m = res.byAccount.get(`${a.accountNumber}#${a.rowIndex}`)!;
       return {
-        accountNumber: a.accountNumber, accountName: a.accountName, groupName: a.groupName, category: a.category,
+        accountNumber: a.accountNumber, accountName: a.accountName, groupName: a.groupName, groupCode: a.groupCode, groupSource: a.groupSource,
+        source: a.source ?? null, category: a.category, manual: res.review?.manual.get(a.accountNumber) ?? null,
         balance: a.balanceCurrentYear, balancePreviousYear: a.balancePreviousYear, status: m.status, reasons: m.reasons,
         best: m.best ? withDoc(m.best) : null,
         candidates: m.candidates.slice(1).map(withDoc),
@@ -60,7 +91,12 @@ export function serializeResult(res: RunResult, excelPath: string, diagnostics: 
       warnings: d.doc.warnings, docType: d.docType, balanceDate: d.balanceDate, amountCount: d.amountCount,
       assigned: d.assigned, assignedAccounts: d.assignedAccounts, targetName: d.targetName,
       placement: d.placement ? { status: d.placement.status, newPath: d.placement.newPath, message: d.placement.message ?? null } : null,
+      notePath: d.notePlacement?.newPath ?? null,
+      register: res.review?.registers.get(d.doc.id) ?? null,
+      irrelevant: res.review?.irrelevant.has(d.doc.id) ?? false,
     })),
+    trialBalance: res.trialBalance ? { parts: res.trialBalance.parts.map(p => ({ id: p.id, label: p.label, accountCount: p.accountCount, status: p.status })), excluded: res.trialBalance.excluded } : null,
+    finalized: !!excelPath,
   };
 }
 export type SerializedResult = ReturnType<typeof serializeResult>;
@@ -68,12 +104,25 @@ export type SerializedResult = ReturnType<typeof serializeResult>;
 async function handle(req: Request): Promise<unknown> {
   if (req.type === 'previewTrialBalance') return previewTrialBalance(req);
   if (req.type === 'preview') return renderPreview(req.absPath, req.page);
+  if (req.type === 'groups') return { groups: KMU_GROUPS.map(g => ({ code: g.code, name: g.name, category: g.category, subcategory: g.subcategory })), letters: defaultGroupLetters() };
+  if (req.type === 'finalize') {
+    send({ id: req.id, kind: 'progress', progress: { phase: 'ablage', message: 'Belege werden abgelegt …' } });
+    const res = await loadSnapshot(req.snapshotPath);
+    const out = await finalizeAudit(res, req.decisions, { targetDir: req.targetDir, fileMode: req.fileMode, reportDir: req.reportDir });
+    return serializeResult(out.result, out.excelPath, out.diagnostics);
+  }
+  if (req.snapshotPath) {
+    // Nur analysieren: nichts ablegen, kein Excel – das geschieht beim Abschluss
+    const res = await runAudit({ ...req.input, fileMode: 'none', onProgress: p => send({ id: req.id, kind: 'progress', progress: p }) });
+    await saveSnapshot(res, req.snapshotPath);
+    return serializeResult(res, '', diagnosticReport(res));
+  }
   const res = await runAudit({ ...req.input, onProgress: p => send({ id: req.id, kind: 'progress', progress: p }) });
-  const excelPath = path.join(req.reportDir, reportFileName(req.input.mandate, req.input.closingDate));
   send({ id: req.id, kind: 'progress', progress: { phase: 'bericht', message: 'Excel-Dokumentation wird erstellt …' } });
+  const excelPath = await uniqueReportPath(req.reportDir, req.input.mandate, req.input.closingDate);
   await writeExcelReport(res, excelPath);
   const diagnostics = diagnosticReport(res);
-  await writeFile(excelPath.replace(/\.xlsx$/, '_Diagnose.txt'), diagnostics, 'utf8');
+  await writeFile(diagnosticsPathFor(excelPath), diagnostics, { encoding: 'utf8', flag: 'wx' });
   return serializeResult(res, excelPath, diagnostics);
 }
 

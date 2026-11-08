@@ -63,3 +63,65 @@ export function classifyAccount(accountNumber: string): AccountGroup | null {
 export function isBalanceSheet(c: Category): boolean {
   return c === 'aktiven' || c === 'passiven';
 }
+
+/**
+ * Zuordnung über die Kontobezeichnung, wenn die Nummer nicht zum KMU-Kontenrahmen passt
+ * (eigene Kontenpläne, Fremdsysteme). Reihenfolge = Vorrang. Ergebnis immer als "aus Bezeichnung – prüfen" kennzeichnen.
+ */
+const NAME_RULES: [RegExp, string][] = [
+  [/kontokorrentkredit|bankkredit|kontokorrent.*(schuld|kredit)/i, 'P11'],
+  [/hypothek|darlehen.*(lang|bank)|langfristig.*(darlehen|verbindl)/i, 'P20'],
+  [/kreditor|verbindlichkeit(en)? aus (lieferung|l\+l|lul)/i, 'P10'],
+  [/delkredere|debitor|forderung(en)? aus (lieferung|l\+l|lul)/i, 'A12'],
+  [/passive rechnungsabgrenz|transitorische passiv|\bpra\b|abgegrenzte? aufw/i, 'P13'],
+  [/aktive rechnungsabgrenz|transitorische aktiv|\bara\b/i, 'A15'],
+  [/rückstellung|rueckstellung/i, 'P22'],
+  [/aktienkapital|stammkapital|grundkapital|gesellschaftskapital|genossenschaftskapital/i, 'P30'],
+  [/reserve|gewinnvortrag|verlustvortrag|bilanzgewinn|bilanzverlust|jahresgewinn|jahresverlust/i, 'P31'],
+  [/geschuldete mwst|mwst.?schuld|umsatzsteuer|sozialversicherung|\bahv\b|\bbvg\b|quellensteuer|steuerrückstell/i, 'P12'],
+  [/vorsteuer|verrechnungssteuer|forderung|guthaben|vorschuss|anzahlung an/i, 'A13'],
+  [/darlehen|aktionärsdarlehen|gesellschafterdarlehen/i, 'P21'],
+  [/\bkasse\b|\bbank\b|postfinance|postkonto|\bpost\b|kontokorrent|sparkonto|festgeld|liquidit/i, 'A10'],
+  [/wertschrift|wertpapier/i, 'A11'],
+  [/vorr(a|ä)t|warenlager|\blager\b|angefangene arbeit|halbfabrikat|rohmaterial/i, 'A14'],
+  [/beteiligung|finanzanlage/i, 'A20'],
+  [/mobiliar|maschine|fahrzeug|einrichtung|\bedv\b|informatik|hardware|werkzeug|apparat|büromaschine/i, 'A21'],
+  [/liegenschaft|gebäude|grundstück|immobil/i, 'A22'],
+  [/patent|lizenz|goodwill|software|marke/i, 'A23'],
+  [/umsatz|erlös|erloes|ertrag aus (lieferung|leistung)|dienstleistungsertrag|honorarertrag|warenverkauf|verkaufsertrag/i, 'E30'],
+  [/warenaufwand|materialaufwand|wareneinkauf|einkauf|fremdleistung|handelsware/i, 'E40'],
+  [/lohn|löhne|loehne|gehalt|salär|sozialleistung|personalaufwand|sozialversicherungsaufwand/i, 'E50'],
+  [/ausserordentlich|betriebsfremd|periodenfremd|direkte steuer|ertragssteuer|kapitalsteuer|steueraufwand/i, 'E80'],
+  [/miete|raumaufwand|unterhalt|reparatur|versicherung|energie|verwaltung|werbung|abschreibung|zinsaufwand|zinsertrag|bankspesen|büro|telefon|porti|fahrzeugaufwand|beratung/i, 'E60'],
+];
+
+export interface Classification {
+  group: AccountGroup;
+  source: 'nummer' | 'bezeichnung';
+}
+
+/** Zuerst über die Kontonummer (KMU-Kontenrahmen), sonst über die Bezeichnung. */
+export function classify(accountNumber: string, accountName: string, opts: { digits?: number } = {}): Classification | null {
+  const digits = accountNumber.replace(/\D/g, '');
+  // Nummer nur verwenden, wenn sie wie ein KMU-Konto aussieht (4-stellig oder länger, z. B. 102000)
+  const byNumber = digits.length >= (opts.digits ?? 4) ? classifyAccount(accountNumber) : null;
+  if (byNumber) return { group: byNumber, source: 'nummer' };
+  for (const [rx, code] of NAME_RULES) {
+    if (rx.test(accountName)) {
+      const g = KMU_GROUPS.find(x => x.code === code);
+      if (g) return { group: g, source: 'bezeichnung' };
+    }
+  }
+  return null;
+}
+
+/** Vorschlag Registerbuchstaben (Revisionsdossier), editierbar: A = Allgemeines, B = Flüssige Mittel, … */
+export function defaultGroupLetters(): Record<string, string> {
+  const order = KMU_GROUPS.filter(g => g.category !== 'abschluss').sort((a, b) => a.order - b.order);
+  const out: Record<string, string> = {};
+  order.forEach((g, i) => {
+    const n = i + 1; // B, C, D … (A bleibt frei für Allgemeines)
+    out[g.code] = n < 26 ? String.fromCharCode(65 + n) : `Z${n - 25}`;
+  });
+  return out;
+}

@@ -1,8 +1,8 @@
-import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import type { Cents } from './domain/amount.js';
 import { classifyRows, validateTrialBalance, type ClassifiedAccount, type SignConvention, type ValidationReport } from './domain/trialBalance/validate.js';
-import { parseTrialBalance, readGrid, type ColumnMapping } from './domain/trialBalance/parser.js';
+import { type ColumnMapping } from './domain/trialBalance/parser.js';
+import { loadTrialBalance, type ExplicitMapping, type LoadedTrialBalance } from './domain/trialBalance/load.js';
 import { extractAmounts, type AmountCandidate } from './domain/matching/extractAmounts.js';
 import { runMatching, type AccountResult, type MatchOutput } from './domain/matching/engine.js';
 import { listFiles, readDocument, type EvidenceDocument } from './ingest/readDocument.js';
@@ -15,8 +15,16 @@ export interface RunInput {
   client?: string;
   /** Bilanzstichtag ISO (YYYY-MM-DD) */
   closingDate: string | null;
+  /** Erste/einzige Datei der Saldobilanz */
   trialBalancePath: string;
+  /** Alle Dateien (z. B. Bilanz und Erfolgsrechnung getrennt); Standard: [trialBalancePath] */
+  trialBalancePaths?: string[];
+  /** Spaltenzuordnung für den ersten Teil (Kompatibilität) */
   trialBalanceMapping?: { headerRowIndex: number; mapping: ColumnMapping };
+  /** Spaltenzuordnung je Teil (Datei bzw. "Datei#Blatt") */
+  trialBalanceMappings?: Record<string, ExplicitMapping>;
+  /** Kontonummern haben min..max Ziffern; andere Zeilen (Gruppen, Zwischensummen) werden ausgeblendet */
+  accountDigits?: { min: number; max: number };
   signConvention?: SignConvention;
   /** Ein oder mehrere Ordner (inkl. Unterordner) und/oder einzelne Dateien */
   evidencePaths: string[];
@@ -46,6 +54,8 @@ export interface DocumentSummary {
   assigned: boolean;
   targetName: string;
   placement: PlacementResult | null;
+  /** Separates Notiz-PDF (bei Excel/Word/Bild) */
+  notePlacement?: PlacementResult | null;
 }
 
 export interface RunResult {
@@ -54,9 +64,32 @@ export interface RunResult {
   finishedAt: Date;
   accounts: ClassifiedAccount[];
   validation: ValidationReport;
+  trialBalance: Pick<LoadedTrialBalance, 'parts' | 'excluded' | 'digitStats' | 'suggestedDigits'>;
   match: MatchOutput;
   documents: DocumentSummary[];
   byAccount: Map<string, AccountResult>;
+  /** Entscheide der Prüferin / des Prüfers (nach applyReview) */
+  review?: import('./finalize.js').Review;
+}
+
+export const tbPaths = (input: Pick<RunInput, 'trialBalancePath' | 'trialBalancePaths'>) =>
+  input.trialBalancePaths?.length ? input.trialBalancePaths : [input.trialBalancePath];
+
+/** Saldobilanz aus allen Dateien laden; die alte Einzel-Zuordnung gilt für den ersten Teil. */
+export async function loadTrialBalanceFor(
+  input: Pick<RunInput, 'trialBalancePath' | 'trialBalancePaths' | 'trialBalanceMapping' | 'trialBalanceMappings' | 'accountDigits'>,
+  ocr?: LocalOcr,
+): Promise<LoadedTrialBalance> {
+  const paths = tbPaths(input);
+  // Alte Einzel-Zuordnung: gilt für den ersten Teil der ersten Datei (Schlüssel = Pfad)
+  const mappings = input.trialBalanceMappings ?? (input.trialBalanceMapping ? { [paths[0]!]: input.trialBalanceMapping } : undefined);
+  const tb = await loadTrialBalance(paths, { mappings, accountDigits: input.accountDigits, ocr });
+  const err = tb.parts.find(p => p.status === 'zuordnen');
+  if (err && !tb.rows.length) {
+    const { MappingError } = await import('./domain/trialBalance/parser.js');
+    throw new MappingError(`Kopfzeile nicht erkannt (${err.label}). Erwartet werden Spalten für Kontonummer, Bezeichnung und Saldo. Bitte Spalten zuordnen.`);
+  }
+  return tb;
 }
 
 /** Gesamter Ablauf ohne Netzwerk: Saldobilanz -> Belege lesen (inkl. OCR) -> Abgleich -> Ablage. */
@@ -67,16 +100,14 @@ export async function runAudit(input: RunInput): Promise<RunResult> {
   try {
     // 1. Saldobilanz
     progress({ phase: 'saldobilanz', message: 'Saldobilanz wird gelesen …' });
-    const tbBuf = await readFile(input.trialBalancePath);
-    const grid = await readGrid(tbBuf, path.basename(input.trialBalancePath));
-    const parsed = parseTrialBalance(grid, input.trialBalanceMapping);
-    const accounts = classifyRows(parsed.rows);
-    const validation = validateTrialBalance(accounts, parsed.issues, input.signConvention ?? 'signed');
+    const tb = await loadTrialBalanceFor(input, ocr);
+    const accounts = classifyRows(tb.rows);
+    const validation = validateTrialBalance(accounts, tb.issues, input.signConvention ?? 'signed');
 
     // 2. Belege finden
     progress({ phase: 'suchen', message: 'Belege werden gesucht …' });
     const exclude = [input.targetDir].filter((x): x is string => !!x).map(x => path.resolve(x));
-    const tbAbs = path.resolve(input.trialBalancePath);
+    const tbAbs = new Set(tbPaths(input).map(p => path.resolve(p)));
     const files: { absPath: string; relPath: string }[] = [];
     const multi = input.evidencePaths.length > 1;
     for (const p of input.evidencePaths) {
@@ -91,7 +122,7 @@ export async function runAudit(input: RunInput): Promise<RunResult> {
         files.push({ absPath: abs, relPath: path.basename(abs) });
       }
     }
-    const evidenceFiles = files.filter(f => path.resolve(f.absPath) !== tbAbs);
+    const evidenceFiles = files.filter(f => !tbAbs.has(path.resolve(f.absPath)));
 
     // 3. Lesen (inkl. Texterkennung)
     const docs: EvidenceDocument[] = [];
@@ -163,6 +194,7 @@ export async function runAudit(input: RunInput): Promise<RunResult> {
       finishedAt: new Date(),
       accounts,
       validation,
+      trialBalance: { parts: tb.parts, excluded: tb.excluded, digitStats: tb.digitStats, suggestedDigits: tb.suggestedDigits },
       match,
       documents,
       byAccount: new Map(match.results.map(r => [r.accountId, r])),

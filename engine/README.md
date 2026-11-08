@@ -16,6 +16,30 @@ keine Anmeldung, keine Administratorrechte.**
 | Ordner | rekursiv mit allen Unterordnern; Sperrdateien (`~$…`), `Thumbs.db` usw. werden ignoriert |
 
 Nicht unterstützte oder defekte Dateien werden im Belegverzeichnis mit Grund aufgeführt.
+Dateien, die nur in der Cloud liegen (OneDrive „Nur online verfügbar“) und nicht geladen werden können,
+erscheinen mit einem verständlichen Hinweis statt eines technischen Fehlers.
+
+## Saldobilanz bzw. Bilanz und Erfolgsrechnung
+Eine Datei oder **mehrere Dateien** (z. B. Bilanz.xlsx + Erfolgsrechnung.pdf); bei Excel werden **alle Blätter**
+gelesen (Blätter ohne Kontenliste wie ein Deckblatt werden ignoriert). Die Konten aller Teile werden zusammengeführt.
+
+**Ziffernbereich der Kontonummern (von–bis):** Nur Zeilen, deren Kontonummer so viele Ziffern hat, gelten als Konto.
+Gruppen, Zwischensummen und Totale (z. B. „100 Flüssige Mittel“, „Total Umlaufvermögen“) werden ausgeblendet und
+nachvollziehbar aufgelistet. Der Bereich wird automatisch vorgeschlagen (häufigste Länge).
+
+**Gruppierung nach KMU-Kontenrahmen:** über die Kontonummer; passt sie nicht (eigener Kontenplan), über die
+Bezeichnung (z. B. „Debitoren Inland“ → Forderungen aus L+L) – solche Zuordnungen sind als „bitte prüfen“ markiert.
+Hinweis: Das ist eine feste, nachvollziehbare Regelbasis, keine KI.
+
+| Format | Wie |
+|---|---|
+| Excel `.xlsx`/`.xlsm`/`.xls`, CSV | Spalten werden automatisch erkannt (Konto, Bezeichnung, Saldo **oder** Soll/Haben) |
+| **PDF mit Text** (Export aus Abacus, Bexio, Sage, Excel usw.) | Spalten werden aus der Lage der Zahlen auf der Seite rekonstruiert |
+| **PDF-Scan** | lokale Texterkennung, danach wie oben; Hinweis „aus Texterkennung – Beträge kontrollieren“ |
+
+- Getrennte Spalten **Soll** und **Haben**: Saldo = Soll − Haben.
+- Wiederholte Kopfzeilen auf Folgeseiten, Zwischentitel und Totalzeilen werden übersprungen.
+- Kontrolle Soll = Haben und Hinweise werden in der App und im Excel-Bericht angezeigt.
 
 ## Prüfregeln (Auszug)
 - Beträge in allen CH/DE-Formaten (`1'234.50`, `1 234,50`, `1.234,50`, `(1'234.50)`, `1'234.50-`, `CHF-7'410.00`);
@@ -26,14 +50,29 @@ Nicht unterstützte oder defekte Dateien werden im Belegverzeichnis mit Grund au
   **anderer Stichtag im Beleg**, **Betrag aus Texterkennung**.
 - Stichtag wird im Beleg gesucht (`31.12.2025`, `31.12.25`, `31. Dezember 2025`, `2025-12-31`).
 
+## Durchsicht und Abschluss
+Die Analyse legt noch nichts ab. Erst nach der Durchsicht (`finalizeAudit`) entstehen Ablage und Excel:
+- **Akzeptieren:** Konto „Prüfen“ → „Belegt“ (mit Visum, Datum, Kommentar).
+- **Manuell zuordnen:** Beleg → Konto oder „nicht relevant“ (Ordner `03_Nicht_relevant`). Ziel: jede Datei hat eine Zuordnung.
+- **Register:** Buchstabe je Gruppe (Vorschlag: B = Flüssige Mittel, C = Wertschriften, D = Forderungen L+L …, frei änderbar);
+  abgelegte Dateien heissen dann `B.1_Kontoauszug Bank A.pdf`, `B.2_Kontoauszug Bank B.pdf` (Reihenfolge: Kontonummer, Dateiname).
+- **Notizen je Konto:** bei PDF-Belegen als **erste Seite** im abgelegten PDF, bei Excel/Word/Bild als separates
+  `B.1_Notiz_<Datei>.pdf`; ausserdem im Excel (Spalte „Kommentar Prüfer“).
+- Ein bestehender Excel-Bericht wird nie überschrieben; ein erneuter Abschluss erzeugt „… (2).xlsx“.
+
 ## Qualität
 Zwei realistische Testsätze mit vorab festgelegter Soll-Lösung (`test/fixtures`, Generator in `test/corpus`):
 - **Alpenblick Treuhand AG**: 20 Dateien in 10 Unterordnern (Text-PDF, Scan-PDF, Handyfoto, xlsx, xls, docx,
   Excel mit Bild, defekte/fremde Dateien) – 100 % Fundstellen, 100 % Status, 0 fälschlich „Belegt“.
 - **Praxisfallen**: Zufallstreffer, Betrag auf Folgezeile, deutsches Zahlenformat, Kontoüberzug,
   Beträge als Text, sehr schlechter Scan, falscher Stichtag, Saldobilanz als CSV ohne Vorzeichen – 9/9.
+- **Saldobilanz als PDF**: Text-PDF über zwei Seiten mit wiederholter Kopfzeile, PDF mit Soll/Haben-Spalten
+  und gescannte Saldobilanz – je 27/27 Konten exakt.
+- **Bilanz und Erfolgsrechnung getrennt** (Excel + PDF) sowie in einer Datei mit Deckblatt/Bilanz/ER-Blatt, jeweils mit
+  Gruppen- und Totalzeilen: mit 4 Ziffern exakt die 27 Konten, gleiches Prüfergebnis.
+- **Durchsicht/Abschluss:** Akzeptieren, manuelle Zuordnung, Register-Präfix, Notizseite im PDF, Notiz-PDF, Excel-Spalten.
 
-`npm test` – 92 Tests (Beträge, Saldobilanz, Abgleich, Testsätze, Ablage, Datumserkennung, Excel, Diagnose, Belegvorschau und Fundstellen-Positionen).
+`npm test` – 109 Tests (Beträge, Saldobilanz, Abgleich, Testsätze, Ablage, Datumserkennung, Excel, Diagnose, Belegvorschau und Fundstellen-Positionen).
 
 ## Belegvorschau
 `renderPreview(datei, seite)` liefert die Seite als Bild (PDF, Scan, Foto, Bild in Excel), als Tabelle (Excel, CSV)
@@ -46,7 +85,7 @@ npx tsx src/cli.ts --mandat "Muster AG" --stichtag 31.12.2025 --saldobilanz SaBi
   --belege "C:\…\Kunde Upload" [--belege weitere] --ziel "C:\…\Intern\Muster AG\JA 2025" \
   [--modus kopieren|verschieben|keine] [--toleranz 1.00] [--vorzeichen signed|unsigned]
 ```
-Ergebnis: `Saldenabstimmung_<Mandat>_<Stichtag>.xlsx`, `…_Diagnose.txt` (ohne Beträge/Namen),
+Die Saldobilanz darf auch ein PDF sein. Ergebnis: `Saldenabstimmung_<Mandat>_<Stichtag>.xlsx`, `…_Diagnose.txt` (ohne Beträge/Namen),
 `01_Zugeordnet/`, `02_Nicht_zugeordnet/`.
 
 ## Grenzen

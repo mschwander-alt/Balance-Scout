@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import path from 'node:path';
 import { writeFile } from 'node:fs/promises';
-import { runAudit, writeExcelReport, reportFileName, diagnosticReport, type FileMode } from './index.js';
+import { runAudit, writeExcelReport, uniqueReportPath, diagnosticsPathFor, diagnosticReport, type FileMode } from './index.js';
 
 function usage(msg?: string): never {
   if (msg) console.error(`Fehler: ${msg}\n`);
@@ -46,10 +46,10 @@ const res = await runAudit({
   onProgress: p => process.stderr.write(`\r\x1b[K[${p.phase}] ${p.current ? `${p.current}/${p.total} ` : ''}${p.message.slice(0, 90)}`),
 });
 process.stderr.write('\n');
-const out = path.join(target ?? path.dirname(path.resolve(tb)), reportFileName(mandate, closingDate));
+const out = await uniqueReportPath(target ?? path.dirname(path.resolve(tb)), mandate, closingDate);
 await writeExcelReport(res, out);
 const diag = diagnosticReport(res);
-await writeFile(out.replace(/\.xlsx$/, '_Diagnose.txt'), diag, 'utf8');
+await writeFile(diagnosticsPathFor(out), diag, { encoding: 'utf8', flag: 'wx' });
 const c = res.match.summary.counts;
 console.log(`Konten: ${res.accounts.length} · Belegt ${c.BELEGT} · Prüfen ${c.PRUEFEN} · Kein Nachweis ${c.KEIN_NACHWEIS} · Abdeckung ${(res.match.summary.coverage * 100).toFixed(1)} %`);
 console.log(`Belege: ${res.documents.length} (zugeordnet ${res.documents.filter(d => d.assigned).length}) · Excel: ${out}`);

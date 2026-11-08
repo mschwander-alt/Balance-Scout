@@ -103,7 +103,20 @@ export async function readDocument(absPath: string, relPath: string, ctx: ReadCo
     base.warnings.push(`Datei grösser als ${Math.round(maxBytes / 1024 / 1024)} MB – übersprungen.`);
     return base;
   }
-  const buf = await readFile(absPath);
+  let buf: Buffer;
+  try {
+    buf = await readFile(absPath);
+  } catch (e) {
+    const err = e as NodeJS.ErrnoException;
+    base.status = 'error';
+    // OneDrive/SharePoint "Dateien bei Bedarf": Datei nur online und konnte nicht geladen werden
+    base.warnings.push(
+      err.code === 'EIO' || err.code === 'ETIMEDOUT' || /cloud|provider|offline/i.test(err.message)
+        ? 'Datei liegt nur in der Cloud und konnte nicht geladen werden – Internetverbindung und OneDrive prüfen oder Ordner „Immer auf diesem Gerät behalten“.'
+        : `Datei konnte nicht geöffnet werden: ${err.message}`,
+    );
+    return base;
+  }
   base.sha256 = createHash('sha256').update(buf).digest('hex');
   try {
     if (ext === '.pdf') await readPdf(buf, base, ctx);

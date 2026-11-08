@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { constants } from 'node:fs';
-import { copyFile, mkdir, readFile, rename, stat, unlink } from 'node:fs/promises';
+import { copyFile, mkdir, readFile, rename, stat, unlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 export type FileMode = 'copy' | 'move' | 'none';
@@ -14,6 +14,12 @@ export interface PlacementPlan {
   sha256: string;
   assigned: boolean;
   targetName: string;
+  /** Unterordner statt 01/02 (z. B. für „nicht relevant“) */
+  subDir?: string;
+  /** Abzulegender Inhalt statt der Originaldatei (z. B. PDF mit vorangestellter Notiz) */
+  content?: Buffer;
+  /** Neu erzeugte Datei ohne Original (z. B. Notiz-PDF) – beim Verschieben nichts löschen */
+  generated?: boolean;
 }
 
 export interface PlacementResult {
@@ -67,9 +73,11 @@ export async function placeFiles(targetDir: string, plans: PlacementPlan[], mode
   if (mode === 'none') return plans.map(p => ({ docId: p.docId, newPath: null, newRelPath: null, status: 'nicht abgelegt', at: null }));
   await mkdir(path.join(targetDir, ASSIGNED_DIR), { recursive: true });
   await mkdir(path.join(targetDir, UNASSIGNED_DIR), { recursive: true });
+  for (const sd of new Set(plans.map(p => p.subDir).filter((x): x is string => !!x))) await mkdir(path.join(targetDir, sd), { recursive: true });
   const results: PlacementResult[] = [];
   for (const p of plans) {
-    const sub = p.assigned ? ASSIGNED_DIR : UNASSIGNED_DIR;
+    const sub = p.subDir ?? (p.assigned ? ASSIGNED_DIR : UNASSIGNED_DIR);
+    const wantSha = p.content ? createHash('sha256').update(p.content).digest('hex') : p.sha256;
     try {
       let name = p.targetName;
       let dest = path.join(targetDir, sub, name);
@@ -79,7 +87,7 @@ export async function placeFiles(targetDir: string, plans: PlacementPlan[], mode
         const exists = await stat(dest).then(() => true, () => false);
         if (!exists) break;
         const sha = createHash('sha256').update(await readFile(dest)).digest('hex');
-        if (sha === p.sha256) {
+        if (sha === wantSha) {
           already = true;
           break;
         }
@@ -90,10 +98,14 @@ export async function placeFiles(targetDir: string, plans: PlacementPlan[], mode
       const rel = `${sub}/${name}`;
       if (already) {
         results.push({ docId: p.docId, newPath: dest, newRelPath: rel, status: 'bereits vorhanden', at: new Date() });
-        if (mode === 'move') await unlink(p.absPath).catch(() => undefined);
+        if (mode === 'move' && !p.generated) await unlink(p.absPath).catch(() => undefined);
         continue;
       }
-      if (mode === 'copy') {
+      if (p.content) {
+        await writeFile(dest, p.content, { flag: 'wx' });
+        if (mode === 'move' && !p.generated) await unlink(p.absPath);
+        results.push({ docId: p.docId, newPath: dest, newRelPath: rel, status: mode === 'move' && !p.generated ? 'verschoben' : 'kopiert', at: new Date() });
+      } else if (mode === 'copy') {
         await copyFile(p.absPath, dest, constants.COPYFILE_EXCL);
         results.push({ docId: p.docId, newPath: dest, newRelPath: rel, status: 'kopiert', at: new Date() });
       } else {

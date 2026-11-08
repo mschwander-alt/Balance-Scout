@@ -1,5 +1,5 @@
 import { formatChf, type Cents } from '../amount.js';
-import { classifyAccount, type Category } from './accountGroups.js';
+import { classify, type Category } from './accountGroups.js';
 import type { RowIssue, TrialBalanceRow } from './parser.js';
 
 /**
@@ -14,6 +14,8 @@ export interface ClassifiedAccount extends TrialBalanceRow {
   groupCode: string | null;
   groupName: string | null;
   category: Category;
+  /** Woher die Gruppe stammt: Kontonummer (KMU-Kontenrahmen) oder Bezeichnung (prüfen) */
+  groupSource: 'nummer' | 'bezeichnung' | null;
 }
 
 export interface Totals {
@@ -46,8 +48,8 @@ export interface ValidationReport {
 
 export function classifyRows(rows: TrialBalanceRow[]): ClassifiedAccount[] {
   return rows.map(r => {
-    const g = classifyAccount(r.accountNumber);
-    return { ...r, groupCode: g?.code ?? null, groupName: g?.name ?? null, category: g?.category ?? 'unbekannt' };
+    const c = classify(r.accountNumber, r.accountName);
+    return { ...r, groupCode: c?.group.code ?? null, groupName: c?.group.name ?? null, category: c?.group.category ?? 'unbekannt', groupSource: c?.source ?? null };
   });
 }
 
@@ -68,6 +70,9 @@ export function validateTrialBalance(
     } else seen.set(a.accountNumber, a.rowIndex);
   }
   for (const a of accounts) {
+    if (a.groupSource === 'bezeichnung') {
+      issues.push({ rowIndex: a.rowIndex, source: a.source, severity: 'warning', code: 'GROUP_FROM_NAME', message: `Konto ${a.accountNumber} "${a.accountName}": Gruppe „${a.groupName}“ aus der Bezeichnung abgeleitet – bitte prüfen.` });
+    }
     if (a.category === 'unbekannt') {
       issues.push({ rowIndex: a.rowIndex, severity: 'warning', code: 'UNCLASSIFIED', message: `Konto ${a.accountNumber} "${a.accountName}" passt in keine Gruppe des KMU-Kontenrahmens.` });
     }
