@@ -66,16 +66,28 @@ const listApp = async () => {
       : cp.execSync('pgrep -af balance-scout-lokal || true').toString().trim();
   } catch { return '(Liste nicht verfügbar)'; }
 };
-// Wie ein Benutzer: App zum Beenden auffordern und prüfen, ob der Prozess wirklich verschwindet
+// Wie ein Benutzer: App zum Beenden auffordern und prüfen, ob ALLE App-Prozesse verschwinden
+const countApp = async () => {
+  const cp = await import('node:child_process');
+  try {
+    if (process.platform === 'win32') {
+      const out = cp.execSync('tasklist /FI "IMAGENAME eq Balance Scout.exe" /FO CSV /NH').toString();
+      return out.split(/\r?\n/).filter(l => l.includes('Balance Scout.exe')).length;
+    }
+    return appPids.filter(id => { try { process.kill(id, 0); return true; } catch { return false; } }).length;
+  } catch { return -1; }
+};
+// Prozessnummern aller App-Prozesse (Haupt-, Fenster-, Grafik-, Engine-Prozess) merken
+const appPids = await app.evaluate(({ app }) => app.getAppMetrics().map(m => m.pid)).catch(() => []);
+step(`App-Prozesse vor dem Beenden: ${appPids.length}`);
 await app.evaluate(({ app }) => app.quit()).catch(() => {});
 let gone = false;
 for (let i = 0; i < 40 && !gone; i++) {
   await new Promise(r => setTimeout(r, 500));
-  gone = !alive(pid);
+  gone = (await countApp()) === 0;
 }
-step(`App-Prozess beendet: ${gone ? 'ja' : 'NEIN'}`);
-const rest = await listApp();
-if (rest && !/INFO:|Keine Aufgaben|No tasks/i.test(rest)) step(`Noch laufende Balance-Scout-Prozesse:\n${rest}`);
+step(`Alle App-Prozesse beendet: ${gone ? 'ja' : 'NEIN'}`);
+if (!gone) step(`Noch laufende Balance-Scout-Prozesse:\n${await listApp()}`);
 // Verbindung des Testwerkzeugs lösen, ohne auf offene Kanäle zu warten
 await Promise.race([app.close().catch(() => {}), new Promise(r => setTimeout(r, 5000))]);
 if (!gone) {

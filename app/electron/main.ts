@@ -268,16 +268,68 @@ function registerIpc(): void {
 }
 
 app.on('second-instance', showWindow);
-app.on('before-quit', () => {
-  quitting = true;
-  engine?.kill();
+// ------------------------------------------------------------------ Geordnetes Beenden
+// Unter Windows bleiben Hilfsprozesse von Electron (Grafik, Fensterinhalt, Prüf-Engine) zurück,
+// wenn der Hauptprozess abrupt endet. Deshalb: Engine beenden und abwarten, Fenster schliessen,
+// und notfalls alle eigenen Prozesse einzeln beenden, bevor die App sich beendet.
+let shuttingDown = false;
+const qlog = (m: string) => console.log(`[beenden] ${m}`);
+
+function stopEngine(): Promise<void> {
+  const p = engine;
   engine = null;
-  tray?.destroy();
-  tray = null;
-  // Sicherheitsnetz (v. a. Windows): falls sich die App nicht innert 3 s selbst beendet, hart beenden,
-  // damit kein unsichtbarer Prozess zurückbleibt.
-  setTimeout(() => app.exit(0), 3000).unref();
+  if (!p) return Promise.resolve();
+  return new Promise(resolve => {
+    const t = setTimeout(resolve, 2000);
+    p.once('exit', () => {
+      clearTimeout(t);
+      resolve();
+    });
+    p.kill();
+  });
+}
+
+function killHelperProcesses(): void {
+  for (const m of app.getAppMetrics()) {
+    if (m.pid === process.pid) continue;
+    try {
+      process.kill(m.pid);
+      qlog(`Hilfsprozess ${m.type} (${m.pid}) beendet`);
+    } catch {
+      /* bereits beendet */
+    }
+  }
+}
+
+app.on('before-quit', e => {
+  quitting = true;
+  if (shuttingDown) return;
+  e.preventDefault();
+  shuttingDown = true;
+  qlog('gestartet');
+  // Notfall: spätestens nach 5 s alle Prozesse beenden
+  const hard = setTimeout(() => {
+    qlog('Zeitüberschreitung – beende alle Prozesse');
+    killHelperProcesses();
+    app.exit(0);
+  }, 5000);
+  void (async () => {
+    await stopEngine();
+    qlog('Prüf-Engine beendet');
+    tray?.destroy();
+    tray = null;
+    for (const w of BrowserWindow.getAllWindows()) w.destroy();
+    qlog('Fenster geschlossen');
+    clearTimeout(hard);
+    app.quit(); // zweiter Aufruf: shuttingDown = true -> normales Beenden
+  })();
 });
+app.on('will-quit', () => qlog('will-quit'));
+app.on('quit', () => {
+  qlog('quit');
+  killHelperProcesses();
+});
+
 app.on('window-all-closed', () => {
   if (!settings().autoStart) app.quit();
 });
