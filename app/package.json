@@ -1,7 +1,7 @@
 {
   "name": "balance-scout-lokal",
   "productName": "Balance Scout",
-  "version": "0.4.0",
+  "version": "0.6.0",
   "private": true,
   "description": "Balance Scout – lokale Saldennachweis-Prüfung (ohne Server, ohne Cloud)",
   "main": "dist-electron/main.js",
@@ -83,13 +83,13 @@
       "perMachine": false,
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
-      "shortcutName": "Balance Scout"
+      "shortcutName": "Balance Scout Lokal"
     },
     "msi": {
       "perMachine": true,
       "oneClick": false,
       "createDesktopShortcut": true,
-      "shortcutName": "Balance Scout"
+      "shortcutName": "Balance Scout Lokal"
     },
     "linux": {
       "target": [

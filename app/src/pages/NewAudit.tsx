@@ -1,8 +1,12 @@
-import { useEffect, useState, type DragEvent } from 'react';
+import { Fragment, useEffect, useState, type DragEvent } from 'react';
 import { bsb } from '../bridge';
-import type { AppSettings, ColumnMapping, FileMode, JobInput, PickedPath, SignConvention, TbPreview } from '../../electron/shared';
+import type { AppSettings, CloudLocation, ColumnMapping, ExplicitMapping, FileMode, GroupsInfo, JobInput, PickedPath, SignConvention, TbPart, TbPreview } from '../../electron/shared';
 import { chf } from '../format';
 import { Modal, Spinner, useToast } from '../components/ui';
+import { groupAccounts } from '../review';
+import { ExcludedTable } from './Result';
+
+const picked = (p: string): PickedPath => ({ path: p, name: p.split(/[\\/]/).pop()!, isDirectory: false });
 
 export function NewAudit({ prefill, onStart }: { prefill?: Partial<JobInput>; onStart: (i: JobInput) => void }) {
   const toast = useToast();
@@ -10,17 +14,26 @@ export function NewAudit({ prefill, onStart }: { prefill?: Partial<JobInput>; on
   const [mandate, setMandate] = useState(prefill?.mandate ?? '');
   const [client, setClient] = useState(prefill?.client ?? '');
   const [closing, setClosing] = useState(prefill?.closingDate ?? `${new Date().getFullYear() - 1}-12-31`);
-  const [tb, setTb] = useState<PickedPath | null>(prefill?.trialBalancePath ? { path: prefill.trialBalancePath, name: prefill.trialBalancePath.split(/[\\/]/).pop()!, isDirectory: false } : null);
+  // Saldobilanz: eine oder mehrere Dateien (z. B. Bilanz und Erfolgsrechnung getrennt)
+  const [tbs, setTbs] = useState<PickedPath[]>((prefill?.trialBalancePaths ?? (prefill?.trialBalancePath ? [prefill.trialBalancePath] : [])).map(picked));
   const [sign, setSign] = useState<SignConvention>(prefill?.signConvention ?? 'signed');
-  const [mapping, setMapping] = useState<TbPreview['detected']>(prefill?.trialBalanceMapping ?? null);
+  const [mappings, setMappings] = useState<Record<string, ExplicitMapping>>(prefill?.trialBalanceMappings ?? (prefill?.trialBalanceMapping && prefill.trialBalancePath ? { [prefill.trialBalancePath]: prefill.trialBalanceMapping } : {}));
+  const [digits, setDigits] = useState<{ min: number; max: number } | null>(prefill?.accountDigits ?? null);
+  const [digitsTouched, setDigitsTouched] = useState(!!prefill?.accountDigits);
+  const [mapPart, setMapPart] = useState<TbPart | null>(null);
+  const [showAccounts, setShowAccounts] = useState(false);
+  const [groups, setGroups] = useState<GroupsInfo | null>(null);
+  useEffect(() => void bsb().review.groups().then(setGroups, () => undefined), []);
   const [preview, setPreview] = useState<TbPreview | null>(null);
   const [previewBusy, setPreviewBusy] = useState(false);
-  const [showMapping, setShowMapping] = useState(false);
   const [evidence, setEvidence] = useState<PickedPath[]>((prefill?.evidencePaths ?? []).map(p => ({ path: p, name: p.split(/[\\/]/).pop()!, isDirectory: !/\.[a-z0-9]{2,5}$/i.test(p) })));
   const [target, setTarget] = useState<string | null>(prefill?.targetDir ?? null);
   const [mode, setMode] = useState<FileMode>(prefill?.fileMode ?? 'copy');
   const [tol, setTol] = useState(prefill ? (prefill.absoluteToleranceCents! / 100).toFixed(2) : '1.00');
   const [over, setOver] = useState<'tb' | 'ev' | null>(null);
+  const [cloud, setCloud] = useState<CloudLocation[] | null>(null);
+  const [cloudHelp, setCloudHelp] = useState(false);
+  useEffect(() => void bsb().pick.cloudLocations().then(setCloud, () => setCloud([])), []);
 
   useEffect(() => {
     void bsb().app.settings().then(s => {
@@ -29,34 +42,41 @@ export function NewAudit({ prefill, onStart }: { prefill?: Partial<JobInput>; on
         setMode(s.fileMode);
         setTol(s.toleranceChf);
         setSign(s.signConvention);
+        if (s.accountDigits) {
+          setDigits(s.accountDigits);
+          setDigitsTouched(true);
+        }
       }
     });
   }, [prefill]);
 
   // Vorschau der Saldobilanz bei Änderung
   useEffect(() => {
-    if (!tb) return setPreview(null);
+    if (!tbs.length) return setPreview(null);
     setPreviewBusy(true);
-    bsb().engine.previewTrialBalance(tb.path, sign, mapping).then(
+    bsb().engine.previewTrialBalance(tbs.map(t => t.path), sign, { mappings, accountDigits: digits }).then(
       p => {
         setPreview(p);
-        if (!p.detected) setShowMapping(true);
+        // Ziffernbereich: Vorschlag übernehmen, solange der Benutzer nichts gewählt hat
+        if (!digitsTouched && p.suggestedDigits && (p.suggestedDigits.min !== digits?.min || p.suggestedDigits.max !== digits?.max)) setDigits(p.suggestedDigits);
+        const unmapped = p.parts?.find(x => x.status === 'zuordnen');
+        if (unmapped) setMapPart(unmapped);
       },
       e => toast('error', `Saldobilanz: ${(e as Error).message}`),
     ).finally(() => setPreviewBusy(false));
-  }, [tb, sign, mapping, toast]);
+  }, [tbs, sign, mappings, digits, digitsTouched, toast]);
+  const addTb = (items: PickedPath[]) => setTbs(cur => [...cur, ...items.filter(i => !cur.some(c => c.path === i.path))]);
 
   const addEvidence = (items: PickedPath[]) => setEvidence(ev => [...ev, ...items.filter(i => !ev.some(e => e.path === i.path))]);
   const onDrop = async (e: DragEvent, kind: 'tb' | 'ev') => {
     e.preventDefault();
     setOver(null);
-    const picked = (await Promise.all([...e.dataTransfer.files].map(f => bsb().pick.pathOf(f)))).filter((x): x is PickedPath => !!x);
+    const items = (await Promise.all([...e.dataTransfer.files].map(f => bsb().pick.pathOf(f)))).filter((x): x is PickedPath => !!x);
     if (kind === 'tb') {
-      const f = picked.find(p => !p.isDirectory && /\.(xlsx|xlsm|xls|csv)$/i.test(p.name));
-      if (!f) return toast('error', 'Bitte eine Excel- oder CSV-Datei als Saldobilanz ablegen.');
-      setMapping(null);
-      setTb(f);
-    } else addEvidence(picked);
+      const f = items.filter(p => !p.isDirectory && /\.(xlsx|xlsm|xls|csv|pdf)$/i.test(p.name));
+      if (!f.length) return toast('error', 'Bitte Excel-, CSV- oder PDF-Dateien (Bilanz, Erfolgsrechnung) ablegen.');
+      addTb(f);
+    } else addEvidence(items);
   };
   const dropProps = (kind: 'tb' | 'ev') => ({
     onDragOver: (e: DragEvent) => { e.preventDefault(); setOver(kind); },
@@ -74,20 +94,35 @@ export function NewAudit({ prefill, onStart }: { prefill?: Partial<JobInput>; on
   const tolCents = Math.round(Number(tol.replace(',', '.').replace(/'/g, '')) * 100);
   const problems = [
     !mandate.trim() && 'Mandat angeben',
-    !tb && 'Saldobilanz wählen',
-    tb && preview && !preview.detected && 'Spalten der Saldobilanz zuordnen',
+    !tbs.length && 'Saldobilanz wählen',
+    tbs.length && preview && (!preview.accounts.length || preview.parts?.some(x => x.status === 'zuordnen')) && 'Spalten der Saldobilanz zuordnen',
+    digits && (digits.min < 1 || digits.max < digits.min) ? 'Ziffernbereich ungültig' : null,
     !evidence.length && 'Unterlagen des Kunden wählen',
     mode !== 'none' && !target && 'Zielordner wählen (oder „nicht ablegen“)',
     !Number.isFinite(tolCents) || tolCents < 0 ? 'Toleranz ungültig' : null,
     evidence.some(e => target && (target === e.path || target.startsWith(e.path + '\\') || target.startsWith(e.path + '/'))) && mode === 'move' ? 'Beim Verschieben darf der Zielordner nicht im Kundenordner liegen' : null,
   ].filter(Boolean) as string[];
 
-  const start = () =>
+  const start = () => {
+    if (digits) void bsb().app.saveSettings({ accountDigits: digits });
     onStart({
-      mandate: mandate.trim(), client: client.trim() || undefined, closingDate: closing || null, trialBalancePath: tb!.path,
-      trialBalanceMapping: mapping ?? undefined, signConvention: sign, evidencePaths: evidence.map(e => e.path),
+      mandate: mandate.trim(), client: client.trim() || undefined, closingDate: closing || null, trialBalancePath: tbs[0]!.path,
+      trialBalancePaths: tbs.map(t => t.path), trialBalanceMappings: Object.keys(mappings).length ? mappings : undefined,
+      accountDigits: digits ?? undefined, signConvention: sign, evidencePaths: evidence.map(e => e.path),
       targetDir: mode === 'none' ? null : target, fileMode: mode, absoluteToleranceCents: tolCents,
     });
+  };
+  const setDigit = (k: 'min' | 'max', v: string) => {
+    const n = Math.max(1, Math.min(12, Number(v) || 1));
+    setDigitsTouched(true);
+    setDigits(d => {
+      const cur = d ?? { min: n, max: n };
+      const next = { ...cur, [k]: n };
+      if (k === 'min' && next.max < n) next.max = n;
+      if (k === 'max' && next.min > n) next.min = n;
+      return next;
+    });
+  };
 
   return (
     <div className="page stack">
@@ -102,31 +137,60 @@ export function NewAudit({ prefill, onStart }: { prefill?: Partial<JobInput>; on
 
       <div className="grid2">
         <div className="card">
-          <p className="step"><span className="num">2</span><strong>Saldobilanz</strong></p>
+          <p className="step"><span className="num">2</span><strong>Bilanz und Erfolgsrechnung</strong></p>
           <div {...dropProps('tb')}>
-            {tb ? <><strong>{tb.name}</strong><div className="small">{tb.path}</div></> : <>Excel/CSV hierher ziehen oder</>}
+            {tbs.length ? (
+              <ul className="paths">
+                {tbs.map(t => (
+                  <li key={t.path}>
+                    <span>📄</span><span className="grow" title={t.path}><strong>{t.name}</strong></span>
+                    <button className="icon-btn" aria-label="entfernen" onClick={() => setTbs(cur => cur.filter(x => x.path !== t.path))}>✕</button>
+                  </li>
+                ))}
+              </ul>
+            ) : <>Saldobilanz bzw. Bilanz und Erfolgsrechnung hierher ziehen – eine Datei oder mehrere (Excel, CSV, PDF, auch Scan)</>}
             <div style={{ marginTop: 8 }}>
-              <button className="btn btn-sm" onClick={async () => { const f = await bsb().pick.trialBalance(); if (f) { setMapping(null); setTb(f); } }}>{tb ? 'Andere Datei …' : 'Datei wählen …'}</button>
+              <button className="btn btn-sm" onClick={async () => { const f = await bsb().pick.trialBalance(); if (f) addTb([f]); }}>{tbs.length ? 'Weitere Datei …' : 'Datei wählen …'}</button>
             </div>
           </div>
           <div className="row" style={{ marginTop: 10 }}>
+            <label className="field inline"><span>Kontonummern</span>
+              <span className="row" style={{ gap: 4 }}>
+                von <input className="w-xs" type="number" min={1} max={12} aria-label="Ziffern von" value={digits?.min ?? ''} onChange={e => setDigit('min', e.target.value)} />
+                bis <input className="w-xs" type="number" min={1} max={12} aria-label="Ziffern bis" value={digits?.max ?? ''} onChange={e => setDigit('max', e.target.value)} /> Ziffern
+              </span>
+            </label>
             <label className="field inline"><span>Vorzeichen</span>
               <select value={sign} onChange={e => setSign(e.target.value as SignConvention)}>
                 <option value="signed">Soll + / Haben −</option>
                 <option value="unsigned">Alle Salden positiv</option>
               </select>
             </label>
-            {tb && <button className="link small" onClick={() => setShowMapping(true)}>Spalten zuordnen …</button>}
           </div>
+          {digits && !digitsTouched && preview?.suggestedDigits && <p className="small muted">Ziffernbereich automatisch vorgeschlagen – Gruppen und Zwischensummen mit kürzeren Nummern werden ausgeblendet.</p>}
           {previewBusy && <Spinner label="Saldobilanz wird geprüft …" />}
-          {preview?.validation && !previewBusy && (
+          {preview && !previewBusy && (
             <div style={{ marginTop: 10 }}>
-              <div className={preview.validation.ok ? 'ok-box' : 'warn-box'}>
-                {preview.validation.accountCount} Konten erkannt ·{' '}
-                {preview.validation.checks.map(c => `${c.passed ? '✓' : '✗'} ${c.name.replace('Aktuelles Jahr: ', '')}`).join(' · ')}
-              </div>
-              {preview.validation.issues.filter(i => i.severity === 'error').slice(0, 3).map((i, n) => <p key={n} className="error-text small">Zeile {i.rowIndex}: {i.message}</p>)}
-              {!preview.validation.checks.every(c => c.passed) && <p className="small muted">Tipp: Vorzeichen-Einstellung prüfen. Die Prüfung kann trotzdem gestartet werden.</p>}
+              {preview.parts && preview.parts.length > 0 && (
+                <ul className="parts small">
+                  {preview.parts.map(p => (
+                    <li key={p.id} className={p.status}>
+                      {p.label}: {p.status === 'ok' ? `${p.accountCount} Konten` : p.status === 'ignoriert' ? 'keine Kontenliste (ignoriert)' : 'Spalten nicht erkannt'}
+                      {p.ocrPages > 0 && ' · Texterkennung'}{' '}
+                      <button className="link small" onClick={() => setMapPart(p)}>Spalten zuordnen …</button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              {preview.validation && (
+                <div className={preview.validation.ok ? 'ok-box' : 'warn-box'}>
+                  {preview.validation.accountCount} Konten erkannt{preview.excluded?.length ? ` · ${preview.excluded.length} Zeilen ausgeblendet` : ''} ·{' '}
+                  {preview.validation.checks.map(c => `${c.passed ? '✓' : '✗'} ${c.name.replace('Aktuelles Jahr: ', '')}`).join(' · ')}
+                </div>
+              )}
+              {preview.accounts.length > 0 && <button className="link small" onClick={() => setShowAccounts(true)}>Konten anzeigen (gegliedert nach KMU-Kontenrahmen) …</button>}
+              {preview.validation?.issues.filter(i => i.severity === 'error').slice(0, 3).map((i, n) => <p key={n} className="error-text small">{i.source ? `${i.source}, ` : ''}Zeile {i.rowIndex}: {i.message}</p>)}
+              {preview.validation && !preview.validation.checks.every(c => c.passed) && <p className="small muted">Tipp: Sind Bilanz <em>und</em> Erfolgsrechnung dabei? Vorzeichen-Einstellung prüfen. Die Prüfung kann trotzdem gestartet werden.</p>}
             </div>
           )}
         </div>
@@ -152,7 +216,19 @@ export function NewAudit({ prefill, onStart }: { prefill?: Partial<JobInput>; on
               </ul>
             )}
           </div>
-          <p className="small muted" style={{ marginTop: 8 }}>Tipp: Synchronisierte OneDrive-/SharePoint-Ordner im Explorer funktionieren wie normale Ordner.</p>
+          <div className="cloud" style={{ marginTop: 10 }}>
+            <span className="small muted">Aus der Cloud: </span>
+            {cloud === null ? null : cloud.length ? (
+              cloud.map(c => (
+                <button key={c.path} className="chip" title={c.path} onClick={async () => addEvidence(await bsb().pick.evidence('folders', c.path))}>
+                  {c.kind === 'sharepoint' ? '☁ ' : '☁ '}{c.label}
+                </button>
+              ))
+            ) : (
+              <span className="small warn">keine synchronisierten OneDrive-/SharePoint-Ordner gefunden.</span>
+            )}{' '}
+            <button className="link small" onClick={() => setCloudHelp(true)}>Cloud-Ordner einrichten …</button>
+          </div>
         </div>
       </div>
 
@@ -178,7 +254,7 @@ export function NewAudit({ prefill, onStart }: { prefill?: Partial<JobInput>; on
         <p className="small muted" style={{ marginTop: 8 }}>
           {mode === 'none'
             ? 'Die Excel-Dokumentation wird neben der Saldobilanz gespeichert.'
-            : <>Im Zielordner entstehen <code>01_Zugeordnet</code>, <code>02_Nicht_zugeordnet</code> und die Excel-Dokumentation. Vorhandene Dateien werden nie überschrieben.</>}
+            : <>Nach der Durchsicht entstehen beim <strong>Abschliessen</strong> im Zielordner <code>01_Zugeordnet</code> (Dateinamen mit Register, z. B. <code>B.1_…</code>), <code>02_Nicht_zugeordnet</code>, <code>03_Nicht_relevant</code> und die Excel-Dokumentation. Vorhandene Dateien werden nie überschrieben.</>}
           {mode === 'move' && <strong className="warn"> Achtung: Die Dateien werden aus dem Kundenordner entfernt.</strong>}
         </p>
       </div>
@@ -188,20 +264,59 @@ export function NewAudit({ prefill, onStart }: { prefill?: Partial<JobInput>; on
         <button className="btn btn-primary btn-lg" disabled={problems.length > 0} onClick={start}>Prüfung starten</button>
       </div>
 
-      {showMapping && tb && (
+      {cloudHelp && (
+        <Modal title="Cloud-Dateien in Balance Scout verwenden" onClose={() => setCloudHelp(false)} footer={<button className="btn btn-primary" onClick={async () => { setCloudHelp(false); setCloud(await bsb().pick.cloudLocations()); }}>Fertig – erneut suchen</button>}>
+          <p>Balance Scout liest Ordner, die Windows im Explorer anzeigt. Dateien aus <strong>SharePoint/Teams</strong> und <strong>OneDrive</strong> erscheinen dort, sobald sie mit der OneDrive-App synchronisiert sind – das kann jeder Benutzer selbst einrichten, ohne Administratorrechte:</p>
+          <ol>
+            <li>Im Browser die SharePoint-Bibliothek bzw. den Teams-Kanal (Reiter <em>Dateien</em>) mit den Kundenunterlagen öffnen.</li>
+            <li>Oben auf <strong>Synchronisieren</strong> klicken (oder bei einem Ordner <strong>Verknüpfung zu „Meine Dateien“ hinzufügen</strong>).</li>
+            <li>Die Anfrage „OneDrive öffnen“ bestätigen. Die Bibliothek erscheint im Explorer unter dem Namen der Firma bzw. unter OneDrive.</li>
+          </ol>
+          <p className="small muted">Dateien, die nur online liegen („Dateien bei Bedarf“), lädt Windows beim Prüfen automatisch herunter. Ohne Internetverbindung meldet Balance Scout solche Dateien im Belegverzeichnis.</p>
+        </Modal>
+      )}
+      {mapPart && (
         <MappingDialog
-          preview={preview}
-          current={mapping ?? preview?.detected ?? null}
-          onClose={() => setShowMapping(false)}
-          onApply={m => { setMapping(m); setShowMapping(false); }}
+          part={mapPart}
+          current={mappings[mapPart.id] ?? mapPart.used ?? null}
+          onClose={() => setMapPart(null)}
+          onApply={m => { setMappings(cur => ({ ...cur, [mapPart.id]: m })); setMapPart(null); }}
         />
+      )}
+      {showAccounts && preview && (
+        <Modal title={`Konten (${preview.accounts.length})`} wide onClose={() => setShowAccounts(false)} footer={<button className="btn btn-primary" onClick={() => setShowAccounts(false)}>Schliessen</button>}>
+          <div className="table-wrap" style={{ maxHeight: 460 }}>
+            <table className="grid small">
+              <thead><tr><th>Konto</th><th>Bezeichnung</th><th className="num">Saldo</th><th className="num">Vorjahr</th><th>Herkunft</th></tr></thead>
+              <tbody>
+                {groupAccounts(preview.accounts.map(a => ({ ...a, groupName: a.groupName ?? null })), groups?.groups.map(g => g.code) ?? []).map(g => (
+                  <Fragment key={g.code}>
+                    <tr className="group-row"><td colSpan={2}>{g.name}</td><td className="num mono">{chf(g.total)}</td><td /><td className="muted">{g.items.length} Konten</td></tr>
+                    {g.items.map(a => (
+                      <tr key={`${a.source}-${a.accountNumber}`}>
+                        <td className="mono">{a.accountNumber}</td>
+                        <td>{a.accountName}{a.groupSource === 'bezeichnung' && <span className="flag" title="Gruppe aus der Bezeichnung abgeleitet">Gruppe?</span>}</td>
+                        <td className="num mono">{chf(a.balance)}</td>
+                        <td className="num mono muted">{a.balancePreviousYear == null ? '' : chf(a.balancePreviousYear)}</td>
+                        <td className="muted">{a.source ?? ''}</td>
+                      </tr>
+                    ))}
+                  </Fragment>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          {preview.excluded?.length ? (
+            <details style={{ marginTop: 10 }}><summary className="small">Ausgeblendete Zeilen (Gruppen, Zwischensummen): {preview.excluded.length}</summary><ExcludedTable rows={preview.excluded} /></details>
+          ) : null}
+        </Modal>
       )}
     </div>
   );
 }
 
-function MappingDialog({ preview, current, onClose, onApply }: { preview: TbPreview | null; current: TbPreview['detected']; onClose: () => void; onApply: (m: NonNullable<TbPreview['detected']>) => void }) {
-  const head = preview?.head ?? [];
+function MappingDialog({ part, current, onClose, onApply }: { part: TbPart; current: TbPreview['detected']; onClose: () => void; onApply: (m: NonNullable<TbPreview['detected']>) => void }) {
+  const head = part.head ?? [];
   const [hdr, setHdr] = useState(current?.headerRowIndex ?? 0);
   const [m, setM] = useState<Partial<ColumnMapping>>(current?.mapping ?? {});
   const cols = Math.max(0, ...head.map(r => r.length));
@@ -214,13 +329,13 @@ function MappingDialog({ preview, current, onClose, onApply }: { preview: TbPrev
       </select>
     </label>
   );
-  const valid = m.accountNumber !== undefined && m.accountName !== undefined && m.balanceCurrentYear !== undefined;
+  const valid = m.accountNumber !== undefined && m.accountName !== undefined && (m.balanceCurrentYear !== undefined || (m.balanceDebit !== undefined && m.balanceCredit !== undefined));
   return (
-    <Modal title="Spalten der Saldobilanz zuordnen" wide onClose={onClose} footer={<>
+    <Modal title={`Spalten zuordnen – ${part.label}`} wide onClose={onClose} footer={<>
       <button className="btn" onClick={onClose}>Abbrechen</button>
       <button className="btn btn-primary" disabled={!valid} onClick={() => onApply({ headerRowIndex: hdr, mapping: m as ColumnMapping })}>Übernehmen</button>
     </>}>
-      {!preview?.detected && <p className="warn-box small">Die Spalten wurden nicht automatisch erkannt. Bitte Kopfzeile anklicken und Spalten wählen.</p>}
+      {!part.detected && <p className="warn-box small">Die Spalten wurden nicht automatisch erkannt. Bitte Kopfzeile anklicken und Spalten wählen.</p>}
       <div className="mapping-table">
         <table>
           <tbody>
@@ -237,10 +352,15 @@ function MappingDialog({ preview, current, onClose, onApply }: { preview: TbPrev
       <div className="row">
         {sel('accountNumber', 'Kontonummer')}
         {sel('accountName', 'Bezeichnung')}
-        {sel('balanceCurrentYear', 'Saldo Stichtag')}
+        {sel('balanceCurrentYear', 'Saldo Stichtag', true)}
         {sel('balancePreviousYear', 'Saldo Vorjahr', true)}
       </div>
-      {preview?.accounts.length ? <p className="small muted">Beispiel: {preview.accounts.slice(0, 3).map(a => `${a.accountNumber} ${a.accountName} ${chf(a.balance)}`).join(' · ')}</p> : null}
+      <div className="row" style={{ marginTop: 8 }}>
+        <span className="small muted">Ohne Saldo-Spalte:</span>
+        {sel('balanceDebit', 'Soll', true)}
+        {sel('balanceCredit', 'Haben', true)}
+        <span className="small muted">→ Saldo = Soll − Haben</span>
+      </div>
     </Modal>
   );
 }

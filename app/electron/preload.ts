@@ -3,14 +3,15 @@ import type { BsbBridge, Progress } from './shared';
 
 const bridge: BsbBridge & { app: BsbBridge['app'] & { loadResult(id: string): Promise<unknown> } } = {
   pick: {
-    trialBalance: () => ipcRenderer.invoke('pick:trialBalance'),
-    evidence: kind => ipcRenderer.invoke('pick:evidence', kind),
+    trialBalance: d => ipcRenderer.invoke('pick:trialBalance', d),
+    evidence: (kind, d) => ipcRenderer.invoke('pick:evidence', kind, d),
+    cloudLocations: () => ipcRenderer.invoke('pick:cloudLocations'),
     targetDir: d => ipcRenderer.invoke('pick:targetDir', d),
     // Drag & Drop: Pfad der Datei/des Ordners über Electron ermitteln und im Hauptprozess prüfen
     pathOf: file => ipcRenderer.invoke('pick:validate', webUtils.getPathForFile(file)),
   },
   engine: {
-    previewTrialBalance: (p, s, m) => ipcRenderer.invoke('engine:preview', p, s, m),
+    previewTrialBalance: (p, s, o) => ipcRenderer.invoke('engine:preview', p, s, o),
     run: input => ipcRenderer.invoke('engine:run', input),
     cancel: () => ipcRenderer.invoke('engine:cancel'),
     filePreview: (p: string, page: number) => ipcRenderer.invoke('engine:filePreview', p, page),
@@ -19,6 +20,11 @@ const bridge: BsbBridge & { app: BsbBridge['app'] & { loadResult(id: string): Pr
       ipcRenderer.on('bsb:progress', h);
       return () => ipcRenderer.removeListener('bsb:progress', h);
     },
+  },
+  review: {
+    save: (id, d) => ipcRenderer.invoke('review:save', id, d),
+    finalize: (id, d) => ipcRenderer.invoke('review:finalize', id, d),
+    groups: () => ipcRenderer.invoke('review:groups'),
   },
   app: {
     openPath: p => ipcRenderer.invoke('app:openPath', p),

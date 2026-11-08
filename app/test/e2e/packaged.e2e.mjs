@@ -4,7 +4,7 @@
  * Aufruf: xvfb-run -a node test/e2e/packaged.e2e.mjs <Pfad zur ausführbaren Datei>
  */
 import { _electron as electron } from 'playwright-core';
-import { mkdtempSync, readdirSync } from 'node:fs';
+import { mkdtempSync, readdirSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import assert from 'node:assert/strict';
@@ -26,6 +26,9 @@ mark('App gestartet, warte auf Fenster');
 const win = await app.firstWindow();
 await win.waitForLoadState('domcontentloaded');
 mark('Fenster geladen');
+// Es muss die lokale App erscheinen – nicht eine andere "Balance Scout"-App, die bereits läuft
+await win.getByText('lokal · ohne Cloud').waitFor({ timeout: 15_000 });
+mark('Richtige App sichtbar (Balance Scout lokal)');
 
 const info = await app.evaluate(({ app }) => ({ packaged: app.isPackaged, resources: process.resourcesPath }));
 console.log('verpackt:', info.packaged, '·', info.resources);
@@ -40,6 +43,10 @@ const result = await win.evaluate(async ({ FIX, target }) => window.bsb.engine.r
   mandate: 'Paket-Test', closingDate: '2025-12-31', trialBalancePath: FIX + '/Saldobilanz_2025.xlsx', signConvention: 'signed',
   evidencePaths: [FIX + '/Kunde_Upload'], targetDir: target, fileMode: 'copy', absoluteToleranceCents: 100,
 }), { FIX, target });
+// Schritt 2: Abschliessen (ohne Entscheide) – erst jetzt Ablage und Excel
+assert.equal(readdirSync(target).length, 0, 'vor dem Abschliessen nichts ablegen');
+const fin = await win.evaluate(id => window.bsb.review.finalize(id, {}), result.historyId);
+assert.ok(fin.finalized && fin.excelPath.endsWith('.xlsx'));
 const ocr = result.documents.filter(d => d.ocrPages > 0).length;
 const errs = result.documents.filter(d => d.status === 'error').map(d => d.relPath);
 console.log('Ergebnis:', JSON.stringify(result.summary.counts), '· Texterkennung:', ocr, '· Fehler:', errs.join(', '));
@@ -48,13 +55,37 @@ assert.equal(ocr, 4);
 assert.deepEqual(errs, ['Diverses/defekt.pdf']);
 assert.equal(readdirSync(target).filter(f => f.endsWith('.xlsx')).length, 1);
 // Belegvorschau in der verpackten App (Scan-PDF -> Bild) und Schutz gegen fremde Dateien
+mark('Saldobilanz als PDF (Scan)');
+const TBPDF = path.resolve(import.meta.dirname, '..', '..', '..', 'engine', 'test', 'fixtures', 'tb_pdf');
+const pvTb = await win.evaluate(p => window.bsb.engine.previewTrialBalance(p, 'signed'), TBPDF + '/SaBi_Scan.pdf');
+console.log('PDF-Saldobilanz (Scan):', pvTb.accounts.length, 'Konten,', pvTb.validation.issues.filter(i => i.code === 'TB_OCR').length, 'Hinweis Texterkennung');
+assert.equal(pvTb.accounts.length, 27);
+const SPLIT = path.resolve(import.meta.dirname, '..', '..', '..', 'engine', 'test', 'fixtures', 'tb_split');
+const pvSplit = await win.evaluate(p => window.bsb.engine.previewTrialBalance(p, 'signed', { accountDigits: { min: 4, max: 4 } }), [SPLIT + '/Bilanz_2025.xlsx', SPLIT + '/Erfolgsrechnung_2025.pdf']);
+console.log('Bilanz + Erfolgsrechnung getrennt:', pvSplit.accounts.length, 'Konten,', pvSplit.excluded.length, 'Zeilen ausgeblendet');
+assert.equal(pvSplit.accounts.length, 27);
 mark('Belegvorschau');
 const scan = result.documents.find(d => d.relPath === 'Bank/ZKB/Scan_20260112.pdf');
-const pv = await win.evaluate(p => window.bsb.engine.filePreview(p, 1), scan.placement.newPath);
+const pv = await win.evaluate(p => window.bsb.engine.filePreview(p, 1), fin.filed[scan.id].placement.newPath);
 assert.equal(pv.kind, 'image');
 const denied = await win.evaluate(() => window.bsb.engine.filePreview('/etc/passwd', 1).then(() => 'erlaubt', e => e.message));
 assert.match(denied, /nur für Belege der geöffneten Prüfung/);
 console.log('Vorschau ok, fremde Datei abgewiesen');
+// Zweiter Lauf in denselben Zielordner: bestehender Bericht (evtl. mit Prüfer-Einträgen) bleibt unverändert
+mark('Zweiter Lauf in denselben Zielordner');
+const firstXlsx = readdirSync(target).find(f => f.endsWith('.xlsx'));
+const firstBytes = readFileSync(path.join(target, firstXlsx));
+const r2a = await win.evaluate(async ({ FIX, target }) => window.bsb.engine.run({
+  mandate: 'Paket-Test', closingDate: '2025-12-31', trialBalancePath: FIX + '/Saldobilanz_2025.xlsx', signConvention: 'signed',
+  evidencePaths: [FIX + '/Kunde_Upload/Debitoren'], targetDir: target, fileMode: 'copy', absoluteToleranceCents: 100,
+}), { FIX, target });
+const r2 = await win.evaluate(id => window.bsb.review.finalize(id, {}), r2a.historyId);
+const st2 = Object.values(r2.filed).map(f => f.placement?.status);
+console.log('Zweiter Bericht:', path.basename(r2.excelPath), '· Ablage:', st2.join(', '));
+assert.match(r2.excelPath, / \(2\)\.xlsx$/);
+assert.equal(readdirSync(target).filter(f => f.endsWith('.xlsx')).length, 2);
+assert.ok(readFileSync(path.join(target, firstXlsx)).equals(firstBytes), 'erster Bericht wurde verändert');
+assert.deepEqual(st2, ['bereits vorhanden']);
 mark('App wird beendet');
 const pid = app.process().pid;
 const alive = id => { try { process.kill(id, 0); return true; } catch { return false; } };

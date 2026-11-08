@@ -1,0 +1,107 @@
+/**
+ * Anzeige-Logik der Durchsicht: wendet die Entscheide der Prüferin / des Prüfers auf das
+ * Analyse-Ergebnis an (gleiche Regeln wie die Engine beim Abschluss).
+ */
+import type { ReviewDecisions } from '../electron/shared';
+import type { AccountRow, AuditResult, DocRow, Status } from './types';
+
+export type Manual = 'akzeptiert' | 'zugeordnet' | null;
+export interface ViewAccount extends AccountRow {
+  autoStatus: Status;
+  manual: Manual;
+  /** Beleg (docId), der für das Konto massgebend ist */
+  docId: string | null;
+}
+export interface ViewDoc extends DocRow {
+  accounts: string[];
+  manualAssignment: boolean;
+  irrelevant: boolean;
+  register: string | null;
+}
+export interface View {
+  accounts: ViewAccount[];
+  docs: ViewDoc[];
+  counts: Record<Status, number>;
+  coverage: number;
+  confirmedAbsTotal: number;
+  inScopeAbsTotal: number;
+  open: { pruefen: number; unassignedDocs: number };
+}
+
+export function deriveView(r: AuditResult, d: ReviewDecisions): View {
+  const asg = d.assignments ?? {};
+  const accounts: ViewAccount[] = r.accounts.map(a => ({ ...a, autoStatus: a.status, manual: null, docId: a.best && (a.status === 'BELEGT' || a.status === 'PRUEFEN') ? a.best.documentId : null }));
+  const byNum = new Map(accounts.map(a => [a.accountNumber, a]));
+  for (const [docId, x] of Object.entries(asg)) {
+    // Ein vom Prüfer anders zugeordneter Beleg ist nicht mehr Fundstelle eines "Prüfen"-Kontos
+    for (const a of accounts) if (a.docId === docId && a.accountNumber !== x.accountNumber && a.status === 'PRUEFEN') {
+      a.status = 'KEIN_NACHWEIS';
+      a.docId = null;
+    }
+    if (!x.accountNumber) continue;
+    const a = byNum.get(x.accountNumber);
+    if (!a) continue;
+    if (a.status === 'BELEGT' && a.docId && a.docId !== docId) continue; // zusätzlicher Beleg
+    a.status = 'BELEGT';
+    a.docId = docId;
+    a.manual = 'zugeordnet';
+  }
+  for (const [num] of Object.entries(d.accepted ?? {})) {
+    const a = byNum.get(num);
+    if (a && a.status === 'PRUEFEN') {
+      a.status = 'BELEGT';
+      a.manual = 'akzeptiert';
+    }
+  }
+  const docAcc = new Map<string, string[]>();
+  for (const a of accounts) if (a.docId && (a.status === 'BELEGT' || a.status === 'PRUEFEN')) docAcc.set(a.docId, [...(docAcc.get(a.docId) ?? []), a.accountNumber]);
+  for (const [docId, x] of Object.entries(asg)) docAcc.set(docId, x.accountNumber ? [x.accountNumber] : []);
+  const docs: ViewDoc[] = r.documents.map(doc => {
+    const acc = docAcc.get(doc.id) ?? [];
+    return { ...doc, accounts: acc, assigned: acc.length > 0, manualAssignment: !!asg[doc.id], irrelevant: asg[doc.id]?.accountNumber === null, register: null };
+  });
+  // Register: Buchstabe der Gruppe des kleinsten Kontos + laufende Nummer (Reihenfolge: Konto, Dateiname)
+  const letters = d.groupLetters ?? {};
+  const groupOf = new Map(accounts.map(a => [a.accountNumber, a.groupCode ?? null]));
+  const items: { doc: ViewDoc; letter: string; key: string }[] = [];
+  for (const doc of docs) {
+    if (!doc.assigned) continue;
+    const acc = [...doc.accounts].sort((x, y) => x.localeCompare(y, 'de', { numeric: true }))[0]!;
+    const g = groupOf.get(acc);
+    const letter = (g && letters[g]?.trim()) || '';
+    if (letter) items.push({ doc, letter, key: `${acc.padStart(12, '0')} ${doc.filename.toLowerCase()}` });
+  }
+  const byLetter = new Map<string, typeof items>();
+  for (const it of items) byLetter.set(it.letter, [...(byLetter.get(it.letter) ?? []), it]);
+  for (const [letter, list] of byLetter) {
+    list.sort((x, y) => x.key.localeCompare(y.key, 'de'));
+    list.forEach((it, i) => (it.doc.register = `${letter}.${i + 1}`));
+  }
+
+  const counts = { BELEGT: 0, PRUEFEN: 0, KEIN_NACHWEIS: 0, NULLSALDO: 0, NICHT_IM_UMFANG: 0 } as Record<Status, number>;
+  let inScope = 0;
+  let ok = 0;
+  for (const a of accounts) {
+    counts[a.status]++;
+    if (a.status !== 'NICHT_IM_UMFANG') inScope += Math.abs(a.balance);
+    if (a.status === 'BELEGT') ok += Math.abs(a.balance);
+  }
+  return {
+    accounts, docs, counts, coverage: inScope ? ok / inScope : 0, confirmedAbsTotal: ok, inScopeAbsTotal: inScope,
+    open: { pruefen: counts.PRUEFEN, unassignedDocs: docs.filter(x => !x.assigned && !x.irrelevant).length },
+  };
+}
+
+/** Gruppen in Reihenfolge des KMU-Kontenrahmens mit Zwischentotal */
+export function groupAccounts<T extends { groupCode?: string | null; groupName: string | null; balance: number }>(list: T[], order: string[]): { code: string; name: string; items: T[]; total: number }[] {
+  const map = new Map<string, { code: string; name: string; items: T[]; total: number }>();
+  for (const a of list) {
+    const code = a.groupCode ?? '~';
+    const g = map.get(code) ?? { code, name: a.groupName ?? 'Ohne Gruppe (nicht im KMU-Kontenrahmen)', items: [], total: 0 };
+    g.items.push(a);
+    g.total += a.balance;
+    map.set(code, g);
+  }
+  const rank = (c: string) => (order.indexOf(c) < 0 ? 999 : order.indexOf(c));
+  return [...map.values()].sort((x, y) => rank(x.code) - rank(y.code));
+}

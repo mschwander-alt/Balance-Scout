@@ -31,11 +31,12 @@ export function Start({ onNew, onOpen }: { onNew: () => void; onOpen: (h: Histor
                   <span className="badge badge-belegt">{h.counts.BELEGT} belegt</span>{' '}
                   <span className="badge badge-pruefen">{h.counts.PRUEFEN} prüfen</span>{' '}
                   <span className="badge badge-kein_nachweis">{h.counts.KEIN_NACHWEIS} ohne</span>{' '}
-                  <span className="pill">Abdeckung {pct(h.coverage)}</span>
+                  <span className="pill">Abdeckung {pct(h.coverage)}</span>{' '}
+                  {h.finalized === false && <span className="badge badge-pruefen">Durchsicht offen</span>}
                 </div>
                 <div className="actions">
-                  <button className="btn btn-sm" onClick={() => onOpen(h)}>Ergebnis</button>
-                  <button className="btn btn-sm" onClick={() => bsb().app.openPath(h.excelPath)}>Excel</button>
+                  <button className="btn btn-sm" onClick={() => onOpen(h)}>{h.finalized === false ? 'Durchsicht fortsetzen' : 'Ergebnis'}</button>
+                  {h.excelPath && <button className="btn btn-sm" onClick={() => bsb().app.openPath(h.excelPath)}>Excel</button>}
                   <button className="link small" onClick={async () => setHist(await bsb().app.removeHistory(h.id))}>entfernen</button>
                 </div>
               </div>

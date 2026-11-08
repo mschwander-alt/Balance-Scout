@@ -17,7 +17,7 @@ export function App() {
 
   const openHistory = async (h: HistoryEntry) => {
     const r = (await bsb().app.loadResult(h.id)) as AuditResult | null;
-    if (r) setView({ k: 'result', result: { ...r, historyId: h.id } });
+    if (r) setView({ k: 'result', result: { ...r, historyId: h.id }, input: r.input });
     else void bsb().app.openPath(h.excelPath);
   };
 
@@ -39,7 +39,7 @@ export function App() {
           onCancel={() => setView({ k: 'new', prefill: view.input })}
         />
       )}
-      {view.k === 'result' && <Result result={view.result} onRepeat={view.input ? () => setView({ k: 'new', prefill: view.input }) : undefined} />}
+      {view.k === 'result' && <Result key={view.result.historyId} result={view.result} onRepeat={view.input ? () => setView({ k: 'new', prefill: view.input }) : undefined} />}
     </ToastProvider>
   );
 }

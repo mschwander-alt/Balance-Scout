@@ -2,7 +2,8 @@ import { app, BrowserWindow, Menu, Notification, Tray, clipboard, dialog, ipcMai
 import { existsSync, readFileSync, writeFileSync, mkdirSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
-import type { AppSettings, HistoryEntry, JobInput, PickedPath, Progress, SignConvention, TbPreview } from './shared';
+import type { AppSettings, CloudLocation, HistoryEntry, JobInput, PickedPath, Progress, ReviewDecisions, SignConvention, TbPreview, TbPreviewOptions } from './shared';
+import { execFile } from 'node:child_process';
 
 const isDev = !!process.env.VITE_DEV_SERVER_URL;
 let win: BrowserWindow | null = null;
@@ -10,6 +11,12 @@ let tray: Tray | null = null;
 let quitting = false;
 let activity: string | null = null;
 
+// Eigener Daten- und Sperrordner, damit sich die lokale App nicht mit der früheren
+// Server-Variante "Balance Scout" (gleicher Name) in die Quere kommt: Diese läuft oft im
+// Infobereich weiter und würde sonst beim Start statt der lokalen App angezeigt.
+app.setName('Balance Scout Lokal');
+app.setPath('userData', path.join(app.getPath('appData'), 'Balance Scout Lokal'));
+if (!app.isPackaged && process.env.BSB_USER_DATA) app.setPath('userData', process.env.BSB_USER_DATA);
 if (!app.requestSingleInstanceLock()) app.quit();
 app.setAppUserModelId('ch.balancescout.lokal');
 
@@ -20,11 +27,10 @@ const enginePath = () =>
     ? path.join(process.resourcesPath, 'app', 'node_modules', '@balance-scout', 'engine', 'dist', 'runner.js')
     : path.join(__dirname, '..', 'node_modules', '@balance-scout', 'engine', 'dist', 'runner.js');
 const tessdata = () => (app.isPackaged ? path.join(process.resourcesPath, 'tessdata') : path.join(__dirname, '..', 'node_modules', '@balance-scout', 'engine', 'tessdata'));
-if (!app.isPackaged && process.env.BSB_USER_DATA) app.setPath('userData', process.env.BSB_USER_DATA);
 const userFile = (n: string) => path.join(app.getPath('userData'), n);
 
 // ------------------------------------------------------------------ Einstellungen & Verlauf
-const DEFAULTS: AppSettings = { defaultTargetBase: '', fileMode: 'copy', toleranceChf: '1.00', signConvention: 'signed', notifications: true, autoStart: false };
+const DEFAULTS: AppSettings = { defaultTargetBase: '', fileMode: 'copy', toleranceChf: '1.00', signConvention: 'signed', notifications: true, autoStart: false, visum: '', groupLetters: null, accountDigits: null };
 function readJson<T>(n: string, d: T): T {
   try {
     return existsSync(userFile(n)) ? { ...d, ...JSON.parse(readFileSync(userFile(n), 'utf8')) } : d;
@@ -49,6 +55,9 @@ const history = (): HistoryEntry[] => {
 let engine: UtilityProcess | null = null;
 const pending = new Map<string, { resolve: (v: unknown) => void; reject: (e: Error) => void }>();
 let currentRunId: string | null = null;
+type RunOut = { excelPath: string; summary: { counts: Record<string, number>; coverage: number }; documents: unknown[] };
+type GroupsInfo = { groups: { code: string; name: string; category: string; subcategory: string }[]; letters: Record<string, string> };
+let groupsCache: Promise<GroupsInfo> | null = null;
 
 function getEngine(): UtilityProcess {
   if (engine) return engine;
@@ -99,6 +108,35 @@ function resetActivity(): void {
   setActivity(null);
 }
 
+// ------------------------------------------------------------------ Cloud-Ordner (OneDrive / SharePoint)
+/**
+ * Findet die auf diesem PC synchronisierten OneDrive- und SharePoint-Ordner.
+ * Quellen: Umgebungsvariablen von OneDrive und die Registry des OneDrive-Clients
+ * (HKCU\Software\SyncEngines\Providers\OneDrive\*\MountPoint = synchronisierte Bibliotheken).
+ */
+function cloudLocations(): Promise<CloudLocation[]> {
+  const out: CloudLocation[] = [];
+  const add = (label: string, p: string | undefined, kind: CloudLocation['kind']) => {
+    if (p && existsSync(p) && !out.some(o => o.path.toLowerCase() === p.toLowerCase())) out.push({ label, path: p, kind });
+  };
+  if (process.env.OneDriveCommercial) add(path.basename(process.env.OneDriveCommercial), process.env.OneDriveCommercial, 'onedrive');
+  if (!app.isPackaged && process.env.BSB_CLOUD_ROOTS) {
+    for (const p of process.env.BSB_CLOUD_ROOTS.split(path.delimiter)) add(path.basename(p), p, 'sharepoint');
+  }
+  if (process.platform !== 'win32') return Promise.resolve(out);
+  return new Promise(resolve => {
+    execFile('reg', ['query', 'HKCU\\Software\\SyncEngines\\Providers\\OneDrive', '/s', '/v', 'MountPoint'], { windowsHide: true, timeout: 5000 }, (_err, stdout) => {
+      for (const m of String(stdout ?? '').matchAll(/MountPoint\s+REG_\w+\s+(.+)/g)) {
+        const p = m[1]!.trim();
+        const org = path.basename(path.dirname(p));
+        add(`${org} – ${path.basename(p)}`, p, 'sharepoint');
+      }
+      if (process.env.OneDriveConsumer && process.env.OneDriveConsumer !== process.env.OneDriveCommercial) add('OneDrive (privat)', process.env.OneDriveConsumer, 'onedrive');
+      resolve(out);
+    });
+  });
+}
+
 // ------------------------------------------------------------------ Belegvorschau
 /** Nur Dateien der geöffneten Prüfung dürfen in der Vorschau angezeigt werden */
 const previewAllowed = new Set<string>();
@@ -110,6 +148,12 @@ function allowPreviewFor(result: unknown): void {
   for (const d of docs) {
     if (d.absPath) previewAllowed.add(path.resolve(d.absPath));
     if (d.placement?.newPath) previewAllowed.add(path.resolve(d.placement.newPath));
+  }
+  // Nach dem Abschluss: abgelegte Kopien (mit Register-Präfix) und Notiz-PDFs
+  const filed = (result as { filed?: Record<string, { placement?: { newPath?: string | null } | null; notePath?: string | null }> } | null)?.filed ?? {};
+  for (const f of Object.values(filed)) {
+    if (f.placement?.newPath) previewAllowed.add(path.resolve(f.placement.newPath));
+    if (f.notePath) previewAllowed.add(path.resolve(f.notePath));
   }
 }
 
@@ -150,7 +194,7 @@ function updateTray(): void {
       { label: 'Balance Scout öffnen', click: showWindow },
       ...(activity ? [{ type: 'separator' as const }, { label: `⏳ ${activity}`, enabled: false }] : []),
       ...(recent.length
-        ? [{ type: 'separator' as const }, { label: 'Letzte Prüfungen', enabled: false }, ...recent.map(h => ({ label: `   ${h.mandate}`, click: () => void shell.openPath(h.excelPath) }))]
+        ? [{ type: 'separator' as const }, { label: 'Letzte Prüfungen', enabled: false }, ...recent.map(h => ({ label: `   ${h.mandate}`, click: () => (h.excelPath ? void shell.openPath(h.excelPath) : showWindow()) }))]
         : []),
       { type: 'separator' },
       {
@@ -171,15 +215,17 @@ const e2ePicks: Record<string, unknown> | null = !app.isPackaged && process.env.
 const asPicked = (p: string): PickedPath => ({ path: p, name: path.basename(p), isDirectory: statSync(p).isDirectory() });
 
 function registerIpc(): void {
-  ipcMain.handle('pick:trialBalance', async () => {
+  ipcMain.handle('pick:cloudLocations', () => cloudLocations());
+  ipcMain.handle('pick:trialBalance', async (_e, defaultPath?: string) => {
     if (e2ePicks) return asPicked(e2ePicks.trialBalance as string);
-    const r = await dialog.showOpenDialog(win!, { title: 'Saldobilanz wählen', properties: ['openFile'], filters: [{ name: 'Saldobilanz', extensions: ['xlsx', 'xlsm', 'xls', 'csv'] }] });
+    const r = await dialog.showOpenDialog(win!, { title: 'Saldobilanz wählen', defaultPath, properties: ['openFile'], filters: [{ name: 'Saldobilanz', extensions: ['xlsx', 'xlsm', 'xls', 'csv', 'pdf'] }] });
     return r.canceled || !r.filePaths[0] ? null : asPicked(r.filePaths[0]);
   });
-  ipcMain.handle('pick:evidence', async (_e, kind: 'files' | 'folders') => {
+  ipcMain.handle('pick:evidence', async (_e, kind: 'files' | 'folders', defaultPath?: string) => {
     if (e2ePicks) return (e2ePicks[kind] as string[]).map(asPicked);
     const r = await dialog.showOpenDialog(win!, {
       title: kind === 'folders' ? 'Ordner mit Kundenunterlagen wählen' : 'Belege wählen',
+      defaultPath,
       properties: kind === 'folders' ? ['openDirectory', 'multiSelections'] : ['openFile', 'multiSelections'],
     });
     return r.canceled ? [] : r.filePaths.map(asPicked);
@@ -197,30 +243,71 @@ function registerIpc(): void {
     }
   });
 
-  ipcMain.handle('engine:preview', (_e, p: string, sign: SignConvention, mapping?: TbPreview['detected']) =>
-    call<TbPreview>({ type: 'previewTrialBalance', path: p, signConvention: sign, mapping: mapping ?? undefined }),
-  );
+  ipcMain.handle('engine:preview', (_e, p: string | string[], sign: SignConvention, opts?: TbPreviewOptions | TbPreview['detected']) => {
+    // Kompatibel: drittes Argument = Spaltenzuordnung (eine Datei) oder Optionen
+    const o: TbPreviewOptions = opts && 'mapping' in opts && typeof (opts as { headerRowIndex?: number }).headerRowIndex === 'number' ? { mapping: opts as TbPreview['detected'] } : ((opts ?? {}) as TbPreviewOptions);
+    return call<TbPreview>({
+      type: 'previewTrialBalance', paths: Array.isArray(p) ? p : [p], signConvention: sign, mapping: o.mapping ?? undefined,
+      mappings: o.mappings ?? undefined, accountDigits: o.accountDigits ?? undefined, ocr: { langPath: tessdata() },
+    });
+  });
   ipcMain.handle('engine:run', async (_e, input: JobInput) => {
     if (currentRunId) throw new Error('Es läuft bereits eine Prüfung.');
     currentRunId = randomUUID();
     const reportDir = input.targetDir ?? path.dirname(input.trialBalancePath);
     try {
-      const result = await call<{ excelPath: string; summary: { counts: Record<string, number>; coverage: number }; documents: unknown[] }>({
-        type: 'run', reportDir, input: { ...input, ocr: { langPath: tessdata() } },
+      // Schritt 1: nur analysieren. Ablage und Excel folgen nach der Durchsicht ("Abschliessen").
+      const result = await call<RunOut>({
+        type: 'run', reportDir, snapshotPath: userFile(`snapshot-${currentRunId}.json`), input: { ...input, ocr: { langPath: tessdata() } },
       });
       const entry: HistoryEntry = {
-        id: currentRunId, at: new Date().toISOString(), mandate: input.mandate, closingDate: input.closingDate, excelPath: result.excelPath,
-        targetDir: input.targetDir, counts: result.summary.counts, coverage: result.summary.coverage, documents: result.documents.length,
+        id: currentRunId, at: new Date().toISOString(), mandate: input.mandate, closingDate: input.closingDate, excelPath: '',
+        targetDir: input.targetDir, counts: result.summary.counts, coverage: result.summary.coverage, documents: result.documents.length, finalized: false,
       };
-      writeJson('history.json', [entry, ...history().filter(h => h.excelPath !== entry.excelPath)].slice(0, 50));
-      writeJson(`result-${currentRunId}.json`, result);
+      writeJson('history.json', [entry, ...history()].slice(0, 50));
+      writeJson(`result-${currentRunId}.json`, { ...result, input, decisions: {} });
       allowPreviewFor(result);
       if (settings().notifications && Notification.isSupported() && !win?.isFocused()) {
-        const n = new Notification({ title: 'Prüfung abgeschlossen', body: `${input.mandate}: ${result.summary.counts.BELEGT} belegt, ${result.summary.counts.PRUEFEN} prüfen, ${result.summary.counts.KEIN_NACHWEIS} ohne Nachweis.`, icon: res('build', 'icon.png') });
+        const n = new Notification({ title: 'Analyse abgeschlossen – bitte durchsehen', body: `${input.mandate}: ${result.summary.counts.BELEGT} belegt, ${result.summary.counts.PRUEFEN} prüfen, ${result.summary.counts.KEIN_NACHWEIS} ohne Nachweis.`, icon: res('build', 'icon.png') });
         n.on('click', showWindow);
         n.show();
       }
-      return { ...result, historyId: currentRunId };
+      return { ...result, input, decisions: {}, historyId: currentRunId };
+    } finally {
+      currentRunId = null;
+      resetActivity();
+    }
+  });
+  // Entscheide der Prüferin / des Prüfers laufend speichern (überlebt Neustart)
+  ipcMain.handle('review:save', (_e, id: string, decisions: ReviewDecisions) => {
+    const r = readJson<Record<string, unknown> | null>(`result-${id}.json`, null);
+    if (!r) throw new Error('Prüfung nicht gefunden.');
+    writeJson(`result-${id}.json`, { ...r, decisions });
+    return true;
+  });
+  ipcMain.handle('review:groups', () => (groupsCache ??= call<GroupsInfo>({ type: 'groups' })));
+  // Schritt 2: Abschliessen – Ablage mit Register, Notizen, Excel
+  ipcMain.handle('review:finalize', async (_e, id: string, decisions: ReviewDecisions) => {
+    if (currentRunId) throw new Error('Es läuft bereits eine Prüfung.');
+    const saved = readJson<(RunOut & { input: JobInput }) | null>(`result-${id}.json`, null);
+    if (!saved?.input) throw new Error('Prüfung nicht gefunden.');
+    if (!existsSync(userFile(`snapshot-${id}.json`))) throw new Error('Analysedaten fehlen – bitte die Prüfung erneut starten.');
+    currentRunId = id;
+    const input = saved.input;
+    try {
+      const result = await call<RunOut>({
+        type: 'finalize', snapshotPath: userFile(`snapshot-${id}.json`), decisions, targetDir: input.targetDir, fileMode: input.fileMode,
+        reportDir: input.targetDir ?? path.dirname(input.trialBalancePath),
+      });
+      // Analyse-Ergebnis (Original) bleibt die Grundlage der Anzeige; vom Abschluss kommen Ablage, Register und Excel
+      const fin = result as unknown as Omit<RunOut, 'documents'> & { diagnostics: string; documents: { id: string; placement: unknown; notePath: string | null; register: string | null; irrelevant: boolean }[] };
+      const filed = Object.fromEntries(fin.documents.map(d => [d.id, { placement: d.placement, notePath: d.notePath, register: d.register, irrelevant: d.irrelevant }]));
+      const full = { ...saved, excelPath: fin.excelPath, diagnostics: fin.diagnostics, finalized: true, finalizedAt: new Date().toISOString(), filed, finalSummary: fin.summary, decisions };
+      writeJson(`result-${id}.json`, full);
+      writeJson('history.json', history().map(h => (h.id === id ? { ...h, excelPath: result.excelPath, counts: result.summary.counts, coverage: result.summary.coverage, finalized: true } : h)));
+      allowPreviewFor(full);
+      updateTray();
+      return { ...full, historyId: id };
     } finally {
       currentRunId = null;
       resetActivity();

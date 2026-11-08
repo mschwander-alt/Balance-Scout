@@ -159,3 +159,30 @@ table.sheet td.rn { background: #f3f4f6; color: var(--muted); text-align: right;
 table.sheet td.num { text-align: right; font-variant-numeric: tabular-nums; }
 .hl-row, .hl-row td { background: rgba(255, 214, 0, .45) !important; font-weight: 600; }
 .textdoc { background: #fff; padding: 12px 16px; font-size: 13px; line-height: 1.55; box-shadow: 0 1px 6px rgba(0,0,0,.12); white-space: pre-wrap; }
+
+/* ---- Durchsicht / Register ---- */
+.draft-bar { background: #fff8e6; border: 1px solid #f0d68a; border-radius: 10px; padding: 10px 14px; align-items: center; }
+.group-row td { background: #eef3f9; font-weight: 600; color: #0f5ea8; border-top: 2px solid #d6e2f0; }
+.register { display: inline-block; min-width: 22px; padding: 0 6px; margin-right: 6px; border-radius: 4px; background: #0f5ea8; color: #fff; font-weight: 700; font-size: 12px; text-align: center; }
+.register.sm { font-size: 11px; padding: 0 4px; background: #5b7fa8; }
+.manual { margin-left: 6px; font-size: 11px; color: #1d7a46; font-weight: 600; }
+.decision { border: 1px solid #f0d68a; background: #fffbef; border-radius: 8px; padding: 8px 10px; margin: 8px 0; gap: 8px; }
+.decision.done { border-color: #a9d8b8; background: #eef8f1; }
+.decision input { min-width: 0; }
+.btn-ok { background: #1d7a46; color: #fff; border-color: #1d7a46; }
+.flag.note { background: #e6eefb; color: #0f5ea8; }
+.note-field textarea { width: 100%; resize: vertical; font: inherit; padding: 6px 8px; border: 1px solid #d0d4da; border-radius: 6px; }
+select.assign { max-width: 260px; font-size: 12px; margin-top: 4px; }
+.w-xs { width: 56px; }
+.letters { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 18px; max-height: 420px; overflow: auto; }
+.letter-row { display: grid; grid-template-columns: 60px 1fr auto; align-items: center; gap: 8px; }
+.parts { list-style: none; padding: 0; margin: 0 0 8px; }
+.parts li.zuordnen { color: #b3261e; }
+.parts li.ignoriert { color: #6b7385; }
+/* Vorschau-Panel: Entscheid- und Notizbereich nie überdecken; die Vorschau nimmt den Rest */
+.preview-panel > *:not(.viewer) { flex-shrink: 0; }
+.preview-panel .decision { margin: 0; padding: 6px 8px; }
+.preview-panel .note-field textarea { min-height: 44px; }
+.preview-panel .viewer { overflow: hidden; min-height: 200px; }
+.preview-panel .viewer-body { min-height: 0; }
+.preview-panel { overflow-y: auto; }

@@ -21,6 +21,7 @@ const app = await electron.launch({
   env: {
     ...process.env,
     BSB_USER_DATA: userData,
+    BSB_CLOUD_ROOTS: path.join(FIX, 'Kunde_Upload'),
     BSB_E2E_PICKS: JSON.stringify({ trialBalance: path.join(FIX, 'Saldobilanz_2025.xlsx'), folders: [path.join(FIX, 'Kunde_Upload')], files: [], targetDir: target }),
   },
 });
@@ -36,8 +37,11 @@ await page.locator('input[type=date]').fill('2025-12-31');
 await page.getByRole('button', { name: 'Datei wählen …' }).click();
 await page.getByText(/27 Konten erkannt/).waitFor();
 step('Saldobilanz-Vorschau: 27 Konten');
+// Cloud-Schnellzugriff wird angezeigt (synchronisierter Ordner)
+await page.locator('.cloud .chip', { hasText: 'Kunde_Upload' }).waitFor();
+step('Cloud-Ordner erkannt');
 await page.getByRole('button', { name: 'Ordner wählen …', exact: true }).click();
-await page.getByText(/Kunde_Upload/).waitFor();
+await page.locator('.paths li', { hasText: 'Kunde_Upload' }).waitFor();
 await page.getByRole('button', { name: 'Zielordner wählen …' }).click();
 await page.getByText(target).waitFor();
 await page.screenshot({ path: `${shots}-2-eingaben.png` });
@@ -45,8 +49,10 @@ await page.getByRole('button', { name: 'Prüfung starten' }).click();
 step('Prüfung gestartet');
 await page.getByText(/Belege lesen|Saldobilanz lesen|Unterlagen suchen/).first().waitFor();
 await page.screenshot({ path: `${shots}-3-lauf.png` });
-await page.getByText('Excel-Dokumentation öffnen').waitFor({ timeout: Number(process.env.RUN_TIMEOUT ?? 180000) }).catch(async e => { await page.screenshot({ path: `${shots}-err.png` }); throw e; });
-step('Prüfung abgeschlossen');
+await page.getByRole('button', { name: 'Abschliessen …' }).waitFor({ timeout: Number(process.env.RUN_TIMEOUT ?? 180000) }).catch(async e => { await page.screenshot({ path: `${shots}-err.png` }); throw e; });
+step('Analyse abgeschlossen – Durchsicht');
+// Vor dem Abschluss wird nichts abgelegt
+assert.equal(readdirSync(target).length, 0, 'vor dem Abschliessen darf nichts im Zielordner liegen');
 await page.screenshot({ path: `${shots}-4-ergebnis.png` });
 
 // Kennzahlen und Detailansicht
@@ -99,21 +105,83 @@ await page.screenshot({ path: `${shots}-6-belege.png` });
 await page.getByRole('tab', { name: 'Diagnosebericht' }).click();
 assert.match(await page.locator('pre.diag').innerText(), /DIAGNOSEBERICHT/);
 
-// Dateien im Zielordner
+// ---------------- Durchsicht: akzeptieren, Notiz, Belege zuordnen ----------------
+await page.getByRole('tab', { name: 'Konten' }).click();
+await page.getByLabel('Visum').fill('MS');
+const pruefen = stored.accounts.filter(a => a.status === 'PRUEFEN');
+const kn = stored.accounts.filter(a => a.status === 'KEIN_NACHWEIS');
+await page.locator(`[data-konto="${pruefen[0].accountNumber}"]`).click();
+await page.getByPlaceholder(/Kommentar \(optional\)/).fill('Original eingesehen');
+await page.getByRole('button', { name: 'Akzeptieren → Belegt' }).click();
+await page.getByText(/Als belegt akzeptiert \(MS/).waitFor();
+let k = await page.locator('.kpi').allInnerTexts();
+assert.match(k[1], /Belegt\s*11/);
+assert.match(k[2], /Prüfen\s*5/);
+step(`Konto ${pruefen[0].accountNumber} akzeptiert → Belegt 11 / Prüfen 5`);
+// Gruppierung nach KMU-Kontenrahmen mit Registerbuchstaben
+assert.ok(await page.locator('tr.group-row', { hasText: 'Flüssige Mittel' }).count() === 1);
+assert.equal(await page.locator('tr.group-row', { hasText: 'Flüssige Mittel' }).locator('.register').innerText(), 'B');
+// Notiz zur Bank
+await page.locator('[data-konto="1020"]').click();
+await page.locator('.note-field textarea').fill('Saldo mit Bankbestätigung abgestimmt.');
+await page.locator('.preview-panel h3').click(); // Feld verlassen = speichern
+await page.locator('[data-konto="1020"] .flag.note').waitFor();
+step('Notiz erfasst');
+// Belege ohne Zuordnung: einen Beleg einem Konto ohne Nachweis zuordnen, übrige als nicht relevant
+await page.getByRole('tab', { name: 'Belegverzeichnis' }).click();
+await page.getByRole('button', { name: /Ohne Zuordnung/ }).click();
+const open0 = await page.locator('tr[data-beleg]').count();
+assert.ok(open0 >= 2, 'es gibt Belege ohne Zuordnung');
+const firstOk = stored.documents.find(d => !d.assigned && d.status === 'ok');
+await page.locator(`tr[data-beleg="${firstOk.relPath}"] select.assign`).selectOption(kn[0].accountNumber);
+for (let i = 0; i < 30 && (await page.locator('tr[data-beleg] select.assign').count()) > 0; i++) {
+  await page.locator('tr[data-beleg] select.assign').first().selectOption('__none');
+}
+assert.equal(await page.locator('tr[data-beleg]').count(), 0, 'alle Belege haben eine Zuordnung');
+k = await page.locator('.kpi').allInnerTexts();
+assert.match(k[1], /Belegt\s*12/);
+assert.match(k[4], /0 ohne Zuordnung/);
+step(`${open0} Belege zugeordnet bzw. als nicht relevant markiert`);
+await page.screenshot({ path: `${shots}-6-durchsicht.png` });
+// Entscheide überleben einen Neustart (gespeichert)
+const savedDec = JSON.parse(readFileSync(readdirSync(userData).filter(f => f.startsWith('result-')).map(f => path.join(userData, f))[0], 'utf8')).decisions;
+assert.equal(Object.keys(savedDec.accepted).length, 1);
+assert.ok(Object.keys(savedDec.assignments).length >= 2);
+
+// ---------------- Abschliessen ----------------
+await page.getByRole('button', { name: 'Abschliessen …' }).click();
+await page.getByRole('button', { name: 'Ablegen und Excel erstellen' }).click();
+await page.getByText('Excel-Dokumentation öffnen').waitFor({ timeout: 120_000 });
+step('Abgeschlossen');
 const assigned = readdirSync(path.join(target, '01_Zugeordnet'));
 const unassigned = readdirSync(path.join(target, '02_Nicht_zugeordnet'));
+const irrelevant = readdirSync(path.join(target, '03_Nicht_relevant'));
 const excel = readdirSync(target).filter(f => f.endsWith('.xlsx'));
-console.log(`Ablage: ${assigned.length} zugeordnet, ${unassigned.length} nicht zugeordnet, Excel: ${excel.join(', ')}`);
+console.log(`Ablage: ${assigned.length} zugeordnet (${assigned.slice(0, 6).join(', ')} …), ${unassigned.length} nicht zugeordnet, ${irrelevant.length} nicht relevant, Excel: ${excel.join(', ')}`);
 assert.equal(excel.length, 1);
-assert.ok(assigned.includes('Bank_UBS_Kontoauszug.pdf') && assigned.includes('Bank_PostFinance_Kontoauszug.pdf'));
+assert.equal(unassigned.length, 0);
+assert.ok(assigned.every(f => /^[A-Z]+\d*\.\d+_/.test(f)), 'alle Dateinamen beginnen mit Register');
+const ubs = assigned.find(f => /^B\.\d+_Bank_UBS_Kontoauszug\.pdf$/.test(f));
+assert.ok(ubs, 'Bankauszug mit Register B');
+assert.ok(readFileSync(path.join(target, '01_Zugeordnet', ubs)).length > readFileSync(path.join(FIX, 'Kunde_Upload', 'Bank', 'UBS', 'Kontoauszug.pdf')).length, 'Notizseite vorangestellt');
 assert.ok(existsSync(path.join(FIX, 'Kunde_Upload', 'Bank', 'UBS', 'Kontoauszug.pdf')), 'Original muss beim Kopieren bleiben');
+await page.getByRole('tab', { name: 'Diagnosebericht' }).click();
+assert.match(await page.locator('pre.diag').innerText(), /DIAGNOSEBERICHT/);
+
+// Bilanz und Erfolgsrechnung getrennt, mit Zwischensummen: Vorschau über die Schnittstelle
+const SPLIT = path.resolve(root, '..', 'engine', 'test', 'fixtures', 'tb_split');
+const sp = await page.evaluate(p => window.bsb.engine.previewTrialBalance(p, 'signed', { accountDigits: { min: 4, max: 4 } }), [path.join(SPLIT, 'Bilanz_2025.xlsx'), path.join(SPLIT, 'Erfolgsrechnung_2025.pdf')]);
+assert.equal(sp.accounts.length, 27);
+assert.ok(sp.validation.checks.filter(c => c.name.startsWith('Aktuelles Jahr')).every(c => c.passed), 'Bilanz + ER zusammen: Soll = Haben, Erfolg stimmt');
+step(`Bilanz.xlsx + Erfolgsrechnung.pdf: ${sp.accounts.length} Konten, ${sp.excluded.length} Zeilen ausgeblendet`);
 
 // Verlauf nach Neustart
 await page.getByRole('button', { name: 'Übersicht' }).click();
 await page.getByText('Letzte Prüfungen').waitFor();
 assert.ok((await page.locator('.hist').innerText()).includes('Alpenblick Treuhand AG'));
 const hist = JSON.parse(readFileSync(path.join(userData, 'history.json'), 'utf8'));
-assert.equal(hist[0].counts.BELEGT, 10);
+assert.equal(hist[0].counts.BELEGT, 12);
+assert.equal(hist[0].finalized, true);
 await page.screenshot({ path: `${shots}-7-verlauf.png` });
 await app.close();
 step('ALLE PRÜFUNGEN BESTANDEN');
