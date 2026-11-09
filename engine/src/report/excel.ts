@@ -186,6 +186,11 @@ export async function writeExcelReport(res: RunResult, filePath: string): Promis
   r++;
   ov.getCell(`A${r}`).value = 'Davon mit Texterkennung (Scans)';
   ov.getCell(`B${r}`).value = res.documents.filter(d => d.doc.ocrPages > 0).length;
+  for (const f of res.analysisFiles ?? []) {
+    r++;
+    ov.getCell(`A${r}`).value = f.kind === 'forderungen' ? 'Vertiefte Prüfung Forderungen L+L' : 'Analyse';
+    ov.getCell(`B${r}`).value = f.relPath ? { text: f.name, hyperlink: f.relPath } : f.name;
+  }
   r += 2;
   ov.getCell(`A${r}`).value = 'Prüfung der Saldobilanz';
   ov.getCell(`A${r}`).font = { bold: true, size: 12, color: { argb: BLUE } };

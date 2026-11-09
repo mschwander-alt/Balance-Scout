@@ -25,6 +25,10 @@ export interface ReviewDecisions {
   notes?: Record<string, { text: string; at: string; visum: string }>;
   /** Gruppe (Code, z. B. "A10") -> Registerbuchstabe (z. B. "B"); leer = ohne Präfix */
   groupLetters?: Record<string, string>;
+  /** Vertiefte Prüfungen (Prüfgebiete) */
+  analyses?: {
+    receivables?: { docId: string | null; termDays: number; rates: Record<string, number>; findings: { text: string; status: 'offen' | 'erledigt' }[]; visum?: string };
+  };
 }
 
 export interface Review {
@@ -200,10 +204,29 @@ export async function placeReviewed(
       });
     }
   }
+  // Vertiefte Prüfung Forderungen: Fälligkeitsanalyse als eigener Nachweis (z. B. E.5_Analyse_Fälligkeit.xlsx)
+  const rcv = decisions.analyses?.receivables;
+  if (rcv) {
+    const { receivablesFor } = await import('./analysis/receivables.js');
+    const { agingWorkbook } = await import('./report/agingExcel.js');
+    const r = receivablesFor(res, rcv);
+    if (r.aging) {
+      const letter = decisions.groupLetters?.A12?.trim() ?? '';
+      const used = [...registers.values()].filter(x => letter && x.startsWith(`${letter}.`)).length;
+      const name = `${letter ? `${letter}.${used + 1}_` : ''}Analyse_Fälligkeit.xlsx`;
+      const content = await agingWorkbook(r.aging, {
+        mandate: res.input.mandate, closingDate: res.input.closingDate!, sourceFile: r.filename ?? '', balanceChf: r.balanceChf,
+        balanceAccounts: r.balanceAccounts, findings: rcv.findings, visum: rcv.visum,
+      });
+      plans.push({ docId: 'analyse:forderungen', absPath: res.documents.find(d => d.doc.id === r.docId)?.doc.absPath ?? '', relPath: name, sha256: '', assigned: true, targetName: name, content, generated: true });
+    }
+  }
   const placed = await placeFiles(targetDir, plans, mode);
   const by = new Map(placed.map(p => [p.docId, p]));
+  const analysis = by.get('analyse:forderungen');
   return {
     ...res,
+    analysisFiles: analysis?.newPath ? [{ kind: 'forderungen', name: path.basename(analysis.newPath), path: analysis.newPath, relPath: analysis.newRelPath }] : [],
     documents: res.documents.map(d => ({
       ...d,
       targetName: plans.find(p => p.docId === d.doc.id)!.targetName,

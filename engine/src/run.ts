@@ -78,6 +78,8 @@ export interface RunResult {
   byAccount: Map<string, AccountResult>;
   /** Entscheide der Prüferin / des Prüfers (nach applyReview) */
   review?: import('./finalize.js').Review;
+  /** Abgelegte Analysen der vertieften Prüfung */
+  analysisFiles?: { kind: string; name: string; path: string; relPath: string | null }[];
 }
 
 export const tbPaths = (input: Pick<RunInput, 'trialBalancePath' | 'trialBalancePaths'>) =>

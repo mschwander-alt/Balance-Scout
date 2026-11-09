@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import {
-  detectMapping, digitCount, ocrTrialBalanceIssue, parseTrialBalance, readGridParts,
+  detectMapping, inferMapping, digitCount, ocrTrialBalanceIssue, parseTrialBalance, readGridParts,
   type ColumnMapping, type ExcludedRow, type Grid, type RowIssue, type TrialBalanceRow,
 } from './parser.js';
 
@@ -18,6 +18,8 @@ export interface TbPartInfo {
   head: string[][];
   accountCount: number;
   ocrPages: number;
+  /** Spalten angenommen (ohne erkennbare Kopfzeile) */
+  guessed?: boolean;
   /** ignoriert = keine Kontenliste erkannt (z. B. Deckblatt) */
   status: 'ok' | 'ignoriert' | 'zuordnen';
 }
@@ -62,6 +64,20 @@ export async function loadTrialBalance(paths: string[], opts: LoadOptions = {}):
       });
     }
   }
+  // Blätter ohne erkannte Kopfzeile (z. B. Erfolgsrechnung mit anderem Kopf): Aufbau eines anderen Blatts
+  // derselben Datei übernehmen, sonst aus den Daten ableiten – nur wenn sich so Konten ergeben
+  const accountRows = (grid: Grid, m: ExplicitMapping) => parseTrialBalance(grid, m).rows.length;
+  for (const p of parts) {
+    if (p.info.used) continue;
+    const sibling = parts.find(o => o !== p && o.info.path === p.info.path && o.info.detected);
+    const viaSibling = sibling?.info.detected && accountRows(p.grid, { ...sibling.info.detected, headerRowIndex: Math.max(0, findHeaderLike(p.grid, sibling.info.detected)) }) >= 3
+      ? { ...sibling.info.detected, headerRowIndex: Math.max(0, findHeaderLike(p.grid, sibling.info.detected)) } : null;
+    const inferred = viaSibling ?? inferMapping(p.grid);
+    if (inferred && accountRows(p.grid, inferred) >= 3) {
+      p.info.used = inferred;
+      p.info.guessed = true;
+    }
+  }
   const multi = parts.length > 1;
   const rows: TrialBalanceRow[] = [];
   const excluded: ExcludedRow[] = [];
@@ -83,6 +99,7 @@ export async function loadTrialBalance(paths: string[], opts: LoadOptions = {}):
     const parsed = parseTrialBalance(grid, info.used, { accountDigits: opts.accountDigits });
     const src = multi ? info.label : undefined;
     info.accountCount = parsed.rows.length;
+    if (info.guessed) issues.push({ rowIndex: 0, source: info.label, severity: 'warning', code: 'PART_GUESSED', message: `${info.label}: Kopfzeile nicht erkannt – Spalten angenommen (erste Betragsspalte = aktuelles Jahr). Bitte mit „Konten anzeigen“ kontrollieren.` });
     rows.push(...parsed.rows.map(r => ({ ...r, source: src })));
     excluded.push(...parsed.excluded.map(e => ({ ...e, source: src })));
     issues.push(...ocrTrialBalanceIssue(info.ocrPages).map(i => ({ ...i, source: src, message: src ? `${src}: ${i.message}` : i.message })));
@@ -106,4 +123,10 @@ export function suggestDigits(stats: Record<number, number>): { min: number; max
   while (share(max + 1) >= 0.1) max++;
   while (min - 1 >= 4 && share(min - 1) >= 0.1) min--;
   return { min, max };
+}
+
+/** Zeile vor der ersten Kontozeile (als Kopfzeile für übernommene Spaltenzuordnung) */
+function findHeaderLike(grid: Grid, m: ExplicitMapping): number {
+  const first = grid.findIndex(r => /^\s*\d{3,8}\s*$/.test(String(r[m.mapping.accountNumber] ?? '')));
+  return first > 0 ? first - 1 : 0;
 }

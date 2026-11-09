@@ -23,7 +23,9 @@ export type Request =
   /** Analyse (Lesen + Abgleich). Mit snapshotPath: ohne Ablage/Excel – Abschluss folgt nach der Durchsicht. */
   | { id: string; type: 'run'; input: Omit<RunInput, 'onProgress'>; reportDir: string; snapshotPath?: string }
   | { id: string; type: 'finalize'; snapshotPath: string; decisions: ReviewDecisions; targetDir: string | null; fileMode: FileMode; reportDir: string }
-  | { id: string; type: 'groups' };
+  | { id: string; type: 'groups' }
+  /** Vertiefte Prüfung Forderungen: Fälligkeitsanalyse (optional als Excel speichern) */
+  | { id: string; type: 'receivables'; snapshotPath: string; docId?: string | null; termDays?: number; rates?: Record<string, number>; exportPath?: string; findings?: { text: string; status: 'offen' | 'erledigt' }[]; visum?: string };
 
 type Port = { postMessage(m: unknown): void; on(ev: 'message', cb: (m: unknown) => void): void };
 const parentPort: Port | undefined = (process as unknown as { parentPort?: Port }).parentPort;
@@ -98,6 +100,7 @@ export function serializeResult(res: RunResult, excelPath: string, diagnostics: 
     })),
     trialBalance: res.trialBalance ? { parts: res.trialBalance.parts.map(p => ({ id: p.id, label: p.label, accountCount: p.accountCount, status: p.status })), excluded: res.trialBalance.excluded } : null,
     finalized: !!excelPath,
+    analysisFiles: res.analysisFiles ?? [],
   };
 }
 export type SerializedResult = ReturnType<typeof serializeResult>;
@@ -106,6 +109,18 @@ async function handle(req: Request): Promise<unknown> {
   if (req.type === 'previewTrialBalance') return previewTrialBalance(req);
   if (req.type === 'preview') return renderPreview(req.absPath, req.page);
   if (req.type === 'groups') return { groups: KMU_GROUPS.map(g => ({ code: g.code, name: g.name, category: g.category, subcategory: g.subcategory })), letters: defaultGroupLetters(), general: { code: 'ALLG', name: 'Allgemeine Prüfungen (Belege ohne Konto)', account: '@allgemein' } };
+  if (req.type === 'receivables') {
+    const res = await loadSnapshot(req.snapshotPath);
+    const { receivablesFor } = await import('./analysis/receivables.js');
+    const r = receivablesFor(res, req);
+    if (req.exportPath && r.aging) {
+      const { agingWorkbook } = await import('./report/agingExcel.js');
+      const buf = await agingWorkbook(r.aging, { mandate: res.input.mandate, closingDate: res.input.closingDate!, sourceFile: r.filename ?? '', balanceChf: r.balanceChf, balanceAccounts: r.balanceAccounts, findings: req.findings ?? [], visum: req.visum });
+      await writeFile(req.exportPath, buf);
+    }
+    // Für die Anzeige: Posten mit Lage auf der Seite (Vorschau), ohne Textauszug
+    return r;
+  }
   if (req.type === 'finalize') {
     send({ id: req.id, kind: 'progress', progress: { phase: 'ablage', message: 'Belege werden abgelegt …' } });
     const res = await loadSnapshot(req.snapshotPath);

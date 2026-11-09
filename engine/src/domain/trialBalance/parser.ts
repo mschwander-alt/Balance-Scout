@@ -128,14 +128,25 @@ function readCsv(buffer: Buffer): Grid {
 }
 
 const HEADER_ALIASES: Record<keyof ColumnMapping, RegExp[]> = {
-  accountNumber: [/^konto(-?nr\.?|nummer)?$/i, /^kto\.?(-?nr\.?)?$/i, /^account( (no|number))?$/i, /^nr\.?$/i],
-  accountName: [/^(konto)?bezeichnung$/i, /^(konto)?name$/i, /^text$/i, /^beschreibung$/i, /^description$/i, /^account name$/i],
-  balanceCurrentYear: [/^saldo( (aktuell|lfd\.? ?jahr|laufendes jahr|cy))?$/i, /^(aktuelles|laufendes) jahr$/i, /^current( year)?$/i, /^balance$/i, /^saldo chf$/i, /^cy$/i],
-  balancePreviousYear: [/^(saldo )?vorjahr$/i, /^vj$/i, /^saldo vj$/i, /^previous( year)?$/i, /^py$/i],
+  accountNumber: [/^konto(-?nr\.?|nummer|-?nr)?$/i, /^kto\.?(-?nr\.?)?$/i, /^account( (no|number))?$/i, /^nr\.?$/i, /^kontonr\.?$/i],
+  accountName: [/^(konto)?bezeichnung$/i, /^(konto)?name$/i, /^text$/i, /^beschreibung$/i, /^description$/i, /^account name$/i, /^kontotext$/i, /^position$/i],
+  balanceCurrentYear: [/^saldo( (aktuell|lfd\.? ?jahr|laufendes jahr|cy))?( chf)?$/i, /^(aktuelles|laufendes) jahr$/i, /^current( year)?$/i, /^balance$/i, /^cy$/i,
+    /^betrag( chf)?$/i, /^gesch(ä|ae)ftsjahr$/i, /^aktuell( chf)?$/i, /^ist( chf)?$/i, /^berichtsjahr$/i, /^saldo per stichtag$/i],
+  balancePreviousYear: [/^(saldo )?vorjahr( chf)?$/i, /^vj( chf)?$/i, /^saldo vj$/i, /^previous( year)?$/i, /^py$/i],
   balanceForeignCurrency: [/^(saldo )?fw$/i, /^fremdw(ä|ae)hrung$/i, /^saldo fremdw(ä|ae)hrung$/i, /^foreign( currency)?$/i],
-  balanceDebit: [/^soll( chf)?$/i, /^debit$/i, /^saldo soll$/i, /^soll-?saldo$/i],
-  balanceCredit: [/^haben( chf)?$/i, /^credit$/i, /^saldo haben$/i, /^haben-?saldo$/i],
+  balanceDebit: [/^soll( chf)?$/i, /^debit$/i, /^saldo soll$/i, /^soll-?saldo$/i, /^aufwand( chf)?$/i, /^aktiven( chf)?$/i],
+  balanceCredit: [/^haben( chf)?$/i, /^credit$/i, /^saldo haben$/i, /^haben-?saldo$/i, /^ertrag( chf)?$/i, /^passiven( chf)?$/i],
 };
+
+/** Jahreszahl in einer Kopfzelle, z. B. "2025", "Saldo 2025", "31.12.2025", "Ist 2025", "GJ 2025", "01.01.-31.12.2025" */
+function headerYear(h: string): number | null {
+  if (h.length > 40) return null;
+  const ys = [...h.matchAll(/(?<!\d)(19\d{2}|20\d{2})(?!\d)/g)].map(m => Number(m[1]));
+  if (!ys.length) return null;
+  // Budget-/Planspalten nicht als Ist-Saldo verwenden
+  if (/budget|plan|prognose|forecast/i.test(h)) return null;
+  return Math.max(...ys);
+}
 
 /** Sucht in den ersten 30 Zeilen die Kopfzeile und ordnet Spalten zu. */
 export function detectMapping(grid: Grid): { headerRowIndex: number; mapping: ColumnMapping } | null {
@@ -143,8 +154,8 @@ export function detectMapping(grid: Grid): { headerRowIndex: number; mapping: Co
   for (let r = 0; r < limit; r++) {
     const row = grid[r] ?? [];
     const found: Partial<ColumnMapping> = {};
-    row.forEach((cell, c) => {
-      const h = String(cell ?? '').trim().replace(/\s+/g, ' ');
+    const cells = row.map(cell => String(cell ?? '').trim().replace(/\s+/g, ' '));
+    cells.forEach((h, c) => {
       if (!h) return;
       for (const key of Object.keys(HEADER_ALIASES) as (keyof ColumnMapping)[]) {
         if (found[key] === undefined && HEADER_ALIASES[key].some(rx => rx.test(h))) {
@@ -153,14 +164,25 @@ export function detectMapping(grid: Grid): { headerRowIndex: number; mapping: Co
         }
       }
     });
-    // Ohne explizite VJ-Spalte: zwei Jahreszahlen als Kopf -> grösseres Jahr = aktuell
+    // "Nr | Konto | …": dann ist "Konto" die Bezeichnung
+    if (found.accountName === undefined && found.accountNumber !== undefined && /^nr\.?$/i.test(cells[found.accountNumber]!)) {
+      const k = cells.findIndex((h, c) => c !== found.accountNumber && /^konto$/i.test(h));
+      if (k >= 0) found.accountName = k;
+    }
+    // Jahreszahlen als Kopf -> grösstes Jahr = aktuell, zweitgrösstes = Vorjahr
     if (found.balanceCurrentYear === undefined) {
-      const years = row
-        .map((cell, c) => ({ c, y: /^(?:saldo )?((?:19|20)\d{2})$/i.exec(String(cell ?? '').trim())?.[1] }))
-        .filter((x): x is { c: number; y: string } => !!x.y)
-        .sort((a, b) => Number(b.y) - Number(a.y));
+      const years = cells
+        .map((h, c) => ({ c, y: headerYear(h) }))
+        .filter((x): x is { c: number; y: number } => x.y !== null && x.c !== found.accountNumber && x.c !== found.accountName)
+        .sort((a, b) => b.y - a.y || a.c - b.c);
       if (years[0]) found.balanceCurrentYear = years[0].c;
-      if (years[1] && found.balancePreviousYear === undefined) found.balancePreviousYear = years[1].c;
+      const prev = years.find(x => x.y < years[0]!.y);
+      if (prev && found.balancePreviousYear === undefined) found.balancePreviousYear = prev.c;
+    }
+    // Saldo-Spalte hat Vorrang vor Aufwand/Ertrag bzw. Aktiven/Passiven
+    if (found.balanceCurrentYear !== undefined) {
+      if (found.balanceDebit !== undefined && /aufwand|aktiven/i.test(cells[found.balanceDebit]!)) delete found.balanceDebit;
+      if (found.balanceCredit !== undefined && /ertrag|passiven/i.test(cells[found.balanceCredit]!)) delete found.balanceCredit;
     }
     const hasBalance = found.balanceCurrentYear !== undefined || (found.balanceDebit !== undefined && found.balanceCredit !== undefined);
     if (found.accountNumber !== undefined && found.accountName !== undefined && hasBalance) {
@@ -168,6 +190,34 @@ export function detectMapping(grid: Grid): { headerRowIndex: number; mapping: Co
     }
   }
   return null;
+}
+
+/**
+ * Ohne erkennbare Kopfzeile: Aufbau aus den Daten ableiten – Spalte mit Kontonummern, rechts davon Text,
+ * dann Beträge (erste Betragsspalte = aktuelles Jahr, zweite = Vorjahr).
+ */
+export function inferMapping(grid: Grid): { headerRowIndex: number; mapping: ColumnMapping } | null {
+  const rows = grid.slice(0, 400);
+  const width = Math.max(0, ...rows.map(r => r.length));
+  const isAcc = (v: Cell | undefined) => (typeof v === 'number' && Number.isInteger(v) && v >= 100 && v < 1e8) || (typeof v === 'string' && /^\s*\d{3,8}\s*$/.test(v));
+  const isNum = (v: Cell | undefined) => typeof v === 'number' || (typeof v === 'string' && !!parseAmount(v) && /\d/.test(v) && !/[a-z]{3}/i.test(v.replace(/chf/i, '')));
+  const isText = (v: Cell | undefined) => typeof v === 'string' && /[a-zäöü]{3}/i.test(v);
+  let acc = -1;
+  let best = 0;
+  for (let c = 0; c < width; c++) {
+    const n = rows.filter(r => isAcc(r[c])).length;
+    if (n > best) { best = n; acc = c; }
+  }
+  if (acc < 0 || best < 3) return null;
+  const accRows = rows.map((r, i) => ({ r, i })).filter(x => isAcc(x.r[acc]));
+  let name = -1;
+  for (let c = acc + 1; c < width && name < 0; c++) if (accRows.filter(x => isText(x.r[c])).length >= accRows.length * 0.6) name = c;
+  if (name < 0) return null;
+  const nums: number[] = [];
+  for (let c = name + 1; c < width; c++) if (accRows.filter(x => isNum(x.r[c])).length >= accRows.length * 0.5) nums.push(c);
+  if (!nums.length) return null;
+  const headerRowIndex = Math.max(0, accRows[0]!.i - 1);
+  return { headerRowIndex, mapping: { accountNumber: acc, accountName: name, balanceCurrentYear: nums[0], ...(nums[1] !== undefined ? { balancePreviousYear: nums[1] } : {}) } };
 }
 
 export class MappingError extends Error {}

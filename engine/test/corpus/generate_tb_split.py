@@ -61,3 +61,20 @@ for num, name, a, b in er:
     c.drawRightString(150 * mm, y, chf(a)); c.drawRightString(188 * mm, y, chf(b)); y -= 6 * mm
 c.save()
 print('ok', len(bil), len(er))
+
+# Varianten: ER-Blatt mit anderer Kopfzeile, ohne Kopfzeile, mit Aufwand/Ertrag-Spalten
+def er_sheet(ws, mode):
+    ws.append(['Alpenblick Treuhand AG']); ws.append(['Erfolgsrechnung 01.01.–31.12.2025']); ws.append([])
+    if mode == 'datum': ws.append(['Konto', 'Text', '31.12.2025', '31.12.2024'])
+    if mode == 'aufwandertrag': ws.append(['Konto', 'Bezeichnung', 'Aufwand', 'Ertrag'])
+    for r in er:
+        if mode == 'aufwandertrag':
+            a = None if r[2] is None else (r[2] if r[2] > 0 else None); e = None if r[2] is None else (-r[2] if r[2] < 0 else None)
+            ws.append([int(r[0]) if r[0] else None, r[1], a, e])
+        else:
+            ws.append([int(r[0]) if r[0] else None, r[1], r[2], r[3]])
+for mode in ['datum', 'ohnekopf', 'aufwandertrag']:
+    wb = openpyxl.Workbook(); sheet(wb.active, 'Bilanz', bil); wb.active.title = 'Bilanz'
+    er_sheet(wb.create_sheet('Erfolgsrechnung'), mode)
+    wb.save(f'{OUT}/Jahresrechnung_ER_{mode}.xlsx')
+print('Varianten ok')

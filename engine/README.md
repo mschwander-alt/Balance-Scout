@@ -21,7 +21,9 @@ erscheinen mit einem verständlichen Hinweis statt eines technischen Fehlers.
 
 ## Saldobilanz bzw. Bilanz und Erfolgsrechnung
 Eine Datei oder **mehrere Dateien** (z. B. Bilanz.xlsx + Erfolgsrechnung.pdf); bei Excel werden **alle Blätter**
-gelesen (Blätter ohne Kontenliste wie ein Deckblatt werden ignoriert). Die Konten aller Teile werden zusammengeführt.
+gelesen (Blätter ohne Kontenliste wie ein Deckblatt werden ignoriert). Erkannte Kopfzeilen u. a.: „Saldo 2025“, „31.12.2025“,
+„Ist 2025“, „GJ 2025“, „Betrag/Vorjahr“, „Aufwand/Ertrag“, „Aktiven/Passiven“, „Soll/Haben“. Hat ein Blatt keine Kopfzeile,
+wird der Aufbau eines anderen Blatts derselben Datei übernommen bzw. aus den Daten abgeleitet (mit Hinweis). Die Konten aller Teile werden zusammengeführt.
 
 **Ziffernbereich der Kontonummern (von–bis):** Nur Zeilen, deren Kontonummer so viele Ziffern hat, gelten als Konto.
 Gruppen, Zwischensummen und Totale (z. B. „100 Flüssige Mittel“, „Total Umlaufvermögen“) werden ausgeblendet und
@@ -63,6 +65,17 @@ Die Analyse legt noch nichts ab. Erst nach der Durchsicht (`finalizeAudit`) ents
   `B.1_Notiz_<Datei>.pdf`; ausserdem im Excel (Spalte „Kommentar Prüfer“).
 - Ein bestehender Excel-Bericht wird nie überschrieben; ein erneuter Abschluss erzeugt „… (2).xlsx“.
 
+## Vertiefte Prüfung: Forderungen aus L+L (Fälligkeitsanalyse)
+- Offenposten-Liste der Debitoren wird unter den Kundenunterlagen erkannt: **Abacus**, **Navision / Business Central**
+  (auch als Scan per Texterkennung) und **Excel/CSV**-Exporte (Kunde je Zeile).
+- Kundenblöcke, Posten, Kundentotale und Gesamttotal(e) je Währung werden gelesen und **gegeneinander abgestimmt**;
+  Seitenkopf/-fuss wird ignoriert. Abweichungen (z. B. Lesefehler) werden gemeldet.
+- Fälligkeit per **Bilanzstichtag**: Fälligkeitsdatum aus der Liste, sonst Belegdatum + Zahlungsfrist (Standard 30 Tage).
+  Altersklassen nicht fällig / 1–30 / 31–60 / 61–90 / > 90 Tage – **nur offene Rechnungen**; Gutschriften und
+  Vorauszahlungen separat. Fremdwährungen mit Kurs per Stichtag (je Prüfung einzugeben).
+- Abstimmung Total OP-Liste ↔ Saldo Forderungen L+L (ohne Delkredere), Kennzahlen, Kunden-Tabelle, vorgeschlagene Feststellungen.
+- Excel `E.x_Analyse_Fälligkeit.xlsx` (Übersicht, Altersstruktur, Kunden, Einzelposten) – beim Abschluss als Nachweis abgelegt.
+
 ## Qualität
 Zwei realistische Testsätze mit vorab festgelegter Soll-Lösung (`test/fixtures`, Generator in `test/corpus`):
 - **Alpenblick Treuhand AG**: 20 Dateien in 10 Unterordnern (Text-PDF, Scan-PDF, Handyfoto, xlsx, xls, docx,
@@ -75,7 +88,7 @@ Zwei realistische Testsätze mit vorab festgelegter Soll-Lösung (`test/fixtures
   Gruppen- und Totalzeilen: mit 4 Ziffern exakt die 27 Konten, gleiches Prüfergebnis.
 - **Durchsicht/Abschluss:** Akzeptieren, manuelle Zuordnung, Register-Präfix, Notizseite im PDF, Notiz-PDF, Excel-Spalten.
 
-`npm test` – 110 Tests (Beträge, Saldobilanz, Abgleich, Testsätze, Ablage, Datumserkennung, Excel, Diagnose, Belegvorschau und Fundstellen-Positionen).
+`npm test` – 118 Tests (inkl. künstlicher OP-Listen im Aufbau von Abacus, Navision-Scan und Business Central) (Beträge, Saldobilanz, Abgleich, Testsätze, Ablage, Datumserkennung, Excel, Diagnose, Belegvorschau und Fundstellen-Positionen).
 
 ## Belegvorschau
 `renderPreview(datei, seite)` liefert die Seite als Bild (PDF, Scan, Foto, Bild in Excel), als Tabelle (Excel, CSV)

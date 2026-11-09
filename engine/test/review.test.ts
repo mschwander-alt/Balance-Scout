@@ -48,6 +48,12 @@ describe('Bilanz und Erfolgsrechnung – eine oder zwei Dateien, Ziffernbereich'
     expect(tb.rows.map(r => [r.accountNumber, r.balanceCurrentYear])).toEqual(await expected());
   });
 
+  it.each(['datum', 'ohnekopf', 'aufwandertrag'])('Erfolgsrechnung auf eigenem Blatt (%s) wird erkannt', async mode => {
+    const tb = await loadTrialBalance([path.join(SPLIT, `Jahresrechnung_ER_${mode}.xlsx`)], { accountDigits: { min: 4, max: 4 } });
+    expect(tb.parts.map(p => [p.sheet, p.status, p.accountCount])).toEqual([['Bilanz', 'ok', 22], ['Erfolgsrechnung', 'ok', 5]]);
+    expect(tb.rows.map(r => [r.accountNumber, r.balanceCurrentYear])).toEqual(await expected());
+  });
+
   it('Ziffernbereich von–bis (4- und 6-stellige Konten gemischt)', async () => {
     const tb = await loadTrialBalance([path.join(SPLIT, 'Bilanz_2025.xlsx')], { accountDigits: { min: 3, max: 4 } });
     expect(tb.rows.some(r => r.accountNumber === '100')).toBe(true);
@@ -138,6 +144,7 @@ describe('Durchsicht und Abschluss: akzeptieren, manuell zuordnen, Notizen, Regi
     unassigned().forEach((d, i) => (decisions.assignments![d.doc.id] = { accountNumber: i < kn.length && d.doc.status === 'ok' ? kn[i]!.accountNumber : null, at: now, visum: 'MS' }));
     const ubs = res.match.results.find(r => r.accountNumber === '1020')!; // PDF
     const deb = res.match.results.find(r => r.accountNumber === '1100')!; // Excel
+    decisions.analyses = { receivables: { docId: null, termDays: 30, rates: {}, findings: [{ text: 'Saldenbestätigung Meier AG einholen', status: 'offen' }], visum: 'MS' } };
     decisions.notes = {
       '1020': { text: 'Saldo mit Bankbestätigung abgestimmt. Keine Abweichung – ok.', at: now, visum: 'MS' },
       '1100': { text: 'OP-Liste mit Debitorenkonto abgestimmt.', at: now, visum: 'MS' },
@@ -154,6 +161,15 @@ describe('Durchsicht und Abschluss: akzeptieren, manuell zuordnen, Notizen, Regi
     expect((await readdir(path.join(target, '03_Nicht_relevant'))).length).toBeGreaterThan(0);
     expect(zu.filter(f => /^B\.\d+_/.test(f)).length).toBeGreaterThanOrEqual(3);
     expect(zu).toContain('A.1_AGB_Lieferant.pdf');
+    // Vertiefte Prüfung Forderungen: Analyse als Nachweis mit Register E und Zusatz "Analyse"
+    const ana = zu.find(f => /^E\.\d+_Analyse_Fälligkeit\.xlsx$/.test(f));
+    expect(ana).toBeTruthy();
+    const awb = XLSX.read(await readFile(path.join(target, '01_Zugeordnet', ana!)));
+    expect(awb.SheetNames).toEqual(['Übersicht', 'Altersstruktur', 'Kunden', 'Einzelposten']);
+    const ovr = XLSX.utils.sheet_to_json<unknown[]>(awb.Sheets['Übersicht']!, { header: 1 });
+    expect(ovr.find(r => r[0] === 'Differenz')?.[1]).toBe(0);
+    expect(ovr.some(r => r[0] === 'Saldenbestätigung Meier AG einholen' && r[2] === 'offen')).toBe(true)
+    expect(XLSX.utils.sheet_to_json(awb.Sheets['Einzelposten']!)).toHaveLength(4);
     // ohne Präfix nur Belege von Gruppen ohne Registerbuchstaben (z. B. Sachanlagen, Eigenkapital)
     expect(zu.filter(f => !/^[A-Z]+\d*\.\d+_/.test(f)).length).toBeLessThanOrEqual(4);
 
