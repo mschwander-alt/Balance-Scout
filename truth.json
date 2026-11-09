@@ -1,0 +1,94 @@
+{
+ "mandate": "Alpenblick Treuhand AG",
+ "closingDate": "2025-12-31",
+ "truth": {
+  "1020": {
+   "file": "Bank/UBS/Kontoauszug.pdf",
+   "expect": "Belegt"
+  },
+  "1021": {
+   "file": "Bank/PostFinance/Kontoauszug.pdf",
+   "expect": "Belegt"
+  },
+  "1022": {
+   "file": "Bank/ZKB/Scan_20260112.pdf",
+   "expect": "Prüfen"
+  },
+  "1000": {
+   "file": "Kasse/IMG_4471.jpg",
+   "expect": "Prüfen"
+  },
+  "1060": {
+   "file": "Wertschriften/Depotauszug_UBS_2025.pdf",
+   "expect": "Belegt"
+  },
+  "1100": {
+   "file": "Debitoren/OP_Debitoren_31.12.2025.xlsx",
+   "expect": "Belegt"
+  },
+  "1170": {
+   "file": "Steuern/MWST_Abrechnung_Q4_2025.pdf",
+   "expect": "Belegt"
+  },
+  "2200": {
+   "file": "Steuern/MWST_Abrechnung_Q4_2025.pdf",
+   "expect": "Belegt"
+  },
+  "1176": {
+   "file": "Steuern/VSt_Rueckforderung_2025.pdf",
+   "expect": "Prüfen"
+  },
+  "1200": {
+   "file": "Inventar/Inventar_2025.xls",
+   "expect": "Belegt"
+  },
+  "1510": {
+   "file": "Anlagen/Anlagenspiegel.xlsx",
+   "expect": "Prüfen"
+  },
+  "2000": {
+   "file": "Kreditoren/Kreditoren_OP.docx",
+   "expect": "Belegt"
+  },
+  "2270": {
+   "file": "Sozialversicherung/AHV_Kontoauszug.pdf",
+   "expect": "Prüfen"
+  },
+  "2400": {
+   "file": "Darlehen/Zinsausweis_ZKB_2025.pdf",
+   "expect": "Belegt"
+  },
+  "2450": {
+   "file": "Darlehen/Saldobestaetigung_Aktionaer.pdf",
+   "expect": "Belegt"
+  },
+  "2800": {
+   "file": "Gesellschaft/HR_Auszug.pdf",
+   "expect": "Prüfen"
+  },
+  "1109": {
+   "file": null,
+   "expect": "Kein Nachweis"
+  },
+  "1300": {
+   "file": null,
+   "expect": "Kein Nachweis"
+  },
+  "2300": {
+   "file": null,
+   "expect": "Kein Nachweis"
+  },
+  "2900": {
+   "file": null,
+   "expect": "Kein Nachweis"
+  },
+  "2970": {
+   "file": null,
+   "expect": "Kein Nachweis"
+  },
+  "2100": {
+   "file": null,
+   "expect": "Nullsaldo"
+  }
+ }
+}
