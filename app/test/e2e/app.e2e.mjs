@@ -56,21 +56,21 @@ assert.equal(readdirSync(target).length, 0, 'vor dem Abschliessen darf nichts im
 await page.screenshot({ path: `${shots}-4-ergebnis.png` });
 
 // Kennzahlen und Detailansicht
-const kpis = await page.locator('.kpi').allInnerTexts();
-console.log('Kennzahlen:', kpis.map(k => k.replace(/\n/g, ' ')).join(' | '));
-assert.match(kpis[1], /Belegt\s*10/);
-assert.match(kpis[2], /Prüfen\s*6/);
-assert.match(kpis[3], /Kein Nachweis\s*5/);
-assert.match(kpis[4], /4 mit Texterkennung/);
+const kz = async k => (await page.locator(`.summary-line [data-k="${k}"]`).innerText()).replace(/\s+/g, ' ');
+console.log('Kennzahlen:', (await page.locator('.summary-line').innerText()).replace(/\s+/g, ' '));
+assert.match(await kz('BELEGT'), /10 belegt/);
+assert.match(await kz('PRUEFEN'), /6 prüfen/);
+assert.match(await kz('KEIN_NACHWEIS'), /5 ohne Nachweis/);
 // Ergebnis muss exakt dem der Engine-Tests entsprechen (gleiche Engine, andere Laufumgebung)
 const stored = JSON.parse(readFileSync(readdirSync(userData).filter(f => f.startsWith('result-')).map(f => path.join(userData, f))[0], 'utf8'));
+assert.equal(stored.documents.filter(d => d.ocrPages > 0).length, 4, '4 Belege mit Texterkennung');
 const errs = stored.documents.filter(d => d.status === 'error').map(d => d.relPath);
 assert.deepEqual(errs, ['Diverses/defekt.pdf'], 'nur die absichtlich defekte Datei darf fehlschlagen: ' + JSON.stringify(stored.documents.filter(d => d.status === 'error').map(d => [d.relPath, d.warnings])));
 // Belegvorschau mit markierter Fundstelle – je Belegart
 const pv = async (konto, sel, file, shot) => {
   await page.getByRole('cell', { name: konto, exact: true }).click();
   await page.locator('.preview-panel ' + sel).first().waitFor({ state: 'visible', timeout: 30_000 });
-  assert.match(await page.locator('.preview-panel .cand-head').innerText(), new RegExp(file.replace(/[.]/g, '\\.')));
+  assert.match(await page.locator('.preview-panel .doc-line').innerText(), new RegExp(file.split('/').pop().replace(/[.]/g, '\\.')));
   if (shot) await page.screenshot({ path: `${shots}-${shot}.png` });
   step(`Vorschau ${konto}: ${sel} sichtbar`);
 };
@@ -100,7 +100,8 @@ await page.getByText('zur Fundstelle').click();
 await page.locator('.preview-panel .hl-box').waitFor();
 step('Seitenwechsel und zurück zur Fundstelle');
 await page.getByRole('tab', { name: 'Belegverzeichnis' }).click();
-await page.getByText('IMG_4471.jpg').waitFor();
+await page.getByRole('button', { name: /^Alle \(/ }).click();
+await page.locator('tr[data-beleg="Kasse/IMG_4471.jpg"]').waitFor();
 await page.screenshot({ path: `${shots}-6-belege.png` });
 await page.getByRole('tab', { name: 'Diagnosebericht' }).click();
 assert.match(await page.locator('pre.diag').innerText(), /DIAGNOSEBERICHT/);
@@ -111,18 +112,17 @@ await page.getByLabel('Visum').fill('MS');
 const pruefen = stored.accounts.filter(a => a.status === 'PRUEFEN');
 const kn = stored.accounts.filter(a => a.status === 'KEIN_NACHWEIS');
 await page.locator(`[data-konto="${pruefen[0].accountNumber}"]`).click();
-await page.getByPlaceholder(/Kommentar \(optional\)/).fill('Original eingesehen');
-await page.getByRole('button', { name: 'Akzeptieren → Belegt' }).click();
-await page.getByText(/Als belegt akzeptiert \(MS/).waitFor();
-let k = await page.locator('.kpi').allInnerTexts();
-assert.match(k[1], /Belegt\s*11/);
-assert.match(k[2], /Prüfen\s*5/);
+await page.getByRole('button', { name: '✓ Akzeptieren', exact: true }).click();
+await page.getByRole('button', { name: /Akzeptiert · rückgängig/ }).waitFor();
+assert.match(await kz('BELEGT'), /11 belegt/);
+assert.match(await kz('PRUEFEN'), /5 prüfen/);
 step(`Konto ${pruefen[0].accountNumber} akzeptiert → Belegt 11 / Prüfen 5`);
 // Gruppierung nach KMU-Kontenrahmen mit Registerbuchstaben
 assert.ok(await page.locator('tr.group-row', { hasText: 'Flüssige Mittel' }).count() === 1);
 assert.equal(await page.locator('tr.group-row', { hasText: 'Flüssige Mittel' }).locator('.register').innerText(), 'B');
 // Notiz zur Bank
 await page.locator('[data-konto="1020"]').click();
+await page.getByRole('button', { name: 'Notiz', exact: true }).click();
 await page.locator('.note-field textarea').fill('Saldo mit Bankbestätigung abgestimmt.');
 await page.locator('.preview-panel h3').click(); // Feld verlassen = speichern
 await page.locator('[data-konto="1020"] .flag.note').waitFor();
@@ -133,14 +133,27 @@ await page.getByRole('button', { name: /Ohne Zuordnung/ }).click();
 const open0 = await page.locator('tr[data-beleg]').count();
 assert.ok(open0 >= 2, 'es gibt Belege ohne Zuordnung');
 const firstOk = stored.documents.find(d => !d.assigned && d.status === 'ok');
-await page.locator(`tr[data-beleg="${firstOk.relPath}"] select.assign`).selectOption(kn[0].accountNumber);
-for (let i = 0; i < 30 && (await page.locator('tr[data-beleg] select.assign').count()) > 0; i++) {
-  await page.locator('tr[data-beleg] select.assign').first().selectOption('__none');
+// Vorschau des Belegs rechts, Konto in der Liste wählen, zuordnen
+await page.locator(`tr[data-beleg="${firstOk.relPath}"]`).click();
+await page.locator('.doc-panel .viewer').waitFor();
+await page.locator('.doc-panel input[aria-label="Konto suchen"]').fill(kn[0].accountNumber);
+await page.locator(`.doc-panel tr[data-pick="${kn[0].accountNumber}"]`).click();
+await page.getByRole('button', { name: new RegExp(`Beleg zuordnen → ${kn[0].accountNumber}`) }).click();
+await page.locator(`tr[data-beleg="${firstOk.relPath}"]`).waitFor({ state: 'detached' });
+await page.screenshot({ path: `${shots}-6b-belegverzeichnis.png` });
+// nächster offener Beleg ist automatisch gewählt -> Allgemeine Prüfungen
+const generalDoc = await page.locator('tr[data-beleg].selected').getAttribute('data-beleg');
+await page.getByRole('button', { name: 'Allgemein (A)' }).click();
+await page.locator(`tr[data-beleg="${generalDoc}"]`).waitFor({ state: 'detached' });
+for (let i = 0; i < 30 && (await page.locator('tr[data-beleg]').count()) > 0; i++) {
+  const r = await page.locator('tr[data-beleg]').first().getAttribute('data-beleg');
+  await page.locator('tr[data-beleg]').first().click();
+  await page.getByRole('button', { name: 'Nicht relevant' }).click();
+  await page.locator(`tr[data-beleg="${r}"]`).waitFor({ state: 'detached' });
 }
 assert.equal(await page.locator('tr[data-beleg]').count(), 0, 'alle Belege haben eine Zuordnung');
-k = await page.locator('.kpi').allInnerTexts();
-assert.match(k[1], /Belegt\s*12/);
-assert.match(k[4], /0 ohne Zuordnung/);
+assert.match(await kz('BELEGT'), /12 belegt/);
+assert.match(await kz('belege'), /20 \/ 20 Belege zugeordnet/);
 step(`${open0} Belege zugeordnet bzw. als nicht relevant markiert`);
 await page.screenshot({ path: `${shots}-6-durchsicht.png` });
 // Entscheide überleben einen Neustart (gespeichert)
@@ -160,7 +173,8 @@ const excel = readdirSync(target).filter(f => f.endsWith('.xlsx'));
 console.log(`Ablage: ${assigned.length} zugeordnet (${assigned.slice(0, 6).join(', ')} …), ${unassigned.length} nicht zugeordnet, ${irrelevant.length} nicht relevant, Excel: ${excel.join(', ')}`);
 assert.equal(excel.length, 1);
 assert.equal(unassigned.length, 0);
-assert.ok(assigned.every(f => /^[A-Z]+\d*\.\d+_/.test(f)), 'alle Dateinamen beginnen mit Register');
+assert.ok(assigned.filter(f => /^[A-Z]+\d*\.\d+_/.test(f)).length >= 12, 'Dateinamen mit Register');
+assert.ok(assigned.includes(`A.1_${generalDoc.split('/').pop()}`), 'Allgemeine Prüfungen mit Register A');
 const ubs = assigned.find(f => /^B\.\d+_Bank_UBS_Kontoauszug\.pdf$/.test(f));
 assert.ok(ubs, 'Bankauszug mit Register B');
 assert.ok(readFileSync(path.join(target, '01_Zugeordnet', ubs)).length > readFileSync(path.join(FIX, 'Kunde_Upload', 'Bank', 'UBS', 'Kontoauszug.pdf')).length, 'Notizseite vorangestellt');

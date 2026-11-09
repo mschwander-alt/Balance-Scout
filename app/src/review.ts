@@ -5,6 +5,10 @@
 import type { ReviewDecisions } from '../electron/shared';
 import type { AccountRow, AuditResult, DocRow, Status } from './types';
 
+/** Zuordnung „Allgemeine Prüfungen“ (Register A) für Belege ohne Konto */
+export const GENERAL_ACCOUNT = '@allgemein';
+export const accountLabel = (n: string) => (n === GENERAL_ACCOUNT ? 'Allgemeine Prüfungen' : `Konto ${n}`);
+
 export type Manual = 'akzeptiert' | 'zugeordnet' | null;
 export interface ViewAccount extends AccountRow {
   autoStatus: Status;
@@ -67,7 +71,7 @@ export function deriveView(r: AuditResult, d: ReviewDecisions): View {
   for (const doc of docs) {
     if (!doc.assigned) continue;
     const acc = [...doc.accounts].sort((x, y) => x.localeCompare(y, 'de', { numeric: true }))[0]!;
-    const g = groupOf.get(acc);
+    const g = acc === GENERAL_ACCOUNT ? 'ALLG' : groupOf.get(acc);
     const letter = (g && letters[g]?.trim()) || '';
     if (letter) items.push({ doc, letter, key: `${acc.padStart(12, '0')} ${doc.filename.toLowerCase()}` });
   }

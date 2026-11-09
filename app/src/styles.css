@@ -186,3 +186,112 @@ select.assign { max-width: 260px; font-size: 12px; margin-top: 4px; }
 .preview-panel .viewer { overflow: hidden; min-height: 200px; }
 .preview-panel .viewer-body { min-height: 0; }
 .preview-panel { overflow-y: auto; }
+
+/* =====================================================================
+   Ruhigeres Erscheinungsbild (v0.7): eine Schrift, kleiner, weniger Farbe
+   ===================================================================== */
+:root {
+  --font: 'Segoe UI Variable Text', 'Segoe UI', system-ui, -apple-system, 'Helvetica Neue', Arial, sans-serif;
+  --text: #222936; --muted: #737b8c; --line: #e8eaee; --bg: #f7f8fa;
+  font-family: var(--font); font-size: 12.5px; line-height: 1.45;
+}
+/* Überall dieselbe Schrift – auch Zahlen, Eingaben, Diagnose; Zahlen mit gleich breiten Ziffern */
+body, button, input, select, textarea, pre, code, .mono, .kpi, .grid, .modal { font-family: var(--font) !important; }
+.mono, .num, .grid td.num { font-variant-numeric: tabular-nums; letter-spacing: 0; }
+code { font-size: 11.5px; background: #f1f3f6; padding: 0 4px; border-radius: 3px; }
+h1 { font-size: 18px; font-weight: 600; } h2 { font-size: 16px; font-weight: 600; } h3 { font-size: 14px; font-weight: 600; }
+.small { font-size: 11.5px; }
+.btn { padding: 5px 12px; border-radius: 6px; font-size: 12.5px; }
+.btn-sm { padding: 3px 9px; font-size: 12px; } .btn-lg { padding: 8px 18px; font-size: 13px; }
+input, select, textarea { padding: 5px 8px; font-size: 12.5px; }
+.card { padding: 14px; } .page { padding: 16px 22px; }
+.topbar { padding: 8px 20px; }
+.badge { font-size: 11px; font-weight: 500; padding: 1px 7px; }
+.chip { font-size: 11.5px; padding: 2px 9px; }
+.grid th { font-size: 11px; font-weight: 500; text-transform: none; padding: 6px 8px; background: #fbfbfc; }
+.grid td { padding: 5px 8px; border-bottom-color: #f0f1f4; vertical-align: middle; }
+.flag { font-size: 10.5px; }
+.tabs button { padding: 7px 12px; }
+
+/* Kopf der Durchsicht */
+.review-head { display: flex; align-items: center; gap: 10px; }
+.review-head .title { flex: 1; }
+.review-head .title h1 { margin: 0; }
+.review-head .title p { margin: 2px 0 0; color: var(--muted); }
+.draft-bar { background: none; border: 0; padding: 0; }
+
+/* Kompakte Kennzahlenzeile statt Kacheln */
+.summary-line { display: flex; align-items: center; gap: 4px; background: #fff; border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; flex-wrap: wrap; }
+.summary-line .sum-item { border: 0; background: none; font: inherit; color: var(--text); padding: 3px 8px; border-radius: 5px; cursor: pointer; display: inline-flex; gap: 6px; align-items: center; }
+.summary-line .sum-item:hover, .summary-line .sum-item.active { background: #f1f4f8; }
+.summary-line .sep { width: 1px; height: 16px; background: var(--line); margin: 0 4px; }
+.dot { width: 7px; height: 7px; border-radius: 50%; display: inline-block; }
+.dot.ok { background: #3a9b62; } .dot.warn { background: #e0a42b; } .dot.bad { background: #d4574e; } .dot.grey { background: #b9bfca; }
+.summary-line .search { margin-left: auto; width: 240px; }
+
+/* Kontentabelle */
+.grid .group-row td { background: #f8f9fb; color: var(--text); font-weight: 600; border-top: 1px solid var(--line); cursor: pointer; }
+.grid .group-row .caret { display: inline-block; width: 14px; color: var(--muted); font-weight: 400; }
+.grid .total-row td { background: #fff; font-weight: 600; border-top: 2px solid #dfe2e8; }
+.register { background: #2f6db3; font-size: 10.5px; min-width: 18px; padding: 0 5px; border-radius: 3px; font-weight: 600; }
+.reg-link { color: #2f6db3; font-weight: 500; }
+.delta-pos { color: var(--text); } .delta-neg { color: var(--text); }
+.delta-big { color: var(--warn); font-weight: 500; }
+.muted-row td { color: var(--muted); }
+.manual { font-weight: 500; font-size: 10.5px; }
+
+/* Info-Symbol mit Hover/Klick */
+.info { position: relative; display: inline-flex; align-items: center; justify-content: center; width: 15px; height: 15px; margin-left: 5px;
+  border-radius: 50%; border: 1px solid #c3c8d2; color: #8a91a0; font-size: 9.5px; font-weight: 600; font-style: normal; cursor: help; vertical-align: middle; background: #fff; }
+.info:hover, .info:focus { border-color: var(--brand); color: var(--brand); outline: none; }
+.info .tip { display: none; position: absolute; z-index: 40; top: 18px; right: -6px; width: 300px; padding: 8px 10px; background: #fff; color: var(--text);
+  border: 1px solid var(--line); border-radius: 6px; box-shadow: 0 6px 20px rgba(20,25,35,.14); font-size: 11.5px; font-weight: 400; line-height: 1.45; text-align: left; white-space: normal; cursor: default; }
+.info .tip.left { right: auto; left: -6px; }
+.info:hover .tip, .info:focus .tip, .info:focus-within .tip { display: block; }
+.tip dl { display: grid; grid-template-columns: 92px 1fr; gap: 2px 8px; margin: 0; } .tip dt { color: var(--muted); } .tip dd { margin: 0; overflow-wrap: anywhere; }
+.tip ul { margin: 4px 0 0; padding-left: 16px; }
+.warn-icon { color: #c97f00; margin-left: 4px; font-size: 12px; cursor: help; }
+
+/* Panel rechts */
+.preview-panel { padding: 12px 14px; gap: 8px; }
+.panel-title { display: flex; align-items: center; gap: 8px; }
+.panel-title h3 { margin: 0; font-size: 14px; }
+.panel-nav { margin-left: auto; display: flex; align-items: center; gap: 4px; color: var(--muted); }
+.panel-nav button { border: 1px solid var(--line); background: #fff; border-radius: 5px; width: 24px; height: 24px; cursor: pointer; color: var(--muted); }
+.doc-line { display: flex; align-items: center; gap: 6px; color: var(--muted); }
+.actions-row { display: flex; gap: 6px; }
+.actions-row .btn { display: inline-flex; align-items: center; gap: 6px; }
+.btn-ok { background: #2e8b57; border-color: #2e8b57; color: #fff; }
+.btn-ok:hover:not(:disabled) { background: #257349 !important; }
+.btn.on { background: #eef8f1; border-color: #a9d8b8; color: #1d7a46; }
+.problem { background: #fff8eb; border: 1px solid #f3dfb2; color: #7a5200; border-radius: 6px; padding: 6px 9px; font-size: 11.5px; }
+.problem ul { margin: 0; padding-left: 16px; }
+.decision { font-size: 12px; }
+.note-field > span { font-size: 11.5px; color: var(--muted); }
+.note-meta { display: flex; justify-content: space-between; color: var(--muted); font-size: 11px; margin-top: 2px; }
+.viewer-bar { padding: 4px 6px; }
+/* Kontentabelle: keine Umbrüche, lange Bezeichnungen gekürzt (voller Text im Tooltip) */
+.result-layout.withpreview { grid-template-columns: minmax(0, 1.45fr) minmax(380px, 1fr); }
+table.konten td { white-space: nowrap; }
+table.konten td:nth-child(2) { max-width: 260px; overflow: hidden; text-overflow: ellipsis; }
+table.konten tr.group-row td:first-child { max-width: 340px; overflow: hidden; text-overflow: ellipsis; }
+table.konten th.num, table.konten td.num { padding-left: 4px; }
+.withpreview table.konten td:nth-child(2) { max-width: 190px; }
+.visum input { width: 64px; }
+.withpreview table.konten .dchf { display: none; }
+/* Belegverzeichnis mit Vorschau */
+.docs-layout.withpreview { grid-template-columns: minmax(0, 1fr) minmax(420px, 1.05fr); }
+table.belege td { white-space: nowrap; }
+table.belege .fname { max-width: 300px; overflow: hidden; text-overflow: ellipsis; }
+.table-foot { padding: 6px 10px; border-top: 1px solid var(--line); background: #fbfbfc; }
+.badge-grey { background: #eef0f3; color: #59606e; }
+.doc-panel .viewer { min-height: 240px; }
+.assign-box { display: flex; flex-direction: column; gap: 6px; border-top: 1px solid var(--line); padding-top: 8px; }
+.acc-pick { max-height: 190px; overflow: auto; border: 1px solid var(--line); border-radius: 6px; }
+.acc-pick .grid { border: 0; } .acc-pick td { white-space: nowrap; }
+.acc-pick td:nth-child(2) { max-width: 200px; overflow: hidden; text-overflow: ellipsis; }
+.flag.match { background: #e8f5ec; color: #1d7a46; margin-left: 6px; }
+.grow { flex: 1; }
+.doc-panel .viewer { min-height: 180px; }
+.doc-panel .acc-pick { max-height: 150px; }
+.doc-panel { max-height: calc(100vh - 230px); }

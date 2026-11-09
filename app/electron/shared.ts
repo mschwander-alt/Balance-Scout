@@ -95,6 +95,8 @@ export interface ReviewDecisions {
 export interface GroupsInfo {
   groups: { code: string; name: string; category: string; subcategory: string }[];
   letters: Record<string, string>;
+  /** Allgemeine Prüfungen (Belege ohne Konto) */
+  general?: { code: string; name: string; account: string };
 }
 
 export type FilePreview =

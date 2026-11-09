@@ -19,6 +19,10 @@ export interface DocRow {
   pageCount: number; ocrPages: number; ocrConfidence: number | null; warnings: string[]; docType: string; balanceDate: string | null;
   amountCount: number; assigned: boolean; assignedAccounts: string[]; targetName: string;
   placement: { status: string; newPath: string | null; message: string | null } | null;
+  keyAmount?: { cents: number; page: number; lineNo: number; line: string; bbox?: BBox } | null;
+  keyDate?: string | null;
+  amountSet?: number[];
+  searchText?: string;
 }
 export interface Filed { placement: DocRow['placement']; notePath: string | null; register: string | null; irrelevant: boolean }
 export interface AuditResult {

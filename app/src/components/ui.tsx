@@ -53,3 +53,16 @@ export function Modal({ title, children, onClose, footer, wide }: { title: strin
     </div>
   );
 }
+
+/** Info-Symbol: technische Details erst bei Hover/Klick (Tastatur: Tab) */
+export function Info({ children, left, label = 'Details' }: { children: ReactNode; left?: boolean; label?: string }) {
+  return (
+    <span className="info" tabIndex={0} role="button" aria-label={label} onClick={e => e.stopPropagation()}>
+      i<span className={`tip ${left ? 'left' : ''}`} role="tooltip">{children}</span>
+    </span>
+  );
+}
+/** Warnsymbol – nur bei Problemen */
+export function WarnIcon({ text }: { text: string }) {
+  return <span className="warn-icon" title={text} aria-label={text}>⚠</span>;
+}
