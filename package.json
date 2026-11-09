@@ -1,45 +1,104 @@
 {
-  "name": "@balance-scout/engine",
+  "name": "balance-scout-lokal",
+  "productName": "Balance Scout",
   "version": "0.10.0",
   "private": true,
-  "description": "Balance Scout – lokale Prüf-Engine: Saldobilanz, Belege (inkl. Texterkennung), Abgleich, Excel-Dokumentation, Ablage",
-  "type": "module",
-  "main": "dist/index.js",
-  "bin": {
-    "bsb-local": "dist/cli.js"
-  },
+  "description": "Balance Scout – lokale Saldennachweis-Prüfung (ohne Server, ohne Cloud)",
+  "main": "dist-electron/main.js",
+  "author": "Balance Scout",
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build:main": "tsc -p tsconfig.main.json",
+    "build:renderer": "vite build",
+    "build": "npm run build:main && npm run build:renderer",
+    "typecheck": "tsc -p tsconfig.main.json --noEmit && tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
-    "typecheck": "tsc -p tsconfig.json --noEmit",
-    "cli": "tsx src/cli.ts",
-    "prepack": "tsc -p tsconfig.json"
+    "dist:win": "npm run build && electron-builder --win --x64 --publish never"
   },
   "dependencies": {
-    "@napi-rs/canvas": "^1.1.0",
-    "exceljs": "^4.4.0",
-    "jszip": "^3.10.2",
-    "mammoth": "^1.13.0",
-    "papaparse": "^5.7.0",
-    "pdf-lib": "^1.17.1",
-    "tesseract.js": "^5.1.1",
-    "unpdf": "^1.9.1",
-    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"
+    "@balance-scout/engine": "file:../engine",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
   },
   "devDependencies": {
-    "@types/node": "^26.6.6",
-    "@types/papaparse": "^5.5.2",
-    "tsx": "^4.23.15",
-    "typescript": "^7.0.2",
-    "vitest": "^5.1.0"
+    "@testing-library/dom": "^10.4.2",
+    "@testing-library/react": "^16.3.3",
+    "@types/node": "^22.20.5",
+    "@types/react": "^18.3.31",
+    "@types/react-dom": "^18.3.7",
+    "@vitejs/plugin-react": "^4.7.0",
+    "electron": "^33.4.11",
+    "electron-builder": "^26.18.0",
+    "jsdom": "^29.1.1",
+    "playwright-core": "^1.65.0",
+    "typescript": "^5.9.3",
+    "vite": "^5.4.21",
+    "vitest": "^2.1.9"
+  },
+  "build": {
+    "appId": "ch.balancescout.lokal",
+    "productName": "Balance Scout",
+    "directories": {
+      "output": "release",
+      "buildResources": "build"
+    },
+    "files": [
+      "dist/**",
+      "dist-electron/**",
+      "package.json"
+    ],
+    "asar": false,
+    "extraResources": [
+      {
+        "from": "node_modules/@balance-scout/engine/tessdata",
+        "to": "tessdata"
+      },
+      {
+        "from": "build",
+        "to": "build",
+        "filter": [
+          "*.png"
+        ]
+      }
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "msi",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/icon.ico",
+      "artifactName": "BalanceScout-Lokal-${version}-${arch}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "shortcutName": "Balance Scout Lokal"
+    },
+    "msi": {
+      "perMachine": true,
+      "oneClick": false,
+      "createDesktopShortcut": true,
+      "shortcutName": "Balance Scout Lokal"
+    },
+    "linux": {
+      "target": [
+        "dir"
+      ]
+    }
   },
   "overrides": {
     "uuid": "^11.1.1",
     "wasm-feature-detect": "1.9.0"
-  },
-  "files": [
-    "dist",
-    "tessdata",
-    "README.md"
-  ]
+  }
 }

@@ -1,109 +1,45 @@
-# Balance Scout – Prüf-Engine (lokal)
+# Balance Scout – Windows-App (lokal)
 
-Liest Saldobilanz und Kundenunterlagen, gleicht jeden Saldo nachvollziehbar ab, erstellt die
-Excel-Dokumentation und legt die Belege ab. **Läuft vollständig auf dem PC – keine Cloud, kein Server,
-keine Anmeldung, keine Administratorrechte.**
+Saldennachweis-Prüfung als Windows-App: **ohne Server, ohne Cloud, ohne Administratorrechte.**
 
-## Was gelesen wird
-| Format | Wie |
-|---|---|
-| PDF mit Text | Textebene, zeilenweise mit Seitenangabe |
-| PDF-Scans (auch gemischt) | **lokale Texterkennung** pro Seite (Tesseract, Deutsch + Englisch) |
-| Fotos/Bilder (JPG, PNG, TIFF, BMP, WEBP) | lokale Texterkennung mit Bildaufbereitung (Entrauschen, Kontrast, Schwarz-Weiss) |
-| Excel `.xlsx`/`.xlsm` | alle sichtbaren Blätter, Zellen exakt; **eingefügte Bilder** per Texterkennung |
-| Excel `.xls` (97–2003) | alle Blätter |
-| CSV, TXT, Word `.docx` | Text |
-| Ordner | rekursiv mit allen Unterordnern; Sperrdateien (`~$…`), `Thumbs.db` usw. werden ignoriert |
+## Ablauf für Prüferinnen und Prüfer
+1. **Neue Prüfung** → Mandat und Bilanzstichtag eingeben.
+2. **Bilanz und Erfolgsrechnung** hineinziehen – eine Datei oder mehrere (Excel, CSV, PDF, auch Scan).
+   **Kontonummern von … bis … Ziffern** angeben (wird vorgeschlagen): Gruppen und Zwischensummen werden ausgeblendet.
+   „Konten anzeigen“ zeigt die Konten gegliedert nach KMU-Kontenrahmen. Spalten nicht erkannt → „Spalten zuordnen …“.
+3. **Unterlagen des Kunden** hineinziehen: ganze Ordner (inkl. Unterordner) oder einzelne Dateien
+   (auch synchronisierte OneDrive-/SharePoint-Ordner).
+4. **Zielordner** wählen und **kopieren** (Standard) / verschieben / nicht ablegen → **Prüfung starten.**
+5. **Durchsicht** (noch wird nichts abgelegt):
+   - Konten sind nach KMU-Kontenrahmen gruppiert, mit Registerbuchstaben (z. B. **B** Flüssige Mittel).
+   - Klick auf ein Konto zeigt rechts den Beleg mit gelb markierter Fundstelle.
+   - **„Akzeptieren → Belegt“** bei Konten mit „Prüfen“ (optional mit Kommentar; Visum oben eintragen).
+   - **Notiz** je Konto erfassen.
+   - Im **Belegverzeichnis** unter „Ohne Zuordnung“ jeden Beleg einem Konto zuordnen oder als „nicht relevant“ markieren.
+   - **Register …**: Buchstaben je Gruppe anpassen (als Standard speicherbar).
+   Alle Entscheide werden laufend gespeichert – die Durchsicht kann später über „Übersicht“ fortgesetzt werden.
+6. **Abschliessen …** → Ablage und Excel-Dokumentation entstehen:
+   `01_Zugeordnet/B.1_Kontoauszug Bank A.pdf`, `B.2_…` (Notiz als erste PDF-Seite bzw. `B.1_Notiz_….pdf`),
+   `02_Nicht_zugeordnet`, `03_Nicht_relevant`, `Saldenabstimmung_<Mandat>_<Stichtag>.xlsx`.
+   Erneutes Abschliessen erstellt eine neue Version „… (2).xlsx“; nichts wird überschrieben.
 
-Nicht unterstützte oder defekte Dateien werden im Belegverzeichnis mit Grund aufgeführt.
-Dateien, die nur in der Cloud liegen (OneDrive „Nur online verfügbar“) und nicht geladen werden können,
-erscheinen mit einem verständlichen Hinweis statt eines technischen Fehlers.
+## Datenschutz
+Alle Verarbeitung – auch die Texterkennung – läuft auf dem PC. Die App stellt keine Netzwerkverbindungen her.
+Die Vorschau zeigt nur Belege der geöffneten Prüfung. Der **Diagnosebericht** enthält keine Beträge, Namen oder Dateinamen und darf zur Fehlersuche weitergegeben werden.
 
-## Saldobilanz bzw. Bilanz und Erfolgsrechnung
-Eine Datei oder **mehrere Dateien** (z. B. Bilanz.xlsx + Erfolgsrechnung.pdf); bei Excel werden **alle Blätter**
-gelesen (Blätter ohne Kontenliste wie ein Deckblatt werden ignoriert). Erkannte Kopfzeilen u. a.: „Saldo 2025“, „31.12.2025“,
-„Ist 2025“, „GJ 2025“, „Betrag/Vorjahr“, „Aufwand/Ertrag“, „Aktiven/Passiven“, „Soll/Haben“. Hat ein Blatt keine Kopfzeile,
-wird der Aufbau eines anderen Blatts derselben Datei übernommen bzw. aus den Daten abgeleitet (mit Hinweis). Die Konten aller Teile werden zusammengeführt.
+## Technik
+Electron + React. Die Prüf-Engine (`../engine`) läuft in einem eigenen Hintergrundprozess, damit das Fenster
+während der Texterkennung bedienbar bleibt. Die App heisst im Startmenü **„Balance Scout Lokal“** und hat einen eigenen
+Datenordner (`%APPDATA%\Balance Scout Lokal`) – getrennt von der früheren Server-Variante.
 
-**Ziffernbereich der Kontonummern (von–bis):** Nur Zeilen, deren Kontonummer so viele Ziffern hat, gelten als Konto.
-Gruppen, Zwischensummen und Totale (z. B. „100 Flüssige Mittel“, „Total Umlaufvermögen“) werden ausgeblendet und
-nachvollziehbar aufgelistet. Der Bereich wird automatisch vorgeschlagen (häufigste Länge).
-
-**Gruppierung nach KMU-Kontenrahmen:** über die Kontonummer; passt sie nicht (eigener Kontenplan), über die
-Bezeichnung (z. B. „Debitoren Inland“ → Forderungen aus L+L) – solche Zuordnungen sind als „bitte prüfen“ markiert.
-Hinweis: Das ist eine feste, nachvollziehbare Regelbasis, keine KI.
-
-| Format | Wie |
-|---|---|
-| Excel `.xlsx`/`.xlsm`/`.xls`, CSV | Spalten werden automatisch erkannt (Konto, Bezeichnung, Saldo **oder** Soll/Haben) |
-| **PDF mit Text** (Export aus Abacus, Bexio, Sage, Excel usw.) | Spalten werden aus der Lage der Zahlen auf der Seite rekonstruiert |
-| **PDF-Scan** | lokale Texterkennung, danach wie oben; Hinweis „aus Texterkennung – Beträge kontrollieren“ |
-
-- Getrennte Spalten **Soll** und **Haben**: Saldo = Soll − Haben.
-- Wiederholte Kopfzeilen auf Folgeseiten, Zwischentitel und Totalzeilen werden übersprungen.
-- Kontrolle Soll = Haben und Hinweise werden in der App und im Excel-Bericht angezeigt.
-
-## Prüfregeln (Auszug)
-- Beträge in allen CH/DE-Formaten (`1'234.50`, `1 234,50`, `1.234,50`, `(1'234.50)`, `1'234.50-`, `CHF-7'410.00`);
-  Datum, IBAN, Uhrzeit, Prozente, Jahreszahlen werden vorher ausgeblendet.
-- **Belegt** nur bei exaktem Betrag mit genügend Kontext (Saldo-/Total-Begriff, Kontonummer/-name, Bilanzstichtag
-  im Beleg) und ohne Warnhinweis. Sonst **Prüfen** mit Begründung.
-- Warnhinweise, die „Belegt“ verhindern: Vorzeichen/Überzug, Mehrdeutigkeit, Fremdwährung,
-  **anderer Stichtag im Beleg**, **Betrag aus Texterkennung**.
-- Stichtag wird im Beleg gesucht (`31.12.2025`, `31.12.25`, `31. Dezember 2025`, `2025-12-31`).
-
-## Durchsicht und Abschluss
-Die Analyse legt noch nichts ab. Erst nach der Durchsicht (`finalizeAudit`) entstehen Ablage und Excel:
-- **Akzeptieren:** Konto „Prüfen“ → „Belegt“ (mit Visum, Datum, Kommentar).
-- **Manuell zuordnen:** Beleg → Konto oder „nicht relevant“ (Ordner `03_Nicht_relevant`). Ziel: jede Datei hat eine Zuordnung.
-- **Register** (Standard der Revisionsstelle, in der App änderbar): A Allgemeine Prüfungen (Belege ohne Konto), B Flüssige Mittel,
-  D Wertschriften UV, E Forderungen L+L, F Sonstige Forderungen, G IC-Forderungen/-Verbindlichkeiten, I Vorräte, N Beteiligungen,
-  Q Passive RA, R Verbindlichkeiten L+L, S Steuerrückstellungen/Steueraufwand, T Langfristige Verbindlichkeiten,
-  U Sonstige Verbindlichkeiten, W Rückstellungen. IC und Steuern werden über die Bezeichnung erkannt (Vorrang vor der Nummer);
-  abgelegte Dateien heissen dann `B.1_Kontoauszug Bank A.pdf`, `B.2_Kontoauszug Bank B.pdf` (Reihenfolge: Kontonummer, Dateiname).
-- **Notizen je Konto:** bei PDF-Belegen als **erste Seite** im abgelegten PDF, bei Excel/Word/Bild als separates
-  `B.1_Notiz_<Datei>.pdf`; ausserdem im Excel (Spalte „Kommentar Prüfer“).
-- Ein bestehender Excel-Bericht wird nie überschrieben; ein erneuter Abschluss erzeugt „… (2).xlsx“.
-
-## Vertiefte Prüfung: Forderungen aus L+L (Fälligkeitsanalyse)
-- Offenposten-Liste der Debitoren wird unter den Kundenunterlagen erkannt: **Abacus**, **Navision / Business Central**
-  (auch als Scan per Texterkennung) und **Excel/CSV**-Exporte (Kunde je Zeile).
-- Kundenblöcke, Posten, Kundentotale und Gesamttotal(e) je Währung werden gelesen und **gegeneinander abgestimmt**;
-  Seitenkopf/-fuss wird ignoriert. Abweichungen (z. B. Lesefehler) werden gemeldet.
-- Fälligkeit per **Bilanzstichtag**: Fälligkeitsdatum aus der Liste, sonst Belegdatum + Zahlungsfrist (Standard 30 Tage).
-  Altersklassen nicht fällig / 1–30 / 31–60 / 61–90 / > 90 Tage – **nur offene Rechnungen**; Gutschriften und
-  Vorauszahlungen separat. Fremdwährungen mit Kurs per Stichtag (je Prüfung einzugeben).
-- Abstimmung Total OP-Liste ↔ Saldo Forderungen L+L (ohne Delkredere), Kennzahlen, Kunden-Tabelle, vorgeschlagene Feststellungen.
-- Excel `E.x_Analyse_Fälligkeit.xlsx` (Übersicht, Altersstruktur, Kunden, Einzelposten) – beim Abschluss als Nachweis abgelegt.
-
-## Qualität
-Zwei realistische Testsätze mit vorab festgelegter Soll-Lösung (`test/fixtures`, Generator in `test/corpus`):
-- **Alpenblick Treuhand AG**: 20 Dateien in 10 Unterordnern (Text-PDF, Scan-PDF, Handyfoto, xlsx, xls, docx,
-  Excel mit Bild, defekte/fremde Dateien) – 100 % Fundstellen, 100 % Status, 0 fälschlich „Belegt“.
-- **Praxisfallen**: Zufallstreffer, Betrag auf Folgezeile, deutsches Zahlenformat, Kontoüberzug,
-  Beträge als Text, sehr schlechter Scan, falscher Stichtag, Saldobilanz als CSV ohne Vorzeichen – 9/9.
-- **Saldobilanz als PDF**: Text-PDF über zwei Seiten mit wiederholter Kopfzeile, PDF mit Soll/Haben-Spalten
-  und gescannte Saldobilanz – je 27/27 Konten exakt.
-- **Bilanz und Erfolgsrechnung getrennt** (Excel + PDF) sowie in einer Datei mit Deckblatt/Bilanz/ER-Blatt, jeweils mit
-  Gruppen- und Totalzeilen: mit 4 Ziffern exakt die 27 Konten, gleiches Prüfergebnis.
-- **Durchsicht/Abschluss:** Akzeptieren, manuelle Zuordnung, Register-Präfix, Notizseite im PDF, Notiz-PDF, Excel-Spalten.
-
-`npm test` – 118 Tests (inkl. künstlicher OP-Listen im Aufbau von Abacus, Navision-Scan und Business Central) (Beträge, Saldobilanz, Abgleich, Testsätze, Ablage, Datumserkennung, Excel, Diagnose, Belegvorschau und Fundstellen-Positionen).
-
-## Belegvorschau
-`renderPreview(datei, seite)` liefert die Seite als Bild (PDF, Scan, Foto, Bild in Excel), als Tabelle (Excel, CSV)
-oder als Text (Word, TXT). Jede Fundstelle enthält ihre **Lage auf der Seite** (`bbox`, relativ 0–1) bzw. die
-Zeilennummer – so kann die App die Stelle markieren.
-
-## Kommandozeile
+```bash
+npm ci && npm install --install-links --no-save   # Engine als echte Kopie einbinden (wichtig fürs Verpacken)
+npm run build
+xvfb-run -a node test/e2e/app.e2e.mjs                                   # echte App durchklicken
+npx electron-builder --linux --dir && xvfb-run -a node test/e2e/packaged.e2e.mjs release/linux-unpacked/balance-scout-lokal
+npm run dist:win            # Windows-Installer (auf Windows bzw. GitHub Actions "Balance Scout lokal")
 ```
-npx tsx src/cli.ts --mandat "Muster AG" --stichtag 31.12.2025 --saldobilanz SaBi.xlsx \
-  --belege "C:\…\Kunde Upload" [--belege weitere] --ziel "C:\…\Intern\Muster AG\JA 2025" \
-  [--modus kopieren|verschieben|keine] [--toleranz 1.00] [--vorzeichen signed|unsigned]
-```
-Die Saldobilanz darf auch ein PDF sein. Ergebnis: `Saldenabstimmung_<Mandat>_<Stichtag>.xlsx`, `…_Diagnose.txt` (ohne Beträge/Namen),
-`01_Zugeordnet/`, `02_Nicht_zugeordnet/`.
 
-## Grenzen
-- Handschrift wird nur unzuverlässig erkannt; solche Beträge sind immer „Prüfen“.
-- Passwortgeschützte PDFs und E-Mail-Dateien (`.msg`/`.eml`) sowie ZIP-Archive werden noch nicht gelesen.
+## Optionale Anbindungen (später)
+Copilot/Azure/SharePoint aus der Server-Variante (`../server`) können zugeschaltet werden, sobald eine
+Administratorfreigabe vorliegt. Die lokale App funktioniert vollständig ohne sie.
