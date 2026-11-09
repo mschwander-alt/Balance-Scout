@@ -25,6 +25,15 @@ const app = await electron.launch({
     BSB_E2E_PICKS: JSON.stringify({ trialBalance: path.join(FIX, 'Saldobilanz_2025.xlsx'), folders: [path.join(FIX, 'Kunde_Upload')], files: [], targetDir: target }),
   },
 });
+// Ausgaben von App und Prüf-Engine mitschreiben – bei einem Fehler werden sie gezeigt
+const appLog = [];
+for (const st of [app.process().stdout, app.process().stderr]) st?.on('data', d => appLog.push(...String(d).split('\n').filter(Boolean)));
+const showLog = async () => {
+  const err = await page.locator('.err-box, .error-box, .error-text, [role=alert]').allInnerTexts().catch(() => []);
+  if (err.length) console.log('Fehlermeldung in der App:', err.join(' | '));
+  console.log('--- Letzte Ausgaben von App und Prüf-Engine ---');
+  console.log(appLog.filter(l => !/Indexing all PDF objects/.test(l)).slice(-60).join('\n'));
+};
 const page = await app.firstWindow();
 page.setDefaultTimeout(30_000);
 await page.setViewportSize({ width: 1400, height: 900 });
@@ -47,9 +56,12 @@ await page.getByText(target).waitFor();
 await page.screenshot({ path: `${shots}-2-eingaben.png` });
 await page.getByRole('button', { name: 'Prüfung starten' }).click();
 step('Prüfung gestartet');
-await page.getByText(/Belege lesen|Saldobilanz lesen|Unterlagen suchen/).first().waitFor();
+await page.getByText(/Belege lesen|Saldobilanz lesen|Unterlagen suchen/).first().waitFor({ timeout: 10_000 }).catch(() => {});
 await page.screenshot({ path: `${shots}-3-lauf.png` });
-await page.getByRole('button', { name: 'Abschliessen …' }).waitFor({ timeout: Number(process.env.RUN_TIMEOUT ?? 180000) }).catch(async e => { await page.screenshot({ path: `${shots}-err.png` }); throw e; });
+await Promise.race([
+  page.getByRole('button', { name: 'Abschliessen …' }).waitFor({ timeout: Number(process.env.RUN_TIMEOUT ?? 180000) }),
+  page.getByText(/konnte nicht abgeschlossen werden|unerwartet beendet/).waitFor({ timeout: Number(process.env.RUN_TIMEOUT ?? 180000) }).then(() => { throw new Error('Prüfung abgebrochen'); }),
+]).catch(async e => { await page.screenshot({ path: `${shots}-err.png` }); await showLog(); throw e; });
 step('Analyse abgeschlossen – Durchsicht');
 // Vor dem Abschluss wird nichts abgelegt
 assert.equal(readdirSync(target).length, 0, 'vor dem Abschliessen darf nichts im Zielordner liegen');
@@ -107,7 +119,12 @@ await page.getByRole('tab', { name: 'Diagnosebericht' }).click();
 assert.match(await page.locator('pre.diag').innerText(), /DIAGNOSEBERICHT/);
 
 // ---------------- Durchsicht: akzeptieren, Notiz, Belege zuordnen ----------------
-await page.getByRole('tab', { name: 'Konten' }).click();
+await page.getByRole('tab', { name: 'Erfolgsrechnung' }).click();
+assert.equal(await page.locator('table.konten.er tr[data-konto]').count(), 5, 'Erfolgsrechnung: 5 Konten');
+await page.locator('table.konten.er tr.total-row', { hasText: 'Jahres' }).waitFor();
+await page.screenshot({ path: `${shots}-5f-erfolgsrechnung.png` });
+step('Reiter Erfolgsrechnung: 5 Konten mit Jahresergebnis');
+await page.getByRole('tab', { name: 'Bilanz', exact: true }).click();
 await page.getByLabel('Visum').fill('MS');
 const pruefen = stored.accounts.filter(a => a.status === 'PRUEFEN');
 const kn = stored.accounts.filter(a => a.status === 'KEIN_NACHWEIS');
@@ -161,6 +178,21 @@ const savedDec = JSON.parse(readFileSync(readdirSync(userData).filter(f => f.sta
 assert.equal(Object.keys(savedDec.accepted).length, 1);
 assert.ok(Object.keys(savedDec.assignments).length >= 2);
 
+// ---------------- Prüfgebiete: Forderungen L+L – Fälligkeitsanalyse ----------------
+await page.getByRole('tab', { name: 'Prüfgebiete' }).click();
+await page.locator('.recon').waitFor();
+assert.match(await page.locator('.recon').innerText(), /87'640\.20[\s\S]*✓ abgestimmt/);
+assert.equal(await page.locator('table.kunden tr[data-kunde]').count(), 4);
+await page.locator('table.kunden tr[data-kunde="Meier AG"]').click();
+await page.locator('.preview-panel .viewer').waitFor();
+await page.locator('.preview-panel tr.hl-row').first().waitFor({ timeout: 20_000 });
+await page.screenshot({ path: `${shots}-8-pruefgebiete.png` });
+await page.getByRole('tab', { name: /Feststellungen/ }).click();
+await page.getByPlaceholder(/Neue Feststellung/).fill('Saldenbestätigung Meier AG einholen');
+await page.getByRole('button', { name: '+ Feststellung erfassen' }).click();
+await page.locator('.finding', { hasText: 'Meier AG' }).waitFor();
+step('Prüfgebiet Forderungen: OP-Liste abgestimmt, Kunden, Vorschau, Feststellung');
+
 // ---------------- Abschliessen ----------------
 await page.getByRole('button', { name: 'Abschliessen …' }).click();
 await page.getByRole('button', { name: 'Ablegen und Excel erstellen' }).click();
@@ -175,6 +207,8 @@ assert.equal(excel.length, 1);
 assert.equal(unassigned.length, 0);
 assert.ok(assigned.filter(f => /^[A-Z]+\d*\.\d+_/.test(f)).length >= 12, 'Dateinamen mit Register');
 assert.ok(assigned.includes(`A.1_${generalDoc.split('/').pop()}`), 'Allgemeine Prüfungen mit Register A');
+const ana = assigned.find(f => /^E\.\d+_Analyse_Fälligkeit\.xlsx$/.test(f));
+assert.ok(ana, 'Fälligkeitsanalyse als Nachweis abgelegt');
 const ubs = assigned.find(f => /^B\.\d+_Bank_UBS_Kontoauszug\.pdf$/.test(f));
 assert.ok(ubs, 'Bankauszug mit Register B');
 assert.ok(readFileSync(path.join(target, '01_Zugeordnet', ubs)).length > readFileSync(path.join(FIX, 'Kunde_Upload', 'Bank', 'UBS', 'Kontoauszug.pdf')).length, 'Notizseite vorangestellt');
