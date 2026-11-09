@@ -6,9 +6,11 @@ import { chf, date, pct } from '../format';
 import { FLAG_LABEL, Info, Modal, Spinner, StatusBadge, WarnIcon, useToast } from '../components/ui';
 import { DocumentPreview } from '../components/DocumentPreview';
 import { Documents } from './Documents';
+import { AuditAreas } from './AuditAreas';
 import { GENERAL_ACCOUNT, accountLabel, deriveView, groupAccounts, type ViewAccount, type ViewDoc } from '../review';
 
-type Tab = 'konten' | 'belege' | 'saldobilanz' | 'diagnose';
+type Tab = 'konten' | 'erfolg' | 'belege' | 'gebiete' | 'saldobilanz' | 'diagnose';
+const isER = (a: { category: string }) => a.category === 'aufwand' || a.category === 'ertrag' || a.category === 'abschluss';
 
 export function Result({ result: initial, onRepeat }: { result: AuditResult; onRepeat?: () => void }) {
   const toast = useToast();
@@ -53,7 +55,9 @@ export function Result({ result: initial, onRepeat }: { result: AuditResult; onR
     return !t || a.accountNumber.includes(t) || a.accountName.toLowerCase().includes(t) || (a.groupName ?? '').toLowerCase().includes(t);
   };
   const order = groups?.groups.map(g => g.code) ?? [];
-  const accounts = view.accounts.filter(a => (filter === 'ALLE' || a.status === filter) && matchesSearch(a));
+  const er = tab === 'erfolg';
+  const accounts = view.accounts.filter(a => (er ? isER(a) : !isER(a)) && (er || filter === 'ALLE' || a.status === filter) && matchesSearch(a));
+  const erCount = view.accounts.filter(isER).length;
   const docs = useMemo(
     () => view.docs.filter(d => docFilter === 'alle' || (docFilter === 'zu' ? d.assigned : docFilter === 'offen' ? !d.assigned && !d.irrelevant : d.status !== 'ok')),
     [view.docs, docFilter],
@@ -75,7 +79,7 @@ export function Result({ result: initial, onRepeat }: { result: AuditResult; onR
   const filed = (docId: string | null) => (docId ? result.filed?.[docId] : undefined);
 
   useEffect(() => {
-    if (tab !== 'konten') return;
+    if (tab !== 'konten' && tab !== 'erfolg') return;
     const h = (e: KeyboardEvent) => {
       const tag = (e.target as HTMLElement)?.tagName;
       if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
@@ -182,24 +186,24 @@ export function Result({ result: initial, onRepeat }: { result: AuditResult; onR
       </div>
 
       <nav className="tabs" role="tablist" style={{ padding: 0 }}>
-        {([['konten', 'Konten'], ['belege', 'Belegverzeichnis'], ['saldobilanz', 'Saldobilanz-Prüfung'], ['diagnose', 'Diagnosebericht']] as [Tab, string][]).map(([k, l]) => (
-          <button key={k} role="tab" aria-selected={tab === k} className={tab === k ? 'active' : ''} onClick={() => setTab(k)}>{l}</button>
+        {([['konten', 'Bilanz'], ...(erCount ? [['erfolg', `Erfolgsrechnung`]] : []), ['belege', 'Belegverzeichnis'], ['gebiete', 'Prüfgebiete'], ['saldobilanz', 'Saldobilanz-Prüfung'], ['diagnose', 'Diagnosebericht']] as [Tab, string][]).map(([k, l]) => (
+          <button key={k} role="tab" aria-selected={tab === k} className={tab === k ? 'active' : ''} onClick={() => { if (k !== tab) setOpen(null); setTab(k); }}>{l}</button>
         ))}
       </nav>
 
-      {tab === 'konten' && (
+      {(tab === 'konten' || tab === 'erfolg') && (
         <div className={`result-layout ${sel ? 'withpreview' : 'nopanel'}`}>
           <div className="stack" style={{ gap: 6 }}>
             <div className="row small" style={{ justifyContent: 'space-between' }}>
-              <span className="muted">{filter !== 'ALLE' || search ? `${accounts.length} von ${view.accounts.length} Konten` : ''}{filter !== 'ALLE' && <> · <button className="link" onClick={() => setFilter('ALLE')}>Filter aufheben</button></>}</span>
+              <span className="muted">{er ? `${accounts.length} Konten der Erfolgsrechnung – Analyse von Vorjahr und Veränderung (keine Saldennachweise nötig)` : filter !== 'ALLE' || search ? `${accounts.length} von ${view.accounts.filter(a => !isER(a)).length} Konten` : ''}{!er && filter !== 'ALLE' && <> · <button className="link" onClick={() => setFilter('ALLE')}>Filter aufheben</button></>}</span>
               <span className="row" style={{ gap: 12 }}>
                 {grouped && <button className="link small" onClick={() => setCollapsed(c => (c.size ? new Set() : new Set(groupAccounts(accounts, order).map(g => g.code))))}>{collapsed.size ? 'Alle aufklappen' : 'Alle zuklappen'}</button>}
                 <label className="muted"><input type="checkbox" checked={grouped} onChange={e => setGrouped(e.target.checked)} /> nach KMU-Kontenrahmen gruppieren</label>
               </span>
             </div>
             <div className="table-wrap">
-              <table className="grid clickable konten">
-                <thead><tr><th>Konto</th><th>Bezeichnung</th><th className="num">Vorjahr</th><th className="num">Aktuell</th><th className="num dchf">Δ CHF</th><th className="num">Δ %</th><th>Status</th><th>Beleg</th></tr></thead>
+              <table className={`grid clickable konten ${er ? 'er' : ''}`}>
+                <thead><tr><th>Konto</th><th>Bezeichnung</th><th className="num">Vorjahr</th><th className="num">Aktuell</th><th className="num dchf" title="Veränderung des Betrags (bei Passiven und Ertrag: Zunahme = +)">Δ CHF</th><th className="num">Δ %</th><th>Status</th><th>Beleg</th></tr></thead>
                 <tbody>
                   {(grouped ? withTotals(groupAccounts(accounts, order)) : [{ code: '', name: '', items: accounts, total: 0 }]).map(g =>
                     'totalOf' in g ? (
@@ -233,6 +237,10 @@ export function Result({ result: initial, onRepeat }: { result: AuditResult; onR
 
       {tab === 'belege' && (
         <Documents docs={view.docs} accounts={view.accounts} filed={result.filed} initialFilter={docFilter === 'offen' ? 'offen' : undefined} onAssign={(id, n) => assign(id, n)} />
+      )}
+
+      {tab === 'gebiete' && (
+        <AuditAreas historyId={id} accounts={view.accounts} docs={view.docs} groups={groups} decisions={decisions} update={update} closingDate={result.input?.closingDate ?? null} />
       )}
 
       {tab === 'saldobilanz' && (
@@ -285,7 +293,7 @@ export function Result({ result: initial, onRepeat }: { result: AuditResult; onR
 
 type Group = { code: string; name: string; items: ViewAccount[]; total: number };
 type TotalRow = { totalOf: string; name: string; cy: number; vj: number };
-const TOTAL_LABEL: Record<string, string> = { aktiven: 'Total Aktiven', passiven: 'Total Passiven', erfolg: 'Total Erfolgsrechnung (Saldo)' };
+const TOTAL_LABEL: Record<string, string> = { aktiven: 'Total Aktiven', passiven: 'Total Passiven', erfolg: 'Jahresergebnis' };
 const catOf = (g: Group) => { const c = g.items[0]?.category ?? ''; return c === 'aufwand' || c === 'ertrag' ? 'erfolg' : c; };
 /** Nach den Gruppen einer Kategorie eine Totalzeile einfügen (Aktiven, Passiven, Erfolgsrechnung) */
 function withTotals(groups: Group[]): (Group | TotalRow)[] {
@@ -296,7 +304,9 @@ function withTotals(groups: Group[]): (Group | TotalRow)[] {
     const next = groups[i + 1];
     if (TOTAL_LABEL[c] && (!next || catOf(next) !== c)) {
       const items = groups.filter(x => catOf(x) === c).flatMap(x => x.items);
-      out.push({ totalOf: c, name: TOTAL_LABEL[c]!, cy: items.reduce((a, x) => a + x.balance, 0), vj: items.reduce((a, x) => a + (x.balancePreviousYear ?? 0), 0) });
+      const cy0 = groups.filter(x => catOf(x) === c).flatMap(x => x.items).reduce((a, x) => a + x.balance, 0);
+      const label = c === 'erfolg' ? (cy0 < 0 ? 'Jahresgewinn (Haben-Saldo)' : cy0 > 0 ? 'Jahresverlust (Soll-Saldo)' : 'Jahresergebnis') : TOTAL_LABEL[c]!;
+      out.push({ totalOf: c, name: label, cy: items.reduce((a, x) => a + x.balance, 0), vj: items.reduce((a, x) => a + (x.balancePreviousYear ?? 0), 0) });
     }
   });
   return out;
@@ -304,7 +314,9 @@ function withTotals(groups: Group[]): (Group | TotalRow)[] {
 
 function Delta({ cy, vj }: { cy: number; vj: number | null }) {
   if (vj === null) return <><td className="num muted dchf">–</td><td className="num muted">–</td></>;
-  const d = cy - vj;
+  // Veränderung des Betrags: bei Haben-Salden (Passiven, Ertrag) bedeutet ein grösserer negativer Saldo eine Zunahme
+  const sameSign = (cy <= 0 && vj <= 0) || (cy >= 0 && vj >= 0);
+  const d = sameSign ? Math.abs(cy) - Math.abs(vj) : cy - vj;
   const p = vj !== 0 ? d / Math.abs(vj) : null;
   // Auffällig nur bei grosser relativer UND absoluter Veränderung
   const big = p !== null && Math.abs(p) >= 0.25 && Math.abs(d) >= 1_000_00;

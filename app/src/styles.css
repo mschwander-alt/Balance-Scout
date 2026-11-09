@@ -295,3 +295,44 @@ table.belege .fname { max-width: 300px; overflow: hidden; text-overflow: ellipsi
 .doc-panel .viewer { min-height: 180px; }
 .doc-panel .acc-pick { max-height: 150px; }
 .doc-panel { max-height: calc(100vh - 230px); }
+/* Erfolgsrechnung: Analyseansicht ohne Status/Beleg */
+table.konten.er th:nth-child(7), table.konten.er td:nth-child(7), table.konten.er th:nth-child(8), table.konten.er td:nth-child(8) { display: none; }
+table.konten.er .muted-row td { color: var(--text); }
+table.konten.er tr.group-row td:nth-child(6), table.konten.er tr.group-row td:nth-child(7) { display: none; }
+
+/* ---------- Prüfgebiete ---------- */
+.areas { display: grid; grid-template-columns: 250px minmax(0, 1fr); gap: 16px; align-items: start; }
+.area-list { background: #fff; border: 1px solid var(--line); border-radius: 8px; padding: 6px; position: sticky; top: 0; max-height: calc(100vh - 230px); overflow: auto; }
+.area-item { display: flex; align-items: center; gap: 8px; width: 100%; border: 0; background: none; text-align: left; padding: 7px 8px; border-radius: 6px; cursor: pointer; font: inherit; color: inherit; }
+.area-item:hover { background: #f4f6f9; } .area-item.active { background: #e8f0fa; box-shadow: inset 3px 0 0 var(--brand); }
+.area-item.later .area-name { color: var(--muted); }
+.area-item .grow { display: flex; flex-direction: column; min-width: 0; }
+.area-name { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.register.empty { background: transparent; }
+.register.lg { font-size: 15px; min-width: 30px; height: 30px; display: inline-grid; place-items: center; border-radius: 6px; }
+.area-body { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.area-head { display: flex; align-items: center; gap: 12px; }
+.area-head h2 { margin: 0; } .area-head p { margin: 2px 0 0; }
+.saldo-box { display: flex; flex-direction: column; align-items: flex-end; background: #fff; border: 1px solid var(--line); border-radius: 8px; padding: 6px 12px; }
+.saldo-box strong { font-size: 15px; }
+.source-row { background: #fff; border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; }
+input.missing { border-color: #e0a42b; background: #fff8eb; }
+.recon { display: flex; gap: 18px; align-items: center; padding: 7px 12px; border-radius: 8px; border: 1px solid var(--line); background: #fff; }
+.recon.ok { border-color: #bfe2cb; } .recon.bad { border-color: #f0c7c3; background: #fff6f5; }
+.tabs.sub { padding: 0; border-bottom: 1px solid var(--line); }
+.charts { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr); gap: 10px; }
+.charts h3 { margin: 0 0 8px; font-size: 13px; }
+.bars { display: grid; grid-template-columns: repeat(5, 1fr); gap: 14px; height: 170px; align-items: end; padding: 0 6px; }
+.bar-col { display: flex; flex-direction: column; align-items: center; justify-content: flex-end; height: 100%; gap: 4px; }
+.bar { width: 70%; border-radius: 3px 3px 0 0; min-height: 2px; }
+.bar-val { font-size: 11px; font-weight: 600; } .bar-lbl { font-size: 11px; color: var(--muted); white-space: nowrap; }
+.donut { display: flex; align-items: center; gap: 14px; }
+.legend { list-style: none; margin: 0; padding: 0; font-size: 12px; } .legend li { display: flex; align-items: center; gap: 6px; padding: 2px 0; } .legend strong { margin-left: auto; padding-left: 10px; }
+.kpi-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
+.kpi2 { display: flex; flex-direction: column; gap: 2px; padding: 10px 12px; } .kpi2 strong { font-size: 16px; }
+table.kunden td { white-space: nowrap; } table.kunden td:first-child { max-width: 220px; overflow: hidden; text-overflow: ellipsis; }
+.finding { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; }
+.finding.erledigt .grow { color: var(--muted); text-decoration: line-through; }
+.cust-layout.withpreview { grid-template-columns: minmax(0, 1.6fr) minmax(330px, 1fr); }
+.cust-layout.withpreview table.kunden td:first-child { max-width: 130px; }
+.cust-layout.withpreview table.kunden th, .cust-layout.withpreview table.kunden td { padding-left: 5px; padding-right: 5px; }

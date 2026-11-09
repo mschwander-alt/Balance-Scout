@@ -91,6 +91,25 @@ export interface ReviewDecisions {
   assignments?: Record<string, { accountNumber: string | null; at: string; visum: string }>;
   notes?: Record<string, { text: string; at: string; visum: string }>;
   groupLetters?: Record<string, string>;
+  analyses?: { receivables?: ReceivablesDecision };
+}
+export interface ReceivablesDecision { docId: string | null; termDays: number; rates: Record<string, number>; findings: { text: string; status: 'offen' | 'erledigt' }[]; visum?: string }
+export interface AgingItem {
+  customerNo: string; customerName: string; docNo: string; docType: string; date: string | null; due: string | null; daysOverdue: number | null;
+  bucket: number; currency: string; amount: number; amountChf: number | null; dunningLevel: number | null; page: number; lineNo: number; line: string;
+  bbox?: { x0: number; y0: number; x1: number; y1: number };
+}
+export interface ReceivablesResult {
+  candidates: { docId: string; filename: string; relPath: string }[];
+  docId: string | null; filename: string | null; listDate: string | null; currencies: string[];
+  balanceChf: number | null; balanceAccounts: string; suggestions: string[];
+  aging: {
+    items: AgingItem[];
+    customers: { customerNo: string; customerName: string; totalChf: number; buckets: number[]; credits: number; maxDaysOverdue: number; items: number; dunningLevel: number | null }[];
+    buckets: number[]; totalChf: number; credits: number; grossChf: number;
+    kpis: { overdue90: number; overdue90Share: number; overdueCustomers: number; customers: number; largestOverdue: { customer: string; amount: number } | null; avgDaysOverdue: number };
+    checks: { name: string; passed: boolean; message: string }[]; missingRates: string[];
+  } | null;
 }
 export interface GroupsInfo {
   groups: { code: string; name: string; category: string; subcategory: string }[];
@@ -156,6 +175,8 @@ export interface BsbBridge {
     save(id: string, d: ReviewDecisions): Promise<boolean>;
     finalize(id: string, d: ReviewDecisions): Promise<unknown>;
     groups(): Promise<GroupsInfo>;
+    receivables(id: string, p: Partial<ReceivablesDecision>): Promise<ReceivablesResult>;
+    exportReceivables(id: string, p: Partial<ReceivablesDecision>, suggestedName: string): Promise<string | null>;
   };
   app: {
     openPath(p: string): Promise<string>;
