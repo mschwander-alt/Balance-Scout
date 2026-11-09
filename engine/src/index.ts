@@ -8,5 +8,5 @@ export { renderPreview, type Preview } from './preview.js';
 export { applyReview, placeReviewed, assignRegisters, finalizeAudit, IRRELEVANT_DIR, type ReviewDecisions, type Review } from './finalize.js';
 export { saveSnapshot, loadSnapshot } from './snapshot.js';
 export { loadTrialBalance, suggestDigits, type LoadedTrialBalance, type TbPartInfo } from './domain/trialBalance/load.js';
-export { KMU_GROUPS, defaultGroupLetters, classify } from './domain/trialBalance/accountGroups.js';
+export { KMU_GROUPS, defaultGroupLetters, classify, GENERAL_ACCOUNT, GENERAL_GROUP } from './domain/trialBalance/accountGroups.js';
 export { notePdf, prependNote } from './report/notePdf.js';

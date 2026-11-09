@@ -308,7 +308,7 @@ export async function writeExcelReport(res: RunResult, filePath: string): Promis
     isoToDate(d.balanceDate),
     gelesen(d),
     d.doc.ocrPages ? `${d.doc.ocrPages} S., ${d.doc.ocrConfidence ?? '–'} %` : '–',
-    d.assignedAccounts.join(', '),
+    d.assignedAccounts.map(a => (a === '@allgemein' ? 'Allgemeine Prüfungen' : a)).join(', '),
     d.assigned ? 'Zugeordnet' : rv?.irrelevant.has(d.doc.id) ? 'Nicht relevant' : 'Nicht zugeordnet',
     d.targetName,
     [...d.doc.warnings, rv?.decisions.assignments?.[d.doc.id] ? `manuell ${rv.decisions.assignments[d.doc.id]!.accountNumber ? 'zugeordnet' : 'als nicht relevant markiert'} (${rv.decisions.assignments[d.doc.id]!.visum})` : '', d.notePlacement?.newRelPath ? `Notiz: ${d.notePlacement.newRelPath}` : '', d.placement?.status === 'fehler' ? `Ablage fehlgeschlagen: ${d.placement.message}` : d.placement?.status === 'bereits vorhanden' ? 'bereits im Zielordner vorhanden' : ''].filter(Boolean).join(' · '),

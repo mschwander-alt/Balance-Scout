@@ -7,7 +7,7 @@ import { extractAmounts, type AmountCandidate } from './domain/matching/extractA
 import { runMatching, type AccountResult, type MatchOutput } from './domain/matching/engine.js';
 import { listFiles, readDocument, type EvidenceDocument } from './ingest/readDocument.js';
 import { LocalOcr, type OcrOptions } from './ingest/ocr.js';
-import { detectBalanceDate, guessDocType } from './ingest/documentFacts.js';
+import { detectBalanceDate, findDates, guessDocType } from './ingest/documentFacts.js';
 import { placeFiles, planTargetNames, type FileMode, type PlacementResult } from './organize/placeFiles.js';
 
 export interface RunInput {
@@ -54,6 +54,14 @@ export interface DocumentSummary {
   assigned: boolean;
   targetName: string;
   placement: PlacementResult | null;
+  /** Für das Belegverzeichnis: massgebender Betrag (Saldo/Total, sonst grösster Betrag) mit Lage */
+  keyAmount?: { cents: number; page: number; lineNo: number; line: string; bbox?: { x0: number; y0: number; x1: number; y1: number } } | null;
+  /** Erkanntes Datum (Stichtag laut Beleg, sonst erstes Datum) */
+  keyDate?: string | null;
+  /** Alle Beträge im Beleg (|Rappen|, eindeutig) – für Vorschläge beim Zuordnen */
+  amountSet?: number[];
+  /** Textauszug (klein geschrieben) für die Suche im Belegverzeichnis */
+  searchText?: string;
   /** Separates Notiz-PDF (bei Excel/Word/Bild) */
   notePlacement?: PlacementResult | null;
 }
@@ -136,10 +144,17 @@ export async function runAudit(input: RunInput): Promise<RunResult> {
     const facts = new Map(docs.map(d => [d.id, detectBalanceDate(d, input.closingDate)]));
     const amounts: AmountCandidate[] = [];
     const amountCount = new Map<string, number>();
+    const keyAmount = new Map<string, DocumentSummary['keyAmount']>();
+    const amountSet = new Map<string, number[]>();
     for (const d of docs) {
       const a = extractAmounts(d.id, d.lines);
       amountCount.set(d.id, a.length);
       amounts.push(...a);
+      // Massgebender Betrag: letzte Zeile mit Saldo-/Total-Begriff, sonst grösster Betrag
+      const kw = a.filter(x => x.context.balanceKeyword);
+      const pick = kw.length ? kw[kw.length - 1]! : [...a].sort((x, y) => Math.abs(y.cents) - Math.abs(x.cents))[0];
+      keyAmount.set(d.id, pick ? { cents: pick.cents, page: pick.page, lineNo: pick.lineNo, line: pick.line, bbox: pick.bbox } : null);
+      amountSet.set(d.id, [...new Set(a.map(x => Math.abs(x.cents)))].slice(0, 400));
     }
     const match = runMatching(
       accounts.map(a => ({ id: `${a.accountNumber}#${a.rowIndex}`, accountNumber: a.accountNumber, accountName: a.accountName, balance: a.balanceCurrentYear, category: a.category })),
@@ -180,6 +195,10 @@ export async function runAudit(input: RunInput): Promise<RunResult> {
       balanceDate: facts.get(d.id)?.date ?? null,
       balanceDateEvidence: facts.get(d.id)?.evidence ?? null,
       amountCount: amountCount.get(d.id) ?? 0,
+      keyAmount: keyAmount.get(d.id) ?? null,
+      keyDate: facts.get(d.id)?.date ?? findDates(d)[0]?.iso ?? null,
+      amountSet: amountSet.get(d.id) ?? [],
+      searchText: d.lines.map(l => l.text).join(' ').toLowerCase().slice(0, 8000),
       assignedAccounts: assigned.get(d.id) ?? [],
       assigned: assigned.has(d.id),
       targetName: names.get(d.id)!,

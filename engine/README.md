@@ -54,7 +54,10 @@ Hinweis: Das ist eine feste, nachvollziehbare Regelbasis, keine KI.
 Die Analyse legt noch nichts ab. Erst nach der Durchsicht (`finalizeAudit`) entstehen Ablage und Excel:
 - **Akzeptieren:** Konto „Prüfen“ → „Belegt“ (mit Visum, Datum, Kommentar).
 - **Manuell zuordnen:** Beleg → Konto oder „nicht relevant“ (Ordner `03_Nicht_relevant`). Ziel: jede Datei hat eine Zuordnung.
-- **Register:** Buchstabe je Gruppe (Vorschlag: B = Flüssige Mittel, C = Wertschriften, D = Forderungen L+L …, frei änderbar);
+- **Register** (Standard der Revisionsstelle, in der App änderbar): A Allgemeine Prüfungen (Belege ohne Konto), B Flüssige Mittel,
+  D Wertschriften UV, E Forderungen L+L, F Sonstige Forderungen, G IC-Forderungen/-Verbindlichkeiten, I Vorräte, N Beteiligungen,
+  Q Passive RA, R Verbindlichkeiten L+L, S Steuerrückstellungen/Steueraufwand, T Langfristige Verbindlichkeiten,
+  U Sonstige Verbindlichkeiten, W Rückstellungen. IC und Steuern werden über die Bezeichnung erkannt (Vorrang vor der Nummer);
   abgelegte Dateien heissen dann `B.1_Kontoauszug Bank A.pdf`, `B.2_Kontoauszug Bank B.pdf` (Reihenfolge: Kontonummer, Dateiname).
 - **Notizen je Konto:** bei PDF-Belegen als **erste Seite** im abgelegten PDF, bei Excel/Word/Bild als separates
   `B.1_Notiz_<Datei>.pdf`; ausserdem im Excel (Spalte „Kommentar Prüfer“).
@@ -72,7 +75,7 @@ Zwei realistische Testsätze mit vorab festgelegter Soll-Lösung (`test/fixtures
   Gruppen- und Totalzeilen: mit 4 Ziffern exakt die 27 Konten, gleiches Prüfergebnis.
 - **Durchsicht/Abschluss:** Akzeptieren, manuelle Zuordnung, Register-Präfix, Notizseite im PDF, Notiz-PDF, Excel-Spalten.
 
-`npm test` – 109 Tests (Beträge, Saldobilanz, Abgleich, Testsätze, Ablage, Datumserkennung, Excel, Diagnose, Belegvorschau und Fundstellen-Positionen).
+`npm test` – 110 Tests (Beträge, Saldobilanz, Abgleich, Testsätze, Ablage, Datumserkennung, Excel, Diagnose, Belegvorschau und Fundstellen-Positionen).
 
 ## Belegvorschau
 `renderPreview(datei, seite)` liefert die Seite als Bild (PDF, Scan, Foto, Bild in Excel), als Tabelle (Excel, CSV)

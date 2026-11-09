@@ -12,7 +12,7 @@ import type { RunResult, DocumentSummary } from './run.js';
 import type { AccountResult, AccountStatus, MatchSummary } from './domain/matching/engine.js';
 import { placeFiles, type FileMode, type PlacementPlan } from './organize/placeFiles.js';
 import { notePdf, prependNote, type NoteEntry } from './report/notePdf.js';
-import { KMU_GROUPS } from './domain/trialBalance/accountGroups.js';
+import { KMU_GROUPS, GENERAL_ACCOUNT, GENERAL_GROUP } from './domain/trialBalance/accountGroups.js';
 
 export const IRRELEVANT_DIR = '03_Nicht_relevant';
 
@@ -62,6 +62,11 @@ export function applyReview(res: RunResult, d: ReviewDecisions): RunResult & { r
       docsAssigned.set(docId, []);
       continue;
     }
+    if (a.accountNumber === GENERAL_ACCOUNT) {
+      // Allgemeine Prüfungen (Register A): zugeordnet, aber zu keinem Konto
+      docsAssigned.set(docId, [GENERAL_ACCOUNT]);
+      continue;
+    }
     const r = byNumber.get(a.accountNumber);
     if (!r) continue;
     docsAssigned.set(docId, [a.accountNumber]);
@@ -96,7 +101,7 @@ export function applyReview(res: RunResult, d: ReviewDecisions): RunResult & { r
   // Beleg, der keinem Konto mehr massgebend zugeordnet ist, gilt als nicht zugeordnet
   for (const [docId, accs] of docsAssigned) {
     if (d.assignments?.[docId]) continue;
-    docsAssigned.set(docId, accs.filter(n => byNumber.get(n)?.best?.documentId === docId));
+    docsAssigned.set(docId, accs.filter(n => n === GENERAL_ACCOUNT || byNumber.get(n)?.best?.documentId === docId));
   }
 
   const summary = recomputeSummary(res.match.summary, results);
@@ -136,7 +141,7 @@ export function assignRegisters(res: RunResult, documents: DocumentSummary[], le
   for (const d of documents) {
     if (!d.assigned) continue;
     const acc = [...d.assignedAccounts].sort((a, b) => a.localeCompare(b, 'de', { numeric: true }))[0]!;
-    const g = groupOf.get(acc);
+    const g = acc === GENERAL_ACCOUNT ? GENERAL_GROUP : groupOf.get(acc);
     const letter = (g && letters[g]?.trim()) || '';
     if (!letter) continue;
     items.push({ docId: d.doc.id, letter, key: `${acc.padStart(12, '0')} ${d.doc.filename.toLowerCase()}` });

@@ -92,6 +92,7 @@ export function serializeResult(res: RunResult, excelPath: string, diagnostics: 
       assigned: d.assigned, assignedAccounts: d.assignedAccounts, targetName: d.targetName,
       placement: d.placement ? { status: d.placement.status, newPath: d.placement.newPath, message: d.placement.message ?? null } : null,
       notePath: d.notePlacement?.newPath ?? null,
+      keyAmount: d.keyAmount ?? null, keyDate: d.keyDate ?? null, amountSet: d.amountSet ?? [], searchText: d.searchText ?? '',
       register: res.review?.registers.get(d.doc.id) ?? null,
       irrelevant: res.review?.irrelevant.has(d.doc.id) ?? false,
     })),
@@ -104,7 +105,7 @@ export type SerializedResult = ReturnType<typeof serializeResult>;
 async function handle(req: Request): Promise<unknown> {
   if (req.type === 'previewTrialBalance') return previewTrialBalance(req);
   if (req.type === 'preview') return renderPreview(req.absPath, req.page);
-  if (req.type === 'groups') return { groups: KMU_GROUPS.map(g => ({ code: g.code, name: g.name, category: g.category, subcategory: g.subcategory })), letters: defaultGroupLetters() };
+  if (req.type === 'groups') return { groups: KMU_GROUPS.map(g => ({ code: g.code, name: g.name, category: g.category, subcategory: g.subcategory })), letters: defaultGroupLetters(), general: { code: 'ALLG', name: 'Allgemeine Prüfungen (Belege ohne Konto)', account: '@allgemein' } };
   if (req.type === 'finalize') {
     send({ id: req.id, kind: 'progress', progress: { phase: 'ablage', message: 'Belege werden abgelegt …' } });
     const res = await loadSnapshot(req.snapshotPath);

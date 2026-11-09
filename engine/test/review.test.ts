@@ -66,8 +66,17 @@ describe('Gruppierung nach KMU-Kontenrahmen', () => {
     expect(classify('57', 'Löhne Produktion')?.group.code).toBe('E50');
     expect(classify('58', 'XYZ')).toBeNull();
   });
-  it('Registerbuchstaben-Vorschlag: B = Flüssige Mittel', () => {
-    expect(defaultGroupLetters()).toMatchObject({ A10: 'B', A11: 'C', A12: 'D' });
+  it('Register der Revisionsstelle: A Allgemein, B Flüssige Mittel, D Wertschriften, E Ford. L+L …', () => {
+    expect(defaultGroupLetters()).toMatchObject({ ALLG: 'A', A10: 'B', A11: 'D', A12: 'E', A13: 'F', A16: 'G', P14: 'G', A14: 'I', A25: 'N', P13: 'Q', P10: 'R', P15: 'S', E89: 'S', P20: 'T', P11: 'U', P22: 'W' });
+  });
+  it('IC und Steuern über die Bezeichnung, Beteiligungen über 148x', () => {
+    expect(classify('2450', 'Darlehen Aktionär')?.group.code).toBe('P14');
+    expect(classify('1150', 'Forderungen gegenüber Konzerngesellschaften')?.group.code).toBe('A16');
+    expect(classify('2340', 'Rückstellung für direkte Steuern')?.group.code).toBe('P15');
+    expect(classify('8900', 'Direkte Steuern')?.group.code).toBe('E89');
+    expect(classify('1480', 'Beteiligung Muster GmbH')?.group.code).toBe('A25');
+    expect(classify('2200', 'Geschuldete MWST')?.group.code).toBe('P12');
+    expect(classify('1176', 'Verrechnungssteuer')?.group.code).toBe('A13');
   });
 });
 
@@ -133,6 +142,8 @@ describe('Durchsicht und Abschluss: akzeptieren, manuell zuordnen, Notizen, Regi
       '1020': { text: 'Saldo mit Bankbestätigung abgestimmt. Keine Abweichung – ok.', at: now, visum: 'MS' },
       '1100': { text: 'OP-Liste mit Debitorenkonto abgestimmt.', at: now, visum: 'MS' },
     };
+    const agb = res.documents.find(d => d.doc.filename === 'AGB_Lieferant.pdf')!;
+    decisions.assignments![agb.doc.id] = { accountNumber: '@allgemein', at: now, visum: 'MS' };
     const target = await mkdtemp(path.join(tmpdir(), 'abschluss-'));
     const out = await finalizeAudit(loaded, decisions, { targetDir: target, fileMode: 'copy', reportDir: target });
 
@@ -142,7 +153,9 @@ describe('Durchsicht und Abschluss: akzeptieren, manuell zuordnen, Notizen, Regi
     expect(await readdir(path.join(target, '02_Nicht_zugeordnet'))).toEqual([]);
     expect((await readdir(path.join(target, '03_Nicht_relevant'))).length).toBeGreaterThan(0);
     expect(zu.filter(f => /^B\.\d+_/.test(f)).length).toBeGreaterThanOrEqual(3);
-    expect(zu.every(f => /^[A-Z]+\d*\.\d+_/.test(f))).toBe(true);
+    expect(zu).toContain('A.1_AGB_Lieferant.pdf');
+    // ohne Präfix nur Belege von Gruppen ohne Registerbuchstaben (z. B. Sachanlagen, Eigenkapital)
+    expect(zu.filter(f => !/^[A-Z]+\d*\.\d+_/.test(f)).length).toBeLessThanOrEqual(4);
 
     // PDF mit vorangestellter Notiz: eine Seite mehr als das Original
     const ubsDoc = out.result.documents.find(d => d.doc.id === ubs.best!.documentId)!;
@@ -152,7 +165,7 @@ describe('Durchsicht und Abschluss: akzeptieren, manuell zuordnen, Notizen, Regi
     expect(path.basename(ubsDoc.placement!.newPath!)).toMatch(/^B\.\d+_/);
     // Excel-Beleg: separates Notiz-PDF mit gleichem Register
     const debDoc = out.result.documents.find(d => d.doc.id === deb.best!.documentId)!;
-    expect(debDoc.notePlacement?.newPath).toMatch(/D\.\d+_Notiz_.*\.pdf$/);
+    expect(debDoc.notePlacement?.newPath).toMatch(/E\.\d+_Notiz_.*\.pdf$/);
     expect((await PDFDocument.load(await readFile(debDoc.notePlacement!.newPath!))).getPageCount()).toBe(1);
 
     // Excel: Status, Prüfer-Spalten, Register

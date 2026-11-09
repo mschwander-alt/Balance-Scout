@@ -21,7 +21,9 @@ export const KMU_GROUPS: AccountGroup[] = [
   { code: 'A13', name: 'Übrige kurzfristige Forderungen', category: 'aktiven', subcategory: 'Umlaufvermögen', prefixes: ['114', '115', '116', '117', '118', '119'], order: 13 },
   { code: 'A14', name: 'Vorräte und nicht fakturierte Dienstleistungen', category: 'aktiven', subcategory: 'Umlaufvermögen', prefixes: ['12'], order: 14 },
   { code: 'A15', name: 'Aktive Rechnungsabgrenzungen', category: 'aktiven', subcategory: 'Umlaufvermögen', prefixes: ['13'], order: 15 },
+  { code: 'A16', name: 'IC-Forderungen (Konzern, Beteiligte, Nahestehende)', category: 'aktiven', subcategory: 'Umlaufvermögen', prefixes: [], order: 16 },
   { code: 'A20', name: 'Finanzanlagen', category: 'aktiven', subcategory: 'Anlagevermögen', prefixes: ['14'], order: 20 },
+  { code: 'A25', name: 'Beteiligungen', category: 'aktiven', subcategory: 'Anlagevermögen', prefixes: ['148', '149'], order: 20.5 },
   { code: 'A21', name: 'Mobile Sachanlagen', category: 'aktiven', subcategory: 'Anlagevermögen', prefixes: ['15'], order: 21 },
   { code: 'A22', name: 'Immobile Sachanlagen', category: 'aktiven', subcategory: 'Anlagevermögen', prefixes: ['16'], order: 22 },
   { code: 'A23', name: 'Immaterielle Werte', category: 'aktiven', subcategory: 'Anlagevermögen', prefixes: ['17'], order: 23 },
@@ -29,6 +31,8 @@ export const KMU_GROUPS: AccountGroup[] = [
   { code: 'P10', name: 'Verbindlichkeiten aus Lieferungen und Leistungen', category: 'passiven', subcategory: 'Kurzfristiges Fremdkapital', prefixes: ['200'], order: 30 },
   { code: 'P11', name: 'Kurzfristige verzinsliche Verbindlichkeiten', category: 'passiven', subcategory: 'Kurzfristiges Fremdkapital', prefixes: ['210'], order: 31 },
   { code: 'P12', name: 'Übrige kurzfristige Verbindlichkeiten', category: 'passiven', subcategory: 'Kurzfristiges Fremdkapital', prefixes: ['220', '221', '222', '223', '224', '225', '226', '227', '228', '229'], order: 32 },
+  { code: 'P14', name: 'IC-Verbindlichkeiten (Konzern, Beteiligte, Nahestehende)', category: 'passiven', subcategory: 'Fremdkapital', prefixes: [], order: 32.5 },
+  { code: 'P15', name: 'Steuerrückstellungen / geschuldete direkte Steuern', category: 'passiven', subcategory: 'Fremdkapital', prefixes: [], order: 32.7 },
   { code: 'P13', name: 'Passive Rechnungsabgrenzungen und kurzfristige Rückstellungen', category: 'passiven', subcategory: 'Kurzfristiges Fremdkapital', prefixes: ['23'], order: 33 },
   { code: 'P20', name: 'Langfristige verzinsliche Verbindlichkeiten', category: 'passiven', subcategory: 'Langfristiges Fremdkapital', prefixes: ['24'], order: 40 },
   { code: 'P21', name: 'Übrige langfristige Verbindlichkeiten', category: 'passiven', subcategory: 'Langfristiges Fremdkapital', prefixes: ['25'], order: 41 },
@@ -41,6 +45,7 @@ export const KMU_GROUPS: AccountGroup[] = [
   { code: 'E60', name: 'Übriger betrieblicher Aufwand, Abschreibungen, Finanzergebnis', category: 'aufwand', subcategory: 'Erfolgsrechnung', prefixes: ['6'], order: 63 },
   { code: 'E70', name: 'Betrieblicher Nebenerfolg', category: 'ertrag', subcategory: 'Erfolgsrechnung', prefixes: ['7'], order: 64 },
   { code: 'E80', name: 'Betriebsfremder, ausserordentlicher, einmaliger oder periodenfremder Erfolg; Steuern', category: 'aufwand', subcategory: 'Erfolgsrechnung', prefixes: ['8'], order: 65 },
+  { code: 'E89', name: 'Direkte Steuern (Steueraufwand)', category: 'aufwand', subcategory: 'Erfolgsrechnung', prefixes: ['89'], order: 65.5 },
   { code: 'X90', name: 'Abschlusskonten', category: 'abschluss', subcategory: 'Abschluss', prefixes: ['9'], order: 90 },
 ];
 
@@ -101,8 +106,25 @@ export interface Classification {
 }
 
 /** Zuerst über die Kontonummer (KMU-Kontenrahmen), sonst über die Bezeichnung. */
+/**
+ * Bezeichnungen, die Vorrang vor der Nummer haben, weil der KMU-Kontenrahmen sie nicht als eigene Gruppe führt
+ * (Register G = IC, S = Steuern).
+ */
+const OVERRIDE_RULES: [RegExp, { aktiven?: string; passiven?: string; any?: string }][] = [
+  [/konzern|\bic\b|intercompany|gruppengesellschaft|nahestehend|beteiligte\b|gegenüber beteiligungen|aktionär|aktionaer|gesellschafter(?!kapital)/i, { aktiven: 'A16', passiven: 'P14' }],
+  [/steuerrückst|steuerrueckst|rückstellung(en)? (für )?(direkte )?steuern|geschuldete (direkte )?steuern|direkte steuern|ertragssteuer|kapitalsteuer|gewinnsteuer/i, { passiven: 'P15', any: 'E89' }],
+];
+
 export function classify(accountNumber: string, accountName: string, opts: { digits?: number } = {}): Classification | null {
   const digits = accountNumber.replace(/\D/g, '');
+  const base = digits.length >= (opts.digits ?? 4) ? classifyAccount(accountNumber) : null;
+  for (const [rx, t] of OVERRIDE_RULES) {
+    if (!rx.test(accountName)) continue;
+    const cat = base?.category;
+    const code = cat === 'aktiven' ? t.aktiven : cat === 'passiven' ? t.passiven : (cat === 'aufwand' || cat === 'ertrag') ? t.any : (t.any ?? t.passiven);
+    const g = code ? KMU_GROUPS.find(x => x.code === code) : undefined;
+    if (g) return { group: g, source: base ? 'nummer' : 'bezeichnung' };
+  }
   // Nummer nur verwenden, wenn sie wie ein KMU-Konto aussieht (4-stellig oder länger, z. B. 102000)
   const byNumber = digits.length >= (opts.digits ?? 4) ? classifyAccount(accountNumber) : null;
   if (byNumber) return { group: byNumber, source: 'nummer' };
@@ -115,13 +137,26 @@ export function classify(accountNumber: string, accountName: string, opts: { dig
   return null;
 }
 
-/** Vorschlag Registerbuchstaben (Revisionsdossier), editierbar: A = Allgemeines, B = Flüssige Mittel, … */
+/** Pseudo-Gruppe für Belege ohne Konto (HR-Auszug, Statuten, Protokolle) */
+export const GENERAL_GROUP = 'ALLG';
+export const GENERAL_ACCOUNT = '@allgemein';
+
+/** Standard-Register der Revisionsstelle (änderbar in der App unter „Register …“) */
 export function defaultGroupLetters(): Record<string, string> {
-  const order = KMU_GROUPS.filter(g => g.category !== 'abschluss').sort((a, b) => a.order - b.order);
-  const out: Record<string, string> = {};
-  order.forEach((g, i) => {
-    const n = i + 1; // B, C, D … (A bleibt frei für Allgemeines)
-    out[g.code] = n < 26 ? String.fromCharCode(65 + n) : `Z${n - 25}`;
-  });
-  return out;
+  return {
+    ALLG: 'A', // Allgemeine Prüfungen
+    A10: 'B', // Flüssige Mittel
+    A11: 'D', // Wertschriften des Umlaufvermögens
+    A12: 'E', // Forderungen aus L+L
+    A13: 'F', // Sonstige Forderungen
+    A16: 'G', P14: 'G', // IC-Forderungen / IC-Verbindlichkeiten
+    A14: 'I', // Vorräte (laufende Arbeiten bei Bedarf auf F ändern)
+    A25: 'N', // Beteiligungen
+    P13: 'Q', // Passive Rechnungsabgrenzungen
+    P10: 'R', // Verbindlichkeiten aus L+L
+    P15: 'S', E89: 'S', // Steuerrückstellungen / Steueraufwand
+    P20: 'T', P21: 'T', // Langfristige Verbindlichkeiten
+    P11: 'U', P12: 'U', // Sonstige (kurzfristige) Verbindlichkeiten
+    P22: 'W', // Rückstellungen
+  };
 }
