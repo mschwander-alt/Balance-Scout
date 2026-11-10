@@ -13,6 +13,8 @@ export interface AccountRow {
   source?: string | null; category: string;
   balance: number; balancePreviousYear: number | null; status: Status; reasons: string[];
   best: Best | null; candidates: Best[];
+  /** Fremdwährung / Kontoblatt */
+  fx?: { currency: string; closing: number | null; opening: number | null; consistent: boolean; rate: number | null; rateSource: string | null; chfAtRate: number | null; valuationDiff: number | null; tbDiff: number | null } | null;
 }
 export interface DocRow {
   id: string; filename: string; relPath: string; absPath: string; ext: string; size: number; status: string; method: string;
@@ -37,5 +39,7 @@ export interface AuditResult {
   decisions?: ReviewDecisions;
   finalized?: boolean;
   finalizedAt?: string;
+  ledger?: { accounts: number; fxAccounts: number; consistent: number; warnings: string[]; sources: string[] } | null;
+  fxRates?: { date: string | null; rates: Record<string, number>; source: string } | null;
   filed?: Record<string, Filed>;
 }

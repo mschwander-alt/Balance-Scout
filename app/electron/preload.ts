@@ -25,6 +25,7 @@ const bridge: BsbBridge & { app: BsbBridge['app'] & { loadResult(id: string): Pr
     save: (id, d) => ipcRenderer.invoke('review:save', id, d),
     finalize: (id, d) => ipcRenderer.invoke('review:finalize', id, d),
     groups: () => ipcRenderer.invoke('review:groups'),
+    importRates: () => ipcRenderer.invoke('rates:import'),
     receivables: (id, p) => ipcRenderer.invoke('review:receivables', id, p),
     exportReceivables: (id, p, name, format) => ipcRenderer.invoke('review:exportReceivables', id, p, name, format),
   },

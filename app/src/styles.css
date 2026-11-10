@@ -339,3 +339,5 @@ table.kunden td { white-space: nowrap; } table.kunden td:first-child { max-width
 .setup-card { padding: 10px 12px; }
 .pick-line { display: flex; align-items: center; gap: 8px; padding: 3px 0; }
 .pick-line .grow { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fx-sub { font-size: 10.5px; color: var(--muted); line-height: 1.1; }
+.fx-line { display: flex; flex-wrap: wrap; gap: 4px 14px; align-items: center; padding: 6px 9px; background: #f7f9fc; border: 1px solid var(--line); border-radius: 6px; }

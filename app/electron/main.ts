@@ -2,7 +2,7 @@ import { app, BrowserWindow, Menu, Notification, Tray, clipboard, dialog, ipcMai
 import { existsSync, readFileSync, writeFileSync, mkdirSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
-import type { AppSettings, CloudLocation, HistoryEntry, JobInput, PickedPath, Progress, ReviewDecisions, SignConvention, TbPreview, TbPreviewOptions } from './shared';
+import type { AppSettings, CloudLocation, HistoryEntry, JobInput, PickedPath, Progress, ReviewDecisions, SignConvention, TbPreview, TbPreviewOptions, FxRateList } from './shared';
 import { execFile } from 'node:child_process';
 
 const isDev = !!process.env.VITE_DEV_SERVER_URL;
@@ -30,7 +30,7 @@ const tessdata = () => (app.isPackaged ? path.join(process.resourcesPath, 'tessd
 const userFile = (n: string) => path.join(app.getPath('userData'), n);
 
 // ------------------------------------------------------------------ Einstellungen & Verlauf
-const DEFAULTS: AppSettings = { defaultTargetBase: '', fileMode: 'copy', toleranceChf: '1.00', signConvention: 'signed', notifications: true, autoStart: false, visum: '', groupLetters: null, accountDigits: null };
+const DEFAULTS: AppSettings = { defaultTargetBase: '', fileMode: 'copy', toleranceChf: '1.00', signConvention: 'signed', notifications: true, autoStart: false, visum: '', groupLetters: null, accountDigits: null, fxRateLists: {} };
 function readJson<T>(n: string, d: T): T {
   try {
     return existsSync(userFile(n)) ? { ...d, ...JSON.parse(readFileSync(userFile(n), 'utf8')) } : d;
@@ -300,6 +300,17 @@ function registerIpc(): void {
     await call<unknown>({ type: 'receivables', snapshotPath: userFile(`snapshot-${id}.json`), ...params, exportPath: r.filePath, exportFormat: format });
     shell.showItemInFolder(r.filePath);
     return r.filePath;
+  });
+  // ESTV-Kursliste per 31.12. einmal jährlich laden; gespeichert je Stichtag in den Einstellungen
+  ipcMain.handle('rates:import', async () => {
+    const testFile = e2ePicks?.rates as string | undefined;
+    const r = testFile ? { canceled: false, filePaths: [testFile] } : await dialog.showOpenDialog(win!, { title: 'ESTV-Kursliste (PDF) wählen', filters: [{ name: 'PDF', extensions: ['pdf'] }], properties: ['openFile'] });
+    if (r.canceled || !r.filePaths[0]) return null;
+    const list = await call<FxRateList>({ type: 'rates', path: r.filePaths[0] });
+    if (!list.date) throw new Error('Stichtag der Kursliste nicht erkannt.');
+    const lists = { ...settings().fxRateLists, [list.date]: { ...list, importedAt: new Date().toISOString() } };
+    writeJson('settings.json', { ...settings(), fxRateLists: lists });
+    return lists;
   });
   ipcMain.handle('review:groups', () => (groupsCache ??= call<GroupsInfo>({ type: 'groups' })));
   // Schritt 2: Abschliessen – Ablage mit Register, Notizen, Excel

@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useState, type DragEvent } from 'react';
 import { bsb } from '../bridge';
-import type { AppSettings, CloudLocation, ColumnMapping, ExplicitMapping, FileMode, GroupsInfo, JobInput, PickedPath, SignConvention, TbPart, TbPreview } from '../../electron/shared';
+import type { AppSettings, CloudLocation, ColumnMapping, ExplicitMapping, FileMode, FxRateList, GroupsInfo, JobInput, PickedPath, SignConvention, TbPart, TbPreview } from '../../electron/shared';
 import { chf } from '../format';
 import { Modal, Spinner, useToast } from '../components/ui';
 import { groupAccounts } from '../review';
@@ -33,6 +33,10 @@ export function NewAudit({ prefill, onStart }: { prefill?: Partial<JobInput>; on
   const [over, setOver] = useState<'tb' | 'ev' | null>(null);
   const [cloud, setCloud] = useState<CloudLocation[] | null>(null);
   const [cloudHelp, setCloudHelp] = useState(false);
+  // Kontoblätter (optional) und Fremdwährungskurse per Stichtag
+  const [ledgers, setLedgers] = useState<PickedPath[]>((prefill?.ledgerPaths ?? []).map(picked));
+  const [manualRates, setManualRates] = useState<Record<string, number> | null>(prefill?.fxRates?.source === 'manuell erfasst' ? prefill.fxRates.rates : null);
+  const [showRates, setShowRates] = useState(false);
   useEffect(() => void bsb().pick.cloudLocations().then(setCloud, () => setCloud([])), []);
 
   useEffect(() => {
@@ -103,6 +107,8 @@ export function NewAudit({ prefill, onStart }: { prefill?: Partial<JobInput>; on
     evidence.some(e => target && (target === e.path || target.startsWith(e.path + '\\') || target.startsWith(e.path + '/'))) && mode === 'move' ? 'Beim Verschieben darf der Zielordner nicht im Kundenordner liegen' : null,
   ].filter(Boolean) as string[];
 
+  const rateList = settings?.fxRateLists?.[closing] ?? null;
+  const fxRates: FxRateList | undefined = manualRates ? { date: closing, rates: manualRates, source: 'manuell erfasst' } : rateList ?? undefined;
   const start = () => {
     if (digits) void bsb().app.saveSettings({ accountDigits: digits });
     onStart({
@@ -110,6 +116,7 @@ export function NewAudit({ prefill, onStart }: { prefill?: Partial<JobInput>; on
       trialBalancePaths: tbs.map(t => t.path), trialBalanceMappings: Object.keys(mappings).length ? mappings : undefined,
       accountDigits: digits ?? undefined, signConvention: sign, evidencePaths: evidence.map(e => e.path),
       targetDir: mode === 'none' ? null : target, fileMode: mode, absoluteToleranceCents: tolCents,
+      ledgerPaths: ledgers.length ? ledgers.map(l => l.path) : undefined, fxRates,
     });
   };
   const setDigit = (k: 'min' | 'max', v: string) => {
@@ -233,7 +240,44 @@ export function NewAudit({ prefill, onStart }: { prefill?: Partial<JobInput>; on
       </div>
 
       <div className="card">
-        <p className="step"><span className="num">4</span><strong>Ablage und Dokumentation</strong></p>
+        <p className="step"><span className="num">4</span><strong>Kontoblätter und Fremdwährung</strong> <span className="muted small">(optional)</span></p>
+        <div className="grid2">
+          <div>
+            <div className="small muted">Kontoblätter (PDF oder Excel, auch mehrere hundert Seiten) – für Fremdwährungskonten und weitere Analysen. Sie gelten nicht als Nachweis.</div>
+            {ledgers.length > 0 && (
+              <ul className="paths">
+                {ledgers.map(l => (
+                  <li key={l.path}><span>📒</span><span className="grow" title={l.path}>{l.name}</span>
+                    <button className="icon-btn" aria-label="entfernen" onClick={() => setLedgers(x => x.filter(y => y.path !== l.path))}>✕</button></li>
+                ))}
+              </ul>
+            )}
+            <button className="btn btn-sm" style={{ marginTop: 6 }} onClick={async () => { const f = await bsb().pick.evidence('files'); setLedgers(x => [...x, ...f.filter(n => !n.isDirectory && /\.(pdf|xlsx|xls|csv)$/i.test(n.name) && !x.some(y => y.path === n.path))]); }}>Kontoblätter wählen …</button>
+          </div>
+          <div>
+            <div className="small muted">Kurse per Bilanzstichtag (CHF je Einheit)</div>
+            <div className="row" style={{ marginTop: 4 }}>
+              {manualRates ? (
+                <span className="ok-text small">✓ manuell erfasst: {Object.entries(manualRates).map(([k, v]) => `${k} ${v}`).join(' · ') || '–'}</span>
+              ) : rateList ? (
+                <span className="ok-text small" title={rateList.source}>✓ ESTV-Kursliste per {closing.split('-').reverse().join('.')} ({Object.keys(rateList.rates).length} Währungen, z. B. EUR {rateList.rates.EUR ?? '–'} · USD {rateList.rates.USD ?? '–'})</span>
+              ) : (
+                <span className="warn small">Keine Kursliste per {closing.split('-').reverse().join('.')} geladen.</span>
+              )}
+            </div>
+            <div className="row" style={{ marginTop: 6 }}>
+              <button className="btn btn-sm" onClick={async () => { try { const l = await bsb().review.importRates(); if (l) { setSettings(st => (st ? { ...st, fxRateLists: l } : st)); toast('ok', 'Kursliste gespeichert – gilt für alle Prüfungen mit diesem Stichtag.'); } } catch (e) { toast('error', (e as Error).message.replace(/^Error invoking remote method '[^']+': (Error: )?/, '')); } }}>ESTV-Kursliste laden …</button>
+              <button className="link small" onClick={() => setShowRates(true)}>Kurse manuell erfassen …</button>
+              {manualRates && <button className="link small" onClick={() => setManualRates(null)}>manuelle Kurse entfernen</button>}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {showRates && <RatesDialog initial={manualRates ?? rateList?.rates ?? {}} onClose={() => setShowRates(false)} onApply={r => { setManualRates(r); setShowRates(false); }} />}
+
+      <div className="card">
+        <p className="step"><span className="num">5</span><strong>Ablage und Dokumentation</strong></p>
         <div className="row">
           <label className="field inline"><span>Belege</span>
             <select value={mode} onChange={e => setMode(e.target.value as FileMode)}>
@@ -361,6 +405,31 @@ function MappingDialog({ part, current, onClose, onApply }: { part: TbPart; curr
         {sel('balanceCredit', 'Haben', true)}
         <span className="small muted">→ Saldo = Soll − Haben</span>
       </div>
+    </Modal>
+  );
+}
+
+/** Kurse manuell erfassen (unterjährige Abschlüsse oder Abweichungen) */
+function RatesDialog({ initial, onClose, onApply }: { initial: Record<string, number>; onClose: () => void; onApply: (r: Record<string, number>) => void }) {
+  const common = ['EUR', 'USD', 'GBP', 'JPY', 'CAD', 'AUD', 'SEK', 'NOK', 'DKK', 'PLN', 'CZK', 'CNY'];
+  const [rows, setRows] = useState<[string, string][]>(() => {
+    const keys = [...new Set([...Object.keys(initial).filter(k => common.includes(k) || initial[k]), 'EUR', 'USD'])].slice(0, 30);
+    return keys.filter(k => common.includes(k)).map(k => [k, initial[k] !== undefined ? String(initial[k]) : '']);
+  });
+  return (
+    <Modal title="Kurse per Bilanzstichtag erfassen" onClose={onClose} footer={<>
+      <button className="btn" onClick={onClose}>Abbrechen</button>
+      <button className="btn btn-primary" onClick={() => onApply(Object.fromEntries(rows.filter(([c, v]) => c && Number(v.replace(',', '.')) > 0).map(([c, v]) => [c.toUpperCase(), Number(v.replace(',', '.'))])))}>Übernehmen</button>
+    </>}>
+      <p className="small muted">CHF für 1 Einheit (bei JPY also z. B. 0.005054 für 1 Yen). Nur für diese Prüfung.</p>
+      {rows.map(([c, v], i) => (
+        <div key={i} className="row" style={{ marginBottom: 4 }}>
+          <input className="w-xs mono" maxLength={3} value={c} onChange={e => setRows(r => r.map((x, j) => (j === i ? [e.target.value.toUpperCase(), x[1]] : x)))} aria-label="Währung" />
+          <input className="w-sm" inputMode="decimal" value={v} placeholder="z. B. 0.9305" onChange={e => setRows(r => r.map((x, j) => (j === i ? [x[0], e.target.value] : x)))} aria-label={`Kurs ${c}`} />
+          <button className="icon-btn" aria-label="entfernen" onClick={() => setRows(r => r.filter((_, j) => j !== i))}>✕</button>
+        </div>
+      ))}
+      <button className="link small" onClick={() => setRows(r => [...r, ['', '']])}>+ Währung</button>
     </Modal>
   );
 }

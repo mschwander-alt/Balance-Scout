@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { bsb } from '../bridge';
-import type { AuditResult, Best, DocRow, Status } from '../types';
+import type { AccountRow, AuditResult, Best, DocRow, Status } from '../types';
 import type { GroupsInfo, ReviewDecisions } from '../../electron/shared';
 import { chf, date, pct } from '../format';
 import { FLAG_LABEL, Info, Modal, Spinner, StatusBadge, WarnIcon, useToast } from '../components/ui';
@@ -254,13 +254,15 @@ export function Result({ result: initial, onRepeat }: { result: AuditResult; onR
       )}
 
       {tab === 'gebiete' && (
-        <AuditAreas historyId={id} accounts={view.accounts} docs={view.docs} groups={groups} decisions={decisions} update={update} closingDate={result.input?.closingDate ?? null} />
+        <AuditAreas historyId={id} accounts={view.accounts} docs={view.docs} groups={groups} decisions={decisions} update={update} closingDate={result.input?.closingDate ?? null} rates={result.fxRates?.rates ?? result.input?.fxRates?.rates} />
       )}
 
       {tab === 'saldobilanz' && (
         <div className="card stack">
           {result.trialBalance && result.trialBalance.parts.length > 0 && (
             <p className="small">Gelesen: {result.trialBalance.parts.map(p => `${p.label} (${p.status === 'ok' ? `${p.accountCount} Konten` : p.status})`).join(' · ')}
+              {result.ledger && <> · Kontoblätter: {result.ledger.accounts} Konten ({result.ledger.fxAccounts} in Fremdwährung)</>}
+              {result.fxRates && <> · Kurse: {result.fxRates.source}</>}
               {result.input?.accountDigits && <> · Kontonummern mit {result.input.accountDigits.min === result.input.accountDigits.max ? result.input.accountDigits.min : `${result.input.accountDigits.min}–${result.input.accountDigits.max}`} Ziffern</>}</p>
           )}
           <ul className="checks">{result.validation.checks.map(c => <li key={c.name} className={c.passed ? 'ok' : 'fail'}><strong>{c.passed ? '✓' : '✗'} {c.name}</strong> – {c.message}</li>)}</ul>
@@ -342,6 +344,16 @@ function Delta({ cy, vj }: { cy: number; vj: number | null }) {
   );
 }
 
+/** Fremdwährung: Hinweis nur bei Problemen (Kurs fehlt, Bewertungsdifferenz, Kontoblatt ≠ Saldobilanz) */
+function fxProblem(a: { fx?: AccountRow['fx'] }): string | null {
+  const f = a.fx;
+  if (!f) return null;
+  if (f.currency !== 'CHF' && f.rate === null) return `Konto in ${f.currency} – Kurs per Stichtag fehlt`;
+  if (f.valuationDiff !== null && Math.abs(f.valuationDiff) >= 100) return `Bewertungsdifferenz CHF ${chf(f.valuationDiff)} (Buchwert − ${f.currency} ${chf(f.closing ?? 0)} × ${f.rate})`;
+  if (f.tbDiff) return `Kontoblatt weicht von der Saldobilanz ab: CHF ${chf(f.tbDiff)}`;
+  return null;
+}
+
 const PROBLEM_FLAGS = new Set(['SIGN_CONFLICT', 'AMBIGUOUS', 'CURRENCY_MISMATCH', 'DATE_MISMATCH']);
 
 function GroupRows({ g, grouped, collapsed, onToggle, letter, open, setOpen, docs, notes }: {
@@ -374,9 +386,9 @@ function GroupRows({ g, grouped, collapsed, onToggle, letter, open, setOpen, doc
             <td>{a.accountNumber}</td>
             <td title={a.accountName}>{a.accountName}{notes[a.accountNumber] ? <span className="flag note" title="Notiz vorhanden">Notiz</span> : null}{a.groupSource === 'bezeichnung' && <WarnIcon text={`Gruppe „${a.groupName}“ aus der Bezeichnung abgeleitet – bitte prüfen`} />}</td>
             <td className="num">{a.balancePreviousYear === null ? '' : chf(a.balancePreviousYear)}</td>
-            <td className="num">{chf(a.balance)}</td>
+            <td className="num">{chf(a.balance)}{a.fx && a.fx.currency !== 'CHF' && a.fx.closing !== null && <div className="fx-sub">{a.fx.currency} {chf(a.fx.closing)}</div>}</td>
             <Delta cy={a.balance} vj={a.balancePreviousYear} />
-            <td><StatusBadge status={a.status} />{a.manual && <span className="manual" title={a.manual === 'akzeptiert' ? 'manuell akzeptiert' : 'Beleg manuell zugeordnet'}> ✓</span>}{problems.length > 0 && <WarnIcon text={problems.join(', ')} />}</td>
+            <td><StatusBadge status={a.status} />{fxProblem(a) && <WarnIcon text={fxProblem(a)!} />}{a.manual && <span className="manual" title={a.manual === 'akzeptiert' ? 'manuell akzeptiert' : 'Beleg manuell zugeordnet'}> ✓</span>}{problems.length > 0 && <WarnIcon text={problems.join(', ')} />}</td>
             <td>{hasDoc ? <span className="reg-link" title={doc!.filename}>{doc!.register ?? doc!.filename.slice(0, 18)}</span> : <span className="muted">–</span>}</td>
           </tr>
         );
@@ -455,7 +467,9 @@ function AccountPanel({ a, docs, filedPath, note, accepted, nav, onAccept, onUna
   if (c && c.differenceCents !== 0 && Number.isFinite(c.differenceCents)) problems.push(`Differenz zum Saldo: ${chf(c.differenceCents)}`);
   if (c) problems.push(...c.flags.filter(f => PROBLEM_FLAGS.has(f)).map(f => FLAG_LABEL[f] ?? f));
   if (doc && doc.ocrPages > 0 && (doc.ocrConfidence ?? 100) < 60) problems.push(`Schlechte Texterkennung (${doc.ocrConfidence} %) – Betrag mit dem Original vergleichen`);
+  const fxp = fxProblem(a);
   const uniq = [...new Set(problems)].filter(() => !(a.manual && a.status === 'BELEGT'));
+  if (fxp) uniq.push(fxp);
   return (
     <aside className="panel preview-panel">
       <div className="panel-title">
@@ -489,6 +503,15 @@ function AccountPanel({ a, docs, filedPath, note, accepted, nav, onAccept, onUna
         {file && <button className="link small ml-auto" onClick={() => bsb().app.openPath(filedPath ?? file)}>Beleg öffnen</button>}
       </div>
 
+      {a.fx && a.fx.currency !== 'CHF' && (
+        <div className="fx-line small">
+          <span>Saldo <strong>{a.fx.currency} {a.fx.closing === null ? '–' : chf(a.fx.closing)}</strong></span>
+          <span>Kurs {a.fx.rate ?? '–'}</span>
+          <span>CHF zum Kurs {a.fx.chfAtRate === null ? '–' : chf(a.fx.chfAtRate)}</span>
+          <span className={a.fx.valuationDiff && Math.abs(a.fx.valuationDiff) >= 100 ? 'delta-big' : ''}>Bewertungsdifferenz {a.fx.valuationDiff === null ? '–' : chf(a.fx.valuationDiff)}</span>
+          <Info label="Zur Fremdwährung"><dl><dt>Kontowährung</dt><dd>{a.fx.currency} (laut Kontoblatt)</dd><dt>Saldovortrag</dt><dd>{a.fx.opening === null ? '–' : `${a.fx.currency} ${chf(a.fx.opening)}`}</dd><dt>Kurs</dt><dd>{a.fx.rateSource ?? 'nicht erfasst'}</dd><dt>Abgleich</dt><dd>Der Nachweis wird in {a.fx.currency} abgeglichen; die Bewertung vergleicht den Buchwert in CHF mit Saldo × Kurs.</dd>{!a.fx.consistent && <><dt>Kontoblatt</dt><dd>Saldovortrag + Buchungen ≠ Schlusssaldo – Kontoblatt prüfen</dd></>}</dl></Info>
+        </div>
+      )}
       <div className="actions-row">
         {a.autoStatus === 'PRUEFEN' && a.manual !== 'zugeordnet' && (a.manual === 'akzeptiert'
           ? <button className="btn on" onClick={onUnaccept} title="Akzeptieren rückgängig machen">✓ Akzeptiert · rückgängig</button>

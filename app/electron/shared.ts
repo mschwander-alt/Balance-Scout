@@ -44,7 +44,13 @@ export interface JobInput {
   targetDir: string | null;
   fileMode: FileMode;
   absoluteToleranceCents: number;
+  /** Kontoblätter (optional): Fremdwährungskonten, später Anlagespiegel */
+  ledgerPaths?: string[];
+  /** Kurse per Stichtag (CHF je Einheit) */
+  fxRates?: FxRateList;
 }
+
+export interface FxRateList { date: string | null; rates: Record<string, number>; source: string; importedAt?: string }
 
 export interface Progress {
   phase: string;
@@ -153,6 +159,8 @@ export interface AppSettings {
   groupLetters: Record<string, string> | null;
   /** Zuletzt verwendeter Ziffernbereich der Kontonummern */
   accountDigits: { min: number; max: number } | null;
+  /** Geladene Kurslisten (ESTV per 31.12.) je Stichtag */
+  fxRateLists: Record<string, FxRateList>;
 }
 
 export interface BsbBridge {
@@ -177,6 +185,8 @@ export interface BsbBridge {
     save(id: string, d: ReviewDecisions): Promise<boolean>;
     finalize(id: string, d: ReviewDecisions): Promise<unknown>;
     groups(): Promise<GroupsInfo>;
+    /** ESTV-Kursliste (PDF) wählen, lesen und speichern; liefert alle gespeicherten Listen */
+    importRates(): Promise<Record<string, FxRateList> | null>;
     receivables(id: string, p: Partial<ReceivablesDecision>): Promise<ReceivablesResult>;
     exportReceivables(id: string, p: Partial<ReceivablesDecision>, suggestedName: string, format: 'xlsx' | 'pptx'): Promise<string | null>;
   };

@@ -22,7 +22,7 @@ const app = await electron.launch({
     ...process.env,
     BSB_USER_DATA: userData,
     BSB_CLOUD_ROOTS: path.join(FIX, 'Kunde_Upload'),
-    BSB_E2E_PICKS: JSON.stringify({ trialBalance: path.join(FIX, 'Saldobilanz_2025.xlsx'), folders: [path.join(FIX, 'Kunde_Upload')], files: [], targetDir: target }),
+    BSB_E2E_PICKS: JSON.stringify({ trialBalance: path.join(FIX, 'Saldobilanz_2025.xlsx'), folders: [path.join(FIX, 'Kunde_Upload')], files: [], targetDir: target, rates: path.resolve(root, '..', 'engine', 'test', 'fixtures', 'fx', 'ESTV_Kursliste_2025.pdf') }),
   },
 });
 // Ausgaben von App und Prüf-Engine mitschreiben – bei einem Fehler werden sie gezeigt
@@ -51,6 +51,10 @@ await page.locator('.cloud .chip', { hasText: 'Kunde_Upload' }).waitFor();
 step('Cloud-Ordner erkannt');
 await page.getByRole('button', { name: 'Ordner wählen …', exact: true }).click();
 await page.locator('.paths li', { hasText: 'Kunde_Upload' }).waitFor();
+// Kursliste einmal laden: gilt danach für alle Prüfungen per 31.12.2025
+await page.getByRole('button', { name: 'ESTV-Kursliste laden …' }).click();
+await page.getByText(/ESTV-Kursliste per 31\.12\.2025 \(6 Währungen, z\. B\. EUR 0\.9305 · USD 0\.79225\)/).waitFor();
+step('ESTV-Kursliste geladen');
 await page.getByRole('button', { name: 'Zielordner wählen …' }).click();
 await page.getByText(target).waitFor();
 await page.screenshot({ path: `${shots}-2-eingaben.png` });
@@ -224,6 +228,19 @@ assert.ok(existsSync(path.join(FIX, 'Kunde_Upload', 'Bank', 'UBS', 'Kontoauszug.
 await page.getByRole('tab', { name: 'Diagnosebericht' }).click();
 assert.match(await page.locator('pre.diag').innerText(), /DIAGNOSEBERICHT/);
 
+// Fremdwährung: Kontoblätter + Kurse -> Abgleich in EUR/USD, Bewertung
+const FXD = path.resolve(root, '..', 'engine', 'test', 'fixtures', 'fx');
+const fxr = await page.evaluate(F => window.bsb.engine.run({
+  mandate: 'Muster Export AG', closingDate: '2025-12-31', trialBalancePath: F + '/Saldobilanz_2025.xlsx', signConvention: 'signed', evidencePaths: [F + '/Kunde'],
+  targetDir: null, fileMode: 'none', absoluteToleranceCents: 100, ledgerPaths: [F + '/Kontoblaetter_2025.pdf'],
+  fxRates: { date: '2025-12-31', rates: { EUR: 0.9305, USD: 0.79225 }, source: 'ESTV Kursliste 31.12.2025' },
+}), FXD);
+const eur = fxr.accounts.find(a => a.accountNumber === '1025');
+assert.equal(eur.status, 'BELEGT');
+assert.deepEqual([eur.fx.currency, eur.fx.closing, eur.fx.valuationDiff], ['EUR', 5000000, 0]);
+assert.equal(fxr.accounts.find(a => a.accountNumber === '1105').fx.valuationDiff, 2750);
+step('Fremdwährung: EUR-Konto in EUR belegt, USD-Bewertungsdifferenz 27.50');
+
 // Bilanz und Erfolgsrechnung getrennt, mit Zwischensummen: Vorschau über die Schnittstelle
 const SPLIT = path.resolve(root, '..', 'engine', 'test', 'fixtures', 'tb_split');
 const sp = await page.evaluate(p => window.bsb.engine.previewTrialBalance(p, 'signed', { accountDigits: { min: 4, max: 4 } }), [path.join(SPLIT, 'Bilanz_2025.xlsx'), path.join(SPLIT, 'Erfolgsrechnung_2025.pdf')]);
@@ -236,8 +253,9 @@ await page.getByRole('button', { name: 'Übersicht' }).click();
 await page.getByText('Letzte Prüfungen').waitFor();
 assert.ok((await page.locator('.hist').innerText()).includes('Alpenblick Treuhand AG'));
 const hist = JSON.parse(readFileSync(path.join(userData, 'history.json'), 'utf8'));
-assert.equal(hist[0].counts.BELEGT, 12);
-assert.equal(hist[0].finalized, true);
+const alp = hist.find(h => h.mandate === 'Alpenblick Treuhand AG');
+assert.equal(alp.counts.BELEGT, 12);
+assert.equal(alp.finalized, true);
 await page.screenshot({ path: `${shots}-7-verlauf.png` });
 await app.close();
 step('ALLE PRÜFUNGEN BESTANDEN');

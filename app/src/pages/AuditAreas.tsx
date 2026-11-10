@@ -11,9 +11,9 @@ const SHADES = ['#1f5f9e', '#3b82c4', '#6ea6d9', '#a4c8ea', '#d4e5f6'];
 type Sub = 'faelligkeit' | 'posten' | 'feststellungen';
 
 /** Prüfgebiete: Bilanzpositionen links, vertiefte Prüfung rechts (zuerst Forderungen aus L+L). */
-export function AuditAreas({ historyId, accounts, docs, groups, decisions, update, closingDate }: {
+export function AuditAreas({ historyId, accounts, docs, groups, decisions, update, closingDate, rates }: {
   historyId?: string; accounts: ViewAccount[]; docs: ViewDoc[]; groups: GroupsInfo | null; decisions: ReviewDecisions;
-  update: (fn: (d: ReviewDecisions) => ReviewDecisions) => void; closingDate: string | null;
+  update: (fn: (d: ReviewDecisions) => ReviewDecisions) => void; closingDate: string | null; rates?: Record<string, number>;
 }) {
   const areas = useMemo(() => {
     const order = groups?.groups.filter(g => g.category === 'aktiven' || g.category === 'passiven') ?? [];
@@ -54,7 +54,7 @@ export function AuditAreas({ historyId, accounts, docs, groups, decisions, updat
           </div>
         )}
         {cur?.code === 'A12' && historyId ? (
-          <Receivables historyId={historyId} docs={docs} decisions={decisions} update={update} letter={cur.letter} />
+          <Receivables historyId={historyId} docs={docs} decisions={decisions} update={update} letter={cur.letter} defaultRates={rates ?? {}} />
         ) : (
           <div className="card muted">Für dieses Prüfgebiet ist noch keine vertiefte Analyse verfügbar. Als nächste folgen u. a. der Anlagespiegel (Sachanlagen) und die Fremdwährungsbewertung.</div>
         )}
@@ -63,12 +63,13 @@ export function AuditAreas({ historyId, accounts, docs, groups, decisions, updat
   );
 }
 
-function Receivables({ historyId, docs, decisions, update, letter }: {
-  historyId: string; docs: ViewDoc[]; decisions: ReviewDecisions; update: (fn: (d: ReviewDecisions) => ReviewDecisions) => void; letter: string;
+function Receivables({ historyId, docs, decisions, update, letter, defaultRates }: {
+  historyId: string; docs: ViewDoc[]; decisions: ReviewDecisions; update: (fn: (d: ReviewDecisions) => ReviewDecisions) => void; letter: string; defaultRates: Record<string, number>;
 }) {
   const toast = useToast();
   const saved = decisions.analyses?.receivables;
-  const [params, setParams] = useState<ReceivablesDecision>(saved ?? { docId: null, termDays: 30, rates: {}, findings: [] });
+  // Kurse: aus der Prüfung (ESTV-Kursliste bzw. manuell erfasst) vorbelegt
+  const [params, setParams] = useState<ReceivablesDecision>(saved ?? { docId: null, termDays: 30, rates: { ...defaultRates }, findings: [] });
   const [started, setStarted] = useState(!!saved);
   const [info, setInfo] = useState<ReceivablesResult | null>(null); // Kandidaten (ohne Analyse)
   const [r, setR] = useState<ReceivablesResult | null>(null);
