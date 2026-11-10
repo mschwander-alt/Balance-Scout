@@ -126,6 +126,29 @@ describe('Durchsicht und Abschluss: akzeptieren, manuell zuordnen, Notizen, Regi
     expect(r.documents.find(d => d.doc.id === doc.doc.id)!.assignedAccounts).toEqual([kn.accountNumber]);
   });
 
+  it('Ein Beleg für mehrere Konten: alle Konten belegt, Register nach kleinstem Konto', () => {
+    const doc = unassigned().find(d => d.doc.ext === '.pdf' && d.doc.status === 'ok')!;
+    const kn = res.match.results.filter(r => r.status === 'KEIN_NACHWEIS').slice(0, 2).map(r => r.accountNumber);
+    const r = applyReview(res, { assignments: { [doc.doc.id]: { accountNumber: kn[0]!, accountNumbers: kn, at: now, visum: 'MS' } }, groupLetters: defaultGroupLetters() });
+    for (const n of kn) expect(r.match.results.find(x => x.accountNumber === n)!.status).toBe('BELEGT');
+    expect(r.documents.find(d => d.doc.id === doc.doc.id)!.assignedAccounts).toEqual(kn);
+    expect(r.match.summary.counts.KEIN_NACHWEIS).toBe(res.match.summary.counts.KEIN_NACHWEIS - 2);
+  });
+
+  it('Fälligkeitsanalyse nur mit Belegen, die Forderungskonten zugeordnet sind; Abstimmung gegen diese Konten', async () => {
+    const { receivablesFor } = await import('../src/analysis/receivables.js');
+    const op = res.documents.find(d => d.doc.filename.startsWith('OP_Debitoren'))!;
+    // Ohne Zuordnung zu einem Forderungskonto: keine Kandidaten
+    const none = receivablesFor(res, {}, { [op.doc.id]: ['2000'] });
+    expect(none.candidates.find(c => c.docId === op.doc.id)).toBeUndefined();
+    expect(none.aging).toBeNull();
+    // Zuordnung zu 1100 (und Delkredere 1109): Analyse, Abstimmung nur gegen 1100
+    const r = receivablesFor(res, {}, { [op.doc.id]: ['1100', '1109'] });
+    expect(r.docIds).toEqual([op.doc.id]);
+    expect(r.balanceAccounts).toBe('1100');
+    expect(r.aging!.totalChf).toBe(r.balanceChf);
+  });
+
   it('Register je Gruppe: B.1, B.2 … in Reihenfolge der Kontonummer', () => {
     const r = applyReview(res, { groupLetters: defaultGroupLetters() });
     const regs = [...r.review.registers.entries()].map(([id, reg]) => [r.documents.find(d => d.doc.id === id)!.assignedAccounts[0], reg]);
@@ -144,7 +167,7 @@ describe('Durchsicht und Abschluss: akzeptieren, manuell zuordnen, Notizen, Regi
     unassigned().forEach((d, i) => (decisions.assignments![d.doc.id] = { accountNumber: i < kn.length && d.doc.status === 'ok' ? kn[i]!.accountNumber : null, at: now, visum: 'MS' }));
     const ubs = res.match.results.find(r => r.accountNumber === '1020')!; // PDF
     const deb = res.match.results.find(r => r.accountNumber === '1100')!; // Excel
-    decisions.analyses = { receivables: { docId: null, termDays: 30, rates: {}, findings: [{ text: 'Saldenbestätigung Meier AG einholen', status: 'offen' }], visum: 'MS' } };
+    decisions.analyses = { receivables: { docId: null, termDays: 30, rates: {}, findings: [{ text: 'Saldenbestätigung Meier AG einholen', status: 'offen' }], visum: 'MS', note: 'Delkredere pauschal 5 %.' } };
     decisions.notes = {
       '1020': { text: 'Saldo mit Bankbestätigung abgestimmt. Keine Abweichung – ok.', at: now, visum: 'MS' },
       '1100': { text: 'OP-Liste mit Debitorenkonto abgestimmt.', at: now, visum: 'MS' },
@@ -170,6 +193,19 @@ describe('Durchsicht und Abschluss: akzeptieren, manuell zuordnen, Notizen, Regi
     expect(ovr.find(r => r[0] === 'Differenz')?.[1]).toBe(0);
     expect(ovr.some(r => r[0] === 'Saldenbestätigung Meier AG einholen' && r[2] === 'offen')).toBe(true)
     expect(XLSX.utils.sheet_to_json(awb.Sheets['Einzelposten']!)).toHaveLength(4);
+    expect(ovr.some(r => r[0] === 'Delkredere pauschal 5 %.')).toBe(true);
+    // PowerPoint mit gleicher Nummer, echten Diagrammen (Säulen + Ring) und Notiz
+    const ppt = ana!.replace(/\.xlsx$/, '.pptx');
+    expect(zu).toContain(ppt);
+    const JSZip = (await import('jszip')).default;
+    const pz = await JSZip.loadAsync(await readFile(path.join(target, '01_Zugeordnet', ppt)));
+    const charts = Object.keys(pz.files).filter(f => /^ppt\/charts\/chart\d+\.xml$/.test(f));
+    expect(charts.length).toBe(2);
+    const chartXml = (await Promise.all(charts.map(c => pz.file(c)!.async('string')))).join('');
+    expect(chartXml).toMatch(/<c:barChart>/);
+    expect(chartXml).toMatch(/<c:doughnutChart>/);
+    const slides = await Promise.all(Object.keys(pz.files).filter(f => /^ppt\/slides\/slide\d+\.xml$/.test(f)).map(f => pz.file(f)!.async('string')));
+    expect(slides.join('')).toMatch(/Delkredere pauschal 5 %/);
     // ohne Präfix nur Belege von Gruppen ohne Registerbuchstaben (z. B. Sachanlagen, Eigenkapital)
     expect(zu.filter(f => !/^[A-Z]+\d*\.\d+_/.test(f)).length).toBeLessThanOrEqual(4);
 

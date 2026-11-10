@@ -19,15 +19,15 @@ export const IRRELEVANT_DIR = '03_Nicht_relevant';
 export interface ReviewDecisions {
   /** Konto (Nummer) -> manuell als belegt akzeptiert */
   accepted?: Record<string, { at: string; visum: string; comment?: string }>;
-  /** Beleg (docId) -> Konto (Nummer) oder null = nicht relevant */
-  assignments?: Record<string, { accountNumber: string | null; at: string; visum: string }>;
+  /** Beleg (docId) -> Konto (Nummer) oder null = nicht relevant; accountNumbers = ein Beleg für mehrere Konten */
+  assignments?: Record<string, { accountNumber: string | null; accountNumbers?: string[]; at: string; visum: string }>;
   /** Konto (Nummer) -> Notiz */
   notes?: Record<string, { text: string; at: string; visum: string }>;
   /** Gruppe (Code, z. B. "A10") -> Registerbuchstabe (z. B. "B"); leer = ohne Präfix */
   groupLetters?: Record<string, string>;
   /** Vertiefte Prüfungen (Prüfgebiete) */
   analyses?: {
-    receivables?: { docId: string | null; termDays: number; rates: Record<string, number>; findings: { text: string; status: 'offen' | 'erledigt' }[]; visum?: string };
+    receivables?: { docId: string | null; docIds?: string[]; accounts?: string[]; termDays: number; rates: Record<string, number>; findings: { text: string; status: 'offen' | 'erledigt' }[]; visum?: string; note?: string; assigned?: Record<string, string[]> };
   };
 }
 
@@ -40,6 +40,10 @@ export interface Review {
   /** docId -> nicht relevant */
   irrelevant: Set<string>;
 }
+
+/** Konten einer manuellen Zuordnung (ein oder mehrere) */
+export const assignedAccounts = (a: { accountNumber: string | null; accountNumbers?: string[] }) =>
+  a.accountNumbers?.length ? a.accountNumbers : a.accountNumber ? [a.accountNumber] : [];
 
 const fmt = (iso: string) => iso.slice(0, 10).split('-').reverse().join('.');
 
@@ -55,37 +59,42 @@ export function applyReview(res: RunResult, d: ReviewDecisions): RunResult & { r
   for (const [docId, a] of Object.entries(d.assignments ?? {})) {
     const doc = res.documents.find(x => x.doc.id === docId);
     if (!doc) continue;
+    const targets = assignedAccounts(a);
     // Bisherige automatische Zuordnung dieses Belegs aufheben (der Prüfer entscheidet)
-    for (const r of results) if (r.best?.documentId === docId && r.accountNumber !== a.accountNumber && (r.status === 'PRUEFEN')) {
+    for (const r of results) if (r.best?.documentId === docId && !targets.includes(r.accountNumber) && r.status === 'PRUEFEN') {
       r.status = 'KEIN_NACHWEIS';
       r.reasons.unshift(`Beleg vom Prüfer einem anderen Konto zugeordnet (${a.visum}, ${fmt(a.at)}).`);
       r.best = null;
     }
-    if (a.accountNumber === null) {
+    if (a.accountNumber === null && !a.accountNumbers?.length) {
       irrelevant.add(docId);
       docsAssigned.set(docId, []);
       continue;
     }
-    if (a.accountNumber === GENERAL_ACCOUNT) {
+    if (targets.length === 1 && targets[0] === GENERAL_ACCOUNT) {
       // Allgemeine Prüfungen (Register A): zugeordnet, aber zu keinem Konto
       docsAssigned.set(docId, [GENERAL_ACCOUNT]);
       continue;
     }
-    const r = byNumber.get(a.accountNumber);
-    if (!r) continue;
-    docsAssigned.set(docId, [a.accountNumber]);
-    if (r.status === 'BELEGT' && r.best && r.best.documentId !== docId) {
-      r.reasons.push(`Weiterer Beleg manuell zugeordnet: ${doc.doc.filename} (${a.visum}, ${fmt(a.at)}).`);
-      continue;
+    docsAssigned.set(docId, targets.filter(n => n === GENERAL_ACCOUNT || byNumber.has(n)));
+    for (const num of targets) {
+      const r = byNumber.get(num);
+      if (!r) continue;
+      if (r.status === 'BELEGT' && r.best && r.best.documentId !== docId) {
+        r.reasons.push(`Weiterer Beleg manuell zugeordnet: ${doc.doc.filename} (${a.visum}, ${fmt(a.at)}).`);
+        continue;
+      }
+      const existing = [r.best, ...r.candidates].find(c => c?.documentId === docId) ?? null;
+      r.best = existing ?? {
+        documentId: docId, filename: doc.doc.filename, page: 1, lineNo: 0, source: 'manuell', line: 'manuell zugeordnet', raw: '',
+        evidenceCents: Number.NaN, differenceCents: Number.NaN, kind: 'exact', score: 0, flags: [], reasons: ['Vom Prüfer manuell zugeordnet.'],
+      } as AccountResult['best'];
+      if (r.status !== 'BELEGT') {
+        r.status = 'BELEGT';
+        r.reasons.unshift(`Beleg ${doc.doc.filename} manuell zugeordnet${targets.length > 1 ? ` (zusammen mit Konto ${targets.filter(t => t !== num).join(', ')})` : ''} (${a.visum}, ${fmt(a.at)}).`);
+        manual.set(r.accountNumber, 'zugeordnet');
+      }
     }
-    const existing = [r.best, ...r.candidates].find(c => c?.documentId === docId) ?? null;
-    r.best = existing ?? {
-      documentId: docId, filename: doc.doc.filename, page: 1, lineNo: 0, source: 'manuell', line: 'manuell zugeordnet', raw: '',
-      evidenceCents: Number.NaN, differenceCents: Number.NaN, kind: 'exact', score: 0, flags: [], reasons: ['Vom Prüfer manuell zugeordnet.'],
-    } as AccountResult['best'];
-    r.status = 'BELEGT';
-    r.reasons.unshift(`Beleg ${doc.doc.filename} manuell zugeordnet (${a.visum}, ${fmt(a.at)}).`);
-    manual.set(r.accountNumber, 'zugeordnet');
   }
   // Manuell akzeptiert: Prüfen -> Belegt
   for (const [num, a] of Object.entries(d.accepted ?? {})) {
@@ -211,22 +220,27 @@ export async function placeReviewed(
     const { agingWorkbook } = await import('./report/agingExcel.js');
     const r = receivablesFor(res, rcv);
     if (r.aging) {
+      const { agingPptx } = await import('./report/agingPptx.js');
       const letter = decisions.groupLetters?.A12?.trim() ?? '';
       const used = [...registers.values()].filter(x => letter && x.startsWith(`${letter}.`)).length;
-      const name = `${letter ? `${letter}.${used + 1}_` : ''}Analyse_Fälligkeit.xlsx`;
-      const content = await agingWorkbook(r.aging, {
+      const stem = `${letter ? `${letter}.${used + 1}_` : ''}Analyse_Fälligkeit`;
+      const meta = {
         mandate: res.input.mandate, closingDate: res.input.closingDate!, sourceFile: r.filename ?? '', balanceChf: r.balanceChf,
-        balanceAccounts: r.balanceAccounts, findings: rcv.findings, visum: rcv.visum,
-      });
-      plans.push({ docId: 'analyse:forderungen', absPath: res.documents.find(d => d.doc.id === r.docId)?.doc.absPath ?? '', relPath: name, sha256: '', assigned: true, targetName: name, content, generated: true });
+        balanceAccounts: r.balanceAccounts, findings: rcv.findings, visum: rcv.visum, note: rcv.note, letter: letter || undefined,
+      };
+      const src = res.documents.find(d => d.doc.id === r.docId)?.doc.absPath ?? '';
+      plans.push({ docId: 'analyse:forderungen', absPath: src, relPath: `${stem}.xlsx`, sha256: '', assigned: true, targetName: `${stem}.xlsx`, content: await agingWorkbook(r.aging, meta), generated: true });
+      plans.push({ docId: 'analyse:forderungen:pptx', absPath: src, relPath: `${stem}.pptx`, sha256: '', assigned: true, targetName: `${stem}.pptx`, content: await agingPptx(r.aging, meta), generated: true });
     }
   }
   const placed = await placeFiles(targetDir, plans, mode);
   const by = new Map(placed.map(p => [p.docId, p]));
-  const analysis = by.get('analyse:forderungen');
+  const analysisFiles = (['analyse:forderungen', 'analyse:forderungen:pptx'] as const)
+    .map(k => by.get(k)).filter((x): x is NonNullable<typeof x> => !!x?.newPath)
+    .map(x => ({ kind: 'forderungen', name: path.basename(x.newPath!), path: x.newPath!, relPath: x.newRelPath }));
   return {
     ...res,
-    analysisFiles: analysis?.newPath ? [{ kind: 'forderungen', name: path.basename(analysis.newPath), path: analysis.newPath, relPath: analysis.newRelPath }] : [],
+    analysisFiles,
     documents: res.documents.map(d => ({
       ...d,
       targetName: plans.find(p => p.docId === d.doc.id)!.targetName,

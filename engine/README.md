@@ -74,7 +74,12 @@ Die Analyse legt noch nichts ab. Erst nach der Durchsicht (`finalizeAudit`) ents
   Altersklassen nicht fällig / 1–30 / 31–60 / 61–90 / > 90 Tage – **nur offene Rechnungen**; Gutschriften und
   Vorauszahlungen separat. Fremdwährungen mit Kurs per Stichtag (je Prüfung einzugeben).
 - Abstimmung Total OP-Liste ↔ Saldo Forderungen L+L (ohne Delkredere), Kennzahlen, Kunden-Tabelle, vorgeschlagene Feststellungen.
-- Excel `E.x_Analyse_Fälligkeit.xlsx` (Übersicht, Altersstruktur, Kunden, Einzelposten) – beim Abschluss als Nachweis abgelegt.
+- Grundlage sind nur Belege, die (nach der Durchsicht) **Konten der Forderungen L+L zugeordnet** sind – ein Beleg kann
+  mehreren Konten zugeordnet sein (z. B. eine OP-Liste für 1100/1101/1102); mehrere Listen werden zusammengeführt.
+  Die Analyse startet in der App erst auf Knopfdruck.
+- Excel `E.x_Analyse_Fälligkeit.xlsx` (Übersicht, Altersstruktur, Kunden, Einzelposten) und PowerPoint
+  `E.x_Analyse_Fälligkeit.pptx` (bearbeitbare Diagramme, Kennzahlen, grösste Debitoren, Feststellungen, Notiz) –
+  beim Abschluss als Nachweise abgelegt, jederzeit auch einzeln herunterladbar.
 
 ## Qualität
 Zwei realistische Testsätze mit vorab festgelegter Soll-Lösung (`test/fixtures`, Generator in `test/corpus`):
@@ -88,7 +93,7 @@ Zwei realistische Testsätze mit vorab festgelegter Soll-Lösung (`test/fixtures
   Gruppen- und Totalzeilen: mit 4 Ziffern exakt die 27 Konten, gleiches Prüfergebnis.
 - **Durchsicht/Abschluss:** Akzeptieren, manuelle Zuordnung, Register-Präfix, Notizseite im PDF, Notiz-PDF, Excel-Spalten.
 
-`npm test` – 118 Tests (inkl. künstlicher OP-Listen im Aufbau von Abacus, Navision-Scan und Business Central) (Beträge, Saldobilanz, Abgleich, Testsätze, Ablage, Datumserkennung, Excel, Diagnose, Belegvorschau und Fundstellen-Positionen).
+`npm test` – 120 Tests (inkl. künstlicher OP-Listen im Aufbau von Abacus, Navision-Scan und Business Central) (Beträge, Saldobilanz, Abgleich, Testsätze, Ablage, Datumserkennung, Excel, Diagnose, Belegvorschau und Fundstellen-Positionen).
 
 ## Belegvorschau
 `renderPreview(datei, seite)` liefert die Seite als Bild (PDF, Scan, Foto, Bild in Excel), als Tabelle (Excel, CSV)

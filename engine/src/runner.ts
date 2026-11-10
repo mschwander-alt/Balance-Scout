@@ -25,7 +25,7 @@ export type Request =
   | { id: string; type: 'finalize'; snapshotPath: string; decisions: ReviewDecisions; targetDir: string | null; fileMode: FileMode; reportDir: string }
   | { id: string; type: 'groups' }
   /** Vertiefte Prüfung Forderungen: Fälligkeitsanalyse (optional als Excel speichern) */
-  | { id: string; type: 'receivables'; snapshotPath: string; docId?: string | null; termDays?: number; rates?: Record<string, number>; exportPath?: string; findings?: { text: string; status: 'offen' | 'erledigt' }[]; visum?: string };
+  | { id: string; type: 'receivables'; snapshotPath: string; docId?: string | null; docIds?: string[]; accounts?: string[]; assigned?: Record<string, string[]>; termDays?: number; rates?: Record<string, number>; exportPath?: string; exportFormat?: 'xlsx' | 'pptx'; findings?: { text: string; status: 'offen' | 'erledigt' }[]; visum?: string; note?: string };
 
 type Port = { postMessage(m: unknown): void; on(ev: 'message', cb: (m: unknown) => void): void };
 const parentPort: Port | undefined = (process as unknown as { parentPort?: Port }).parentPort;
@@ -112,11 +112,17 @@ async function handle(req: Request): Promise<unknown> {
   if (req.type === 'receivables') {
     const res = await loadSnapshot(req.snapshotPath);
     const { receivablesFor } = await import('./analysis/receivables.js');
-    const r = receivablesFor(res, req);
+    // Zuordnung aus der Durchsicht (inkl. manueller Änderungen) kommt von der App
+    const r = receivablesFor(res, req, req.assigned);
     if (req.exportPath && r.aging) {
-      const { agingWorkbook } = await import('./report/agingExcel.js');
-      const buf = await agingWorkbook(r.aging, { mandate: res.input.mandate, closingDate: res.input.closingDate!, sourceFile: r.filename ?? '', balanceChf: r.balanceChf, balanceAccounts: r.balanceAccounts, findings: req.findings ?? [], visum: req.visum });
-      await writeFile(req.exportPath, buf);
+      const meta = { mandate: res.input.mandate, closingDate: res.input.closingDate!, sourceFile: r.filename ?? '', balanceChf: r.balanceChf, balanceAccounts: r.balanceAccounts, findings: req.findings ?? [], visum: req.visum, note: req.note };
+      if (req.exportFormat === 'pptx') {
+        const { agingPptx } = await import('./report/agingPptx.js');
+        await writeFile(req.exportPath, await agingPptx(r.aging, meta));
+      } else {
+        const { agingWorkbook } = await import('./report/agingExcel.js');
+        await writeFile(req.exportPath, await agingWorkbook(r.aging, meta));
+      }
     }
     // Für die Anzeige: Posten mit Lage auf der Seite (Vorschau), ohne Textauszug
     return r;

@@ -251,7 +251,7 @@ export async function writeExcelReport(res: RunResult, filePath: string): Promis
     values.forEach((v, c) => (ws.getCell(row, c + 1).value = v));
     // Entscheide der Prüferin / des Prüfers (grüne Spalten)
     const acc = rv?.decisions.accepted?.[a.accountNumber];
-    const asg = rv?.manual.get(a.accountNumber) === 'zugeordnet' ? Object.values(rv.decisions.assignments ?? {}).find(x => x.accountNumber === a.accountNumber) : undefined;
+    const asg = rv?.manual.get(a.accountNumber) === 'zugeordnet' ? Object.values(rv.decisions.assignments ?? {}).find(x => (x.accountNumbers?.length ? x.accountNumbers : [x.accountNumber]).includes(a.accountNumber)) : undefined;
     const note = rv?.decisions.notes?.[a.accountNumber];
     const who = acc ?? asg ?? note;
     if (rv?.manual.has(a.accountNumber)) ws.getCell(row, 15).value = 'Bestätigt';
@@ -316,7 +316,7 @@ export async function writeExcelReport(res: RunResult, filePath: string): Promis
     d.assignedAccounts.map(a => (a === '@allgemein' ? 'Allgemeine Prüfungen' : a)).join(', '),
     d.assigned ? 'Zugeordnet' : rv?.irrelevant.has(d.doc.id) ? 'Nicht relevant' : 'Nicht zugeordnet',
     d.targetName,
-    [...d.doc.warnings, rv?.decisions.assignments?.[d.doc.id] ? `manuell ${rv.decisions.assignments[d.doc.id]!.accountNumber ? 'zugeordnet' : 'als nicht relevant markiert'} (${rv.decisions.assignments[d.doc.id]!.visum})` : '', d.notePlacement?.newRelPath ? `Notiz: ${d.notePlacement.newRelPath}` : '', d.placement?.status === 'fehler' ? `Ablage fehlgeschlagen: ${d.placement.message}` : d.placement?.status === 'bereits vorhanden' ? 'bereits im Zielordner vorhanden' : ''].filter(Boolean).join(' · '),
+    [...d.doc.warnings, rv?.decisions.assignments?.[d.doc.id] ? `manuell ${rv.decisions.assignments[d.doc.id]!.accountNumber || rv.decisions.assignments[d.doc.id]!.accountNumbers?.length ? 'zugeordnet' : 'als nicht relevant markiert'} (${rv.decisions.assignments[d.doc.id]!.visum})` : '', d.notePlacement?.newRelPath ? `Notiz: ${d.notePlacement.newRelPath}` : '', d.placement?.status === 'fehler' ? `Ablage fehlgeschlagen: ${d.placement.message}` : d.placement?.status === 'bereits vorhanden' ? 'bereits im Zielordner vorhanden' : ''].filter(Boolean).join(' · '),
     d.placement?.newRelPath ?? '',
     d.placement?.at ?? null,
     rv?.registers.get(d.doc.id) ?? '',

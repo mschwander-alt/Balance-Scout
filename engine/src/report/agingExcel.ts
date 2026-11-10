@@ -16,6 +16,8 @@ export interface AgingMeta {
   balanceAccounts?: string;
   findings: { text: string; status: string }[];
   visum?: string;
+  /** Notiz der Prüferin / des Prüfers zum Prüfgebiet */
+  note?: string;
 }
 
 function head(ws: ExcelJS.Worksheet, row: number, cols: string[]) {
@@ -93,6 +95,12 @@ export async function agingWorkbook(a: Aging, m: AgingMeta): Promise<Buffer> {
   for (const f of m.findings) {
     ov.getCell(`A${r}`).value = f.text; ov.getCell(`A${r}`).alignment = { wrapText: true };
     ov.mergeCells(`A${r}:B${r}`); ov.getCell(`C${r}`).value = f.status; r++;
+  }
+  if (m.note?.trim()) {
+    r++;
+    sec('Notiz');
+    ov.getCell(`A${r}`).value = m.note; ov.getCell(`A${r}`).alignment = { wrapText: true, vertical: 'top' };
+    ov.mergeCells(`A${r}:C${r}`); ov.getRow(r).height = Math.min(300, 15 * (1 + Math.ceil(m.note.length / 110) + (m.note.match(/\n/g)?.length ?? 0)));
   }
 
   // ---------------- Altersstruktur ----------------

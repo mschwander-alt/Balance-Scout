@@ -24,6 +24,8 @@ export interface OpItem {
   lineNo: number;
   line: string;
   bbox?: EvidenceLine['bbox'];
+  /** Herkunft bei mehreren Listen */
+  sourceDocId?: string;
 }
 
 export interface OpCustomerTotal { customerNo: string; customerName: string; currency: string | null; amount: Cents | null; page: number; lineNo: number; line: string }
@@ -382,33 +384,82 @@ export function suggestFindings(a: Aging, balanceChf: Cents | null): string[] {
 }
 
 // ------------------------------------------------------------ Einbindung in die Prüfung
-export interface ReceivablesParams { docId?: string | null; termDays?: number; rates?: Record<string, number> }
+export interface ReceivablesParams {
+  /** Gewählte OP-Liste(n); ohne Angabe: alle Belege, die Konten der Forderungen L+L zugeordnet sind */
+  docIds?: string[] | null;
+  /** @deprecated einzelne Liste */
+  docId?: string | null;
+  /** Konten für die Abstimmung; ohne Angabe: Konten, denen die Listen zugeordnet sind (ohne Delkredere) */
+  accounts?: string[] | null;
+  termDays?: number;
+  rates?: Record<string, number>;
+}
 export interface ReceivablesResult {
-  candidates: { docId: string; filename: string; relPath: string }[];
+  /** Belege, die Konten der Forderungen L+L zugeordnet sind */
+  candidates: { docId: string; filename: string; relPath: string; accounts: string[]; looksLikeOpList: boolean }[];
+  docIds: string[];
+  /** @deprecated */
   docId: string | null;
   filename: string | null;
+  lists: { docId: string; filename: string; items: number; listDate: string | null }[];
   listDate: string | null;
   currencies: string[];
   aging: Aging | null;
   balanceChf: Cents | null;
   balanceAccounts: string;
+  accountOptions: { accountNumber: string; accountName: string; balance: Cents }[];
   suggestions: string[];
 }
 
-/** Fälligkeitsanalyse für eine Prüfung: OP-Liste finden (oder gewählte verwenden), analysieren, mit Saldo abstimmen. */
-export function receivablesFor(
-  res: { documents: { doc: { id: string; filename: string; relPath: string; lines: EvidenceLine[] } }[]; accounts: { accountNumber: string; accountName: string; groupCode: string | null; balanceCurrentYear: number }[]; input: { closingDate: string | null } },
-  p: ReceivablesParams,
-): ReceivablesResult {
-  const candidates = res.documents.filter(d => looksLikeOpList(d.doc.lines)).map(d => ({ docId: d.doc.id, filename: d.doc.filename, relPath: d.doc.relPath }));
-  const docId = p.docId ?? candidates[0]?.docId ?? null;
-  const doc = res.documents.find(d => d.doc.id === docId);
-  // Saldo Forderungen L+L: Konten der Gruppe ohne Delkredere/Wertberichtigung
-  const accs = res.accounts.filter(a => a.groupCode === 'A12' && !/delkredere|wertberichtigung|\bwb\b/i.test(a.accountName));
+type ResLike = {
+  documents: { doc: { id: string; filename: string; relPath: string; lines: EvidenceLine[] }; assignedAccounts?: string[] }[];
+  accounts: { accountNumber: string; accountName: string; groupCode: string | null; balanceCurrentYear: number }[];
+  input: { closingDate: string | null };
+};
+
+/** Fälligkeitsanalyse: nur Belege, die (nach der Durchsicht) Konten der Forderungen L+L zugeordnet sind. */
+export function receivablesFor(res: ResLike, p: ReceivablesParams, assignedOverride?: Record<string, string[]>): ReceivablesResult {
+  const group = res.accounts.filter(a => a.groupCode === 'A12');
+  const groupNums = new Set(group.map(a => a.accountNumber));
+  const assignedOf = (d: ResLike['documents'][number]) => assignedOverride?.[d.doc.id] ?? d.assignedAccounts ?? [];
+  const candidates = res.documents
+    .map(d => ({ d, accounts: assignedOf(d).filter(n => groupNums.has(n)) }))
+    .filter(x => x.accounts.length)
+    .map(x => ({ docId: x.d.doc.id, filename: x.d.doc.filename, relPath: x.d.doc.relPath, accounts: x.accounts, looksLikeOpList: looksLikeOpList(x.d.doc.lines) }));
+  const docIds = p.docIds?.length ? p.docIds : p.docId ? [p.docId] : candidates.filter(c => c.looksLikeOpList).map(c => c.docId);
+  const docs = docIds.map(id => res.documents.find(d => d.doc.id === id)).filter((d): d is ResLike['documents'][number] => !!d);
+  const isWb = (name: string) => /delkredere|wertberichtigung|\bwb\b/i.test(name);
+  // Abstimmung: gewählte Konten, sonst die Konten, denen die Listen zugeordnet sind, sonst alle Konten der Gruppe
+  const fromDocs = [...new Set(docs.flatMap(d => assignedOf(d).filter(n => groupNums.has(n))))];
+  const accNums = p.accounts?.length ? p.accounts : fromDocs.length ? fromDocs : group.map(a => a.accountNumber);
+  const accs = group.filter(a => accNums.includes(a.accountNumber) && !isWb(a.accountName));
   const balanceChf = accs.length ? accs.reduce((s, a) => s + a.balanceCurrentYear, 0) : null;
-  const base = { candidates, docId, filename: doc?.doc.filename ?? null, balanceChf, balanceAccounts: accs.map(a => a.accountNumber).join(', ') };
-  if (!doc || !res.input.closingDate) return { ...base, listDate: null, currencies: [], aging: null, suggestions: [] };
-  const list = parseOpList(doc.doc.lines);
-  const aging = analyzeAging(list, { closingDate: res.input.closingDate, termDays: p.termDays ?? 30, rates: p.rates ?? {} });
-  return { ...base, listDate: list.listDate, currencies: [...new Set(list.items.map(i => i.currency))], aging, suggestions: suggestFindings(aging, balanceChf) };
+  const base = {
+    candidates, docIds: docs.map(d => d.doc.id), docId: docs[0]?.doc.id ?? null, filename: docs.map(d => d.doc.filename).join(', ') || null,
+    balanceChf, balanceAccounts: accs.map(a => a.accountNumber).join(', '),
+    accountOptions: group.filter(a => !isWb(a.accountName)).map(a => ({ accountNumber: a.accountNumber, accountName: a.accountName, balance: a.balanceCurrentYear })),
+  };
+  if (!docs.length || !res.input.closingDate) return { ...base, lists: [], listDate: null, currencies: [], aging: null, suggestions: [] };
+  // Mehrere Listen (z. B. Inland/Ausland) werden zusammengeführt; Kontrollen je Liste bleiben erhalten
+  const parsed = docs.map(d => ({ d, list: parseOpList(d.doc.lines) }));
+  const merged: OpList = {
+    items: parsed.flatMap(x => x.list.items.map(i => ({ ...i, sourceDocId: x.d.doc.id }))),
+    customerTotals: parsed.flatMap(x => x.list.customerTotals),
+    grandTotals: parsed.length === 1 ? parsed[0]!.list.grandTotals : [],
+    listDate: parsed.map(x => x.list.listDate).find(Boolean) ?? null,
+    baseCurrency: parsed[0]!.list.baseCurrency,
+    unreadable: parsed.flatMap(x => x.list.unreadable),
+  };
+  const aging = analyzeAging(merged, { closingDate: res.input.closingDate, termDays: p.termDays ?? 30, rates: p.rates ?? {} });
+  if (parsed.length > 1) {
+    for (const x of parsed) for (const g of x.list.grandTotals) {
+      const s = x.list.items.filter(i => i.currency === g.currency).reduce((a, i) => a + i.amount, 0);
+      aging.checks.push({ name: `Gesamttotal ${x.d.doc.filename} ${g.currency}`, passed: Math.abs(s - g.amount) <= 1, message: `Summe der Posten ${g.currency} ${fmt(s)} · laut Liste ${fmt(g.amount)}` });
+    }
+  }
+  for (const x of parsed) if (!x.list.items.length) aging.checks.push({ name: `Liste ${x.d.doc.filename}`, passed: false, message: `${x.d.doc.filename}: keine offenen Posten erkannt – ist das eine OP-Liste?` });
+  return {
+    ...base, lists: parsed.map(x => ({ docId: x.d.doc.id, filename: x.d.doc.filename, items: x.list.items.length, listDate: x.list.listDate })),
+    listDate: merged.listDate, currencies: [...new Set(merged.items.map(i => i.currency))], aging, suggestions: suggestFindings(aging, balanceChf),
+  };
 }
