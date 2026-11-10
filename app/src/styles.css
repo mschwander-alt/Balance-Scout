@@ -336,3 +336,6 @@ table.kunden td { white-space: nowrap; } table.kunden td:first-child { max-width
 .cust-layout.withpreview { grid-template-columns: minmax(0, 1.6fr) minmax(330px, 1fr); }
 .cust-layout.withpreview table.kunden td:first-child { max-width: 130px; }
 .cust-layout.withpreview table.kunden th, .cust-layout.withpreview table.kunden td { padding-left: 5px; padding-right: 5px; }
+.setup-card { padding: 10px 12px; }
+.pick-line { display: flex; align-items: center; gap: 8px; padding: 3px 0; }
+.pick-line .grow { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

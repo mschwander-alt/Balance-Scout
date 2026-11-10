@@ -290,14 +290,14 @@ function registerIpc(): void {
     if (!existsSync(userFile(`snapshot-${id}.json`))) throw new Error('Analysedaten fehlen – bitte die Prüfung erneut starten.');
     return call<unknown>({ type: 'receivables', snapshotPath: userFile(`snapshot-${id}.json`), ...params });
   });
-  ipcMain.handle('review:exportReceivables', async (_e, id: string, params: Record<string, unknown>, suggestedName: string) => {
+  ipcMain.handle('review:exportReceivables', async (_e, id: string, params: Record<string, unknown>, suggestedName: string, format: 'xlsx' | 'pptx' = 'xlsx') => {
     const saved = readJson<{ input?: JobInput } | null>(`result-${id}.json`, null);
     const r = await dialog.showSaveDialog(win!, {
       title: 'Fälligkeitsanalyse speichern', defaultPath: path.join(saved?.input?.targetDir ?? app.getPath('documents'), suggestedName),
-      filters: [{ name: 'Excel', extensions: ['xlsx'] }],
+      filters: [format === 'pptx' ? { name: 'PowerPoint', extensions: ['pptx'] } : { name: 'Excel', extensions: ['xlsx'] }],
     });
     if (r.canceled || !r.filePath) return null;
-    await call<unknown>({ type: 'receivables', snapshotPath: userFile(`snapshot-${id}.json`), ...params, exportPath: r.filePath });
+    await call<unknown>({ type: 'receivables', snapshotPath: userFile(`snapshot-${id}.json`), ...params, exportPath: r.filePath, exportFormat: format });
     shell.showItemInFolder(r.filePath);
     return r.filePath;
   });

@@ -7,6 +7,9 @@ import type { AccountRow, AuditResult, DocRow, Status } from './types';
 
 /** Zuordnung „Allgemeine Prüfungen“ (Register A) für Belege ohne Konto */
 export const GENERAL_ACCOUNT = '@allgemein';
+/** Konten einer manuellen Zuordnung (ein Beleg kann mehrere Konten belegen) */
+export const targetsOf = (x: { accountNumber: string | null; accountNumbers?: string[] }) =>
+  x.accountNumbers?.length ? x.accountNumbers : x.accountNumber ? [x.accountNumber] : [];
 export const accountLabel = (n: string) => (n === GENERAL_ACCOUNT ? 'Allgemeine Prüfungen' : `Konto ${n}`);
 
 export type Manual = 'akzeptiert' | 'zugeordnet' | null;
@@ -37,18 +40,20 @@ export function deriveView(r: AuditResult, d: ReviewDecisions): View {
   const accounts: ViewAccount[] = r.accounts.map(a => ({ ...a, autoStatus: a.status, manual: null, docId: a.best && (a.status === 'BELEGT' || a.status === 'PRUEFEN') ? a.best.documentId : null }));
   const byNum = new Map(accounts.map(a => [a.accountNumber, a]));
   for (const [docId, x] of Object.entries(asg)) {
+    const targets = targetsOf(x);
     // Ein vom Prüfer anders zugeordneter Beleg ist nicht mehr Fundstelle eines "Prüfen"-Kontos
-    for (const a of accounts) if (a.docId === docId && a.accountNumber !== x.accountNumber && a.status === 'PRUEFEN') {
+    for (const a of accounts) if (a.docId === docId && !targets.includes(a.accountNumber) && a.status === 'PRUEFEN') {
       a.status = 'KEIN_NACHWEIS';
       a.docId = null;
     }
-    if (!x.accountNumber) continue;
-    const a = byNum.get(x.accountNumber);
-    if (!a) continue;
-    if (a.status === 'BELEGT' && a.docId && a.docId !== docId) continue; // zusätzlicher Beleg
-    a.status = 'BELEGT';
-    a.docId = docId;
-    a.manual = 'zugeordnet';
+    for (const num of targets) {
+      const a = byNum.get(num);
+      if (!a) continue;
+      if (a.status === 'BELEGT' && a.docId && a.docId !== docId) continue; // zusätzlicher Beleg
+      if (a.status !== 'BELEGT') a.manual = 'zugeordnet';
+      a.status = 'BELEGT';
+      a.docId = docId;
+    }
   }
   for (const [num] of Object.entries(d.accepted ?? {})) {
     const a = byNum.get(num);
@@ -59,10 +64,10 @@ export function deriveView(r: AuditResult, d: ReviewDecisions): View {
   }
   const docAcc = new Map<string, string[]>();
   for (const a of accounts) if (a.docId && (a.status === 'BELEGT' || a.status === 'PRUEFEN')) docAcc.set(a.docId, [...(docAcc.get(a.docId) ?? []), a.accountNumber]);
-  for (const [docId, x] of Object.entries(asg)) docAcc.set(docId, x.accountNumber ? [x.accountNumber] : []);
+  for (const [docId, x] of Object.entries(asg)) docAcc.set(docId, targetsOf(x));
   const docs: ViewDoc[] = r.documents.map(doc => {
     const acc = docAcc.get(doc.id) ?? [];
-    return { ...doc, accounts: acc, assigned: acc.length > 0, manualAssignment: !!asg[doc.id], irrelevant: asg[doc.id]?.accountNumber === null, register: null };
+    return { ...doc, accounts: acc, assigned: acc.length > 0, manualAssignment: !!asg[doc.id], irrelevant: !!asg[doc.id] && targetsOf(asg[doc.id]!).length === 0, register: null };
   });
   // Register: Buchstabe der Gruppe des kleinsten Kontos + laufende Nummer (Reihenfolge: Konto, Dateiname)
   const letters = d.groupLetters ?? {};

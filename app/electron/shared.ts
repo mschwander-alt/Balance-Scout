@@ -88,20 +88,22 @@ export interface TbPreview {
 export interface ReviewDecisions {
   accepted?: Record<string, { at: string; visum: string; comment?: string }>;
   /** docId -> Konto oder null = nicht relevant */
-  assignments?: Record<string, { accountNumber: string | null; at: string; visum: string }>;
+  assignments?: Record<string, { accountNumber: string | null; accountNumbers?: string[]; at: string; visum: string }>;
   notes?: Record<string, { text: string; at: string; visum: string }>;
   groupLetters?: Record<string, string>;
   analyses?: { receivables?: ReceivablesDecision };
 }
-export interface ReceivablesDecision { docId: string | null; termDays: number; rates: Record<string, number>; findings: { text: string; status: 'offen' | 'erledigt' }[]; visum?: string }
+export interface ReceivablesDecision { docId: string | null; docIds?: string[]; accounts?: string[]; assigned?: Record<string, string[]>; termDays: number; rates: Record<string, number>; findings: { text: string; status: 'offen' | 'erledigt' }[]; visum?: string; note?: string }
 export interface AgingItem {
   customerNo: string; customerName: string; docNo: string; docType: string; date: string | null; due: string | null; daysOverdue: number | null;
-  bucket: number; currency: string; amount: number; amountChf: number | null; dunningLevel: number | null; page: number; lineNo: number; line: string;
+  bucket: number; currency: string; amount: number; amountChf: number | null; dunningLevel: number | null; page: number; lineNo: number; line: string; sourceDocId?: string;
   bbox?: { x0: number; y0: number; x1: number; y1: number };
 }
 export interface ReceivablesResult {
-  candidates: { docId: string; filename: string; relPath: string }[];
-  docId: string | null; filename: string | null; listDate: string | null; currencies: string[];
+  candidates: { docId: string; filename: string; relPath: string; accounts: string[]; looksLikeOpList: boolean }[];
+  docIds: string[]; docId: string | null; filename: string | null; listDate: string | null; currencies: string[];
+  lists: { docId: string; filename: string; items: number; listDate: string | null }[];
+  accountOptions: { accountNumber: string; accountName: string; balance: number }[];
   balanceChf: number | null; balanceAccounts: string; suggestions: string[];
   aging: {
     items: AgingItem[];
@@ -176,7 +178,7 @@ export interface BsbBridge {
     finalize(id: string, d: ReviewDecisions): Promise<unknown>;
     groups(): Promise<GroupsInfo>;
     receivables(id: string, p: Partial<ReceivablesDecision>): Promise<ReceivablesResult>;
-    exportReceivables(id: string, p: Partial<ReceivablesDecision>, suggestedName: string): Promise<string | null>;
+    exportReceivables(id: string, p: Partial<ReceivablesDecision>, suggestedName: string, format: 'xlsx' | 'pptx'): Promise<string | null>;
   };
   app: {
     openPath(p: string): Promise<string>;

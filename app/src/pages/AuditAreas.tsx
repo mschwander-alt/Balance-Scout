@@ -69,85 +69,142 @@ function Receivables({ historyId, docs, decisions, update, letter }: {
   const toast = useToast();
   const saved = decisions.analyses?.receivables;
   const [params, setParams] = useState<ReceivablesDecision>(saved ?? { docId: null, termDays: 30, rates: {}, findings: [] });
+  const [started, setStarted] = useState(!!saved);
+  const [info, setInfo] = useState<ReceivablesResult | null>(null); // Kandidaten (ohne Analyse)
   const [r, setR] = useState<ReceivablesResult | null>(null);
-  const [busy, setBusy] = useState(true);
+  const [busy, setBusy] = useState(false);
   const [sub, setSub] = useState<Sub>('faelligkeit');
   const [cust, setCust] = useState<string | null>(null);
   const [item, setItem] = useState<AgingItem | null>(null);
   const [newFinding, setNewFinding] = useState('');
-  const first = useRef(true);
-  const hadSaved = useRef(!!saved);
+  // Zuordnung aus der Durchsicht (inkl. manueller Änderungen und Mehrfachzuordnung)
+  const assigned = useMemo(() => Object.fromEntries(docs.map(d => [d.id, d.accounts])), [docs]);
+  const assignedKey = JSON.stringify(assigned);
 
-  // Neu berechnen bei Änderung von Quelle, Frist oder Kursen (kurz verzögert beim Tippen)
+  // Kandidaten laden: Belege, die Konten der Forderungen L+L zugeordnet sind (noch keine Analyse)
   useEffect(() => {
+    void bsb().review.receivables(historyId, { docIds: ['__keine__'], assigned }).then(res => {
+      setInfo(res);
+      setParams(p => (p.docIds?.length ? p : { ...p, docIds: res.candidates.filter(c => c.looksLikeOpList).map(c => c.docId) }));
+    }, e => toast('error', (e as Error).message));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [historyId, assignedKey, toast]);
+
+  const run = async (p: ReceivablesDecision) => {
     setBusy(true);
-    const t = setTimeout(() => {
-      bsb().review.receivables(historyId, { docId: params.docId, termDays: params.termDays, rates: params.rates }).then(
-        res => {
-          setR(res);
-          // Erstes Öffnen: vorgeschlagene Feststellungen übernehmen
-          if (first.current && !hadSaved.current && res.aging) setParams(p => ({ ...p, docId: res.docId, findings: res.suggestions.map(text => ({ text, status: 'offen' })) }));
-          first.current = false;
-        },
-        e => toast('error', (e as Error).message),
-      ).finally(() => setBusy(false));
-    }, first.current ? 0 : 350);
-    return () => clearTimeout(t);
-  }, [historyId, params.docId, params.termDays, params.rates, toast]);
-  // Parameter und Feststellungen in den Entscheiden der Prüfung speichern (für Abschluss/Export)
-  const hasAging = !!r?.aging;
+    try {
+      const res = await bsb().review.receivables(historyId, { ...p, assigned });
+      setR(res);
+      return res;
+    } catch (e) {
+      toast('error', (e as Error).message);
+      return null;
+    } finally {
+      setBusy(false);
+    }
+  };
+  // Nach dem Start: bei Änderung von Frist, Kursen, Listen oder Konten neu berechnen (kurz verzögert beim Tippen)
   useEffect(() => {
-    if (!hasAging) return;
-    update(d => ({ ...d, analyses: { ...d.analyses, receivables: params } }));
-  }, [params, hasAging, update]);
+    if (!started) return;
+    const t = setTimeout(() => void run(params), 300);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [started, params.termDays, params.rates, params.docIds, params.accounts, assignedKey]);
+  // Gestartete Analyse in den Entscheiden speichern (Abschluss legt sie als Nachweis ab)
+  useEffect(() => {
+    if (started) update(d => ({ ...d, analyses: { ...d.analyses, receivables: { ...params, assigned } } }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [started, params, assignedKey, update]);
 
-  const a = r?.aging;
-  const opDoc = docs.find(d => d.id === r?.docId);
+  const start = async () => {
+    const res = await run(params);
+    if (!res?.aging) return;
+    setStarted(true);
+    if (!params.findings.length) setParams(p => ({ ...p, findings: res.suggestions.map(text => ({ text, status: 'offen' as const })) }));
+  };
+  const discard = () => {
+    setStarted(false);
+    setR(null);
+    update(d => { const { receivables: _x, ...rest } = d.analyses ?? {}; return { ...d, analyses: rest }; });
+  };
+
+  const cands = info?.candidates ?? [];
+  const selDocs = params.docIds ?? [];
+  const accFromDocs = [...new Set(cands.filter(c => selDocs.includes(c.docId)).flatMap(c => c.accounts))];
+  const selAccounts = params.accounts?.length ? params.accounts : accFromDocs;
+  const a = started ? r?.aging : null;
+  const opDocOf = (i: AgingItem) => docs.find(d => d.id === ((i as AgingItem & { sourceDocId?: string }).sourceDocId ?? r?.docId));
   const customers = a?.customers ?? [];
   const top = customers.slice(0, 8);
   const rest = customers.slice(8);
   const diff = a && r?.balanceChf !== null && r?.balanceChf !== undefined ? a.totalChf - r.balanceChf : null;
   const custItems = a && cust !== null ? a.items.filter(i => `${i.customerNo}|${i.customerName}` === cust) : [];
-  const fileName = `${letter ? `${letter}.x_` : ''}Analyse_Fälligkeit.xlsx`;
+  const fileName = `${letter ? `${letter}.x_` : ''}Analyse_Fälligkeit`;
+  const exportParams = { ...params, assigned };
 
-  if (!r && busy) return <Spinner label="OP-Liste wird ausgewertet …" />;
-  if (r && !r.candidates.length && !r.docId) {
-    return <div className="card">Unter den Kundenunterlagen wurde keine Offenposten-Liste der Debitoren gefunden. Legen Sie die OP-Liste (Excel oder PDF) zu den Unterlagen und starten Sie die Prüfung erneut.</div>;
-  }
   return (
     <div className="stack" style={{ gap: 10 }}>
-      <div className="row source-row">
-        <label className="field inline"><span>OP-Liste</span>
-          <select value={params.docId ?? r?.docId ?? ''} onChange={e => setParams(p => ({ ...p, docId: e.target.value || null }))}>
-            {(r?.candidates ?? []).map(c => <option key={c.docId} value={c.docId}>{c.relPath}</option>)}
-            {docs.filter(d => !r?.candidates.some(c => c.docId === d.id)).map(d => <option key={d.id} value={d.id}>{d.relPath} (manuell)</option>)}
-          </select>
-        </label>
-        <label className="field inline"><span>Zahlungsfrist</span>
-          <input className="w-xs" type="number" min={0} max={365} value={params.termDays} onChange={e => setParams(p => ({ ...p, termDays: Math.max(0, Number(e.target.value) || 0) }))} aria-label="Zahlungsfrist in Tagen" /> Tage
-          <Info label="Zur Zahlungsfrist">Gilt für Posten ohne Fälligkeitsdatum in der Liste: fällig = Belegdatum + Frist. Überfälligkeit per Bilanzstichtag.</Info>
-        </label>
-        {(r?.currencies ?? []).filter(c => c !== 'CHF').map(c => (
-          <label key={c} className="field inline"><span>Kurs {c}</span>
-            <input className={`w-sm ${a?.missingRates.includes(c) ? 'missing' : ''}`} inputMode="decimal" placeholder="z. B. 0.93" defaultValue={params.rates[c] ?? ''}
-              onChange={e => { const v = Number(e.target.value.replace(',', '.')); setParams(p => ({ ...p, rates: { ...p.rates, [c]: v } })); }} aria-label={`Kurs ${c}`} />
+      {/* 1. Grundlage wählen: Listen (nur Belege, die Forderungskonten zugeordnet sind) und Konten für die Abstimmung */}
+      <div className="card setup-card">
+        <div className="row" style={{ alignItems: 'flex-start', gap: 24 }}>
+          <div className="grow">
+            <div className="small muted">OP-Liste(n) – Belege, die Konten der Forderungen L+L zugeordnet sind</div>
+            {!info ? <Spinner /> : cands.length === 0 ? (
+              <p className="warn small">Noch kein Beleg ist einem Forderungskonto zugeordnet. Ordnen Sie die OP-Liste im Belegverzeichnis den Konten zu (auch mehreren Konten).</p>
+            ) : cands.map(c => (
+              <label key={c.docId} className="pick-line">
+                <input type="checkbox" checked={selDocs.includes(c.docId)} onChange={e => setParams(p => ({ ...p, docIds: e.target.checked ? [...selDocs, c.docId] : selDocs.filter(x => x !== c.docId) }))} />
+                <span className="grow">{c.relPath}</span>
+                <span className="small muted">Konto {c.accounts.join(', ')}</span>
+                {!c.looksLikeOpList && <span className="flag" title="Sieht nicht wie eine OP-Liste aus">keine OP-Liste?</span>}
+              </label>
+            ))}
+          </div>
+          <div>
+            <div className="small muted">Abstimmung mit Konto</div>
+            {(info?.accountOptions ?? []).map(o => (
+              <label key={o.accountNumber} className="pick-line">
+                <input type="checkbox" checked={selAccounts.includes(o.accountNumber)} onChange={e => setParams(p => ({ ...p, accounts: e.target.checked ? [...selAccounts, o.accountNumber] : selAccounts.filter(x => x !== o.accountNumber) }))} />
+                <span>{o.accountNumber} {o.accountName}</span><span className="small muted">CHF {chf(o.balance)}</span>
+              </label>
+            ))}
+          </div>
+        </div>
+        <div className="row" style={{ marginTop: 8 }}>
+          <label className="field inline"><span>Zahlungsfrist</span>
+            <input className="w-xs" type="number" min={0} max={365} value={params.termDays} onChange={e => setParams(p => ({ ...p, termDays: Math.max(0, Number(e.target.value) || 0) }))} aria-label="Zahlungsfrist in Tagen" /> Tage
+            <Info label="Zur Zahlungsfrist">Gilt für Posten ohne Fälligkeitsdatum in der Liste: fällig = Belegdatum + Frist. Überfälligkeit per Bilanzstichtag.</Info>
           </label>
-        ))}
-        <span className="ml-auto" />
-        {busy && <Spinner />}
-        <button className="btn" disabled={!a} onClick={async () => { const p = await bsb().review.exportReceivables(historyId, params, fileName.replace('.x_', '_')); if (p) toast('ok', 'Fälligkeitsanalyse gespeichert.'); }}>Excel herunterladen</button>
+          {(r?.currencies ?? []).filter(c => c !== 'CHF').map(c => (
+            <label key={c} className="field inline"><span>Kurs {c}</span>
+              <input className={`w-sm ${a?.missingRates.includes(c) ? 'missing' : ''}`} inputMode="decimal" placeholder="z. B. 0.93" defaultValue={params.rates[c] ?? ''}
+                onChange={e => { const v = Number(e.target.value.replace(',', '.')); setParams(p => ({ ...p, rates: { ...p.rates, [c]: v } })); }} aria-label={`Kurs ${c}`} />
+            </label>
+          ))}
+          <span className="ml-auto" />
+          {busy && <Spinner />}
+          {!started ? (
+            <button className="btn btn-primary" disabled={!selDocs.length || busy} onClick={() => void start()}>Analyse starten</button>
+          ) : (
+            <>
+              <button className="link small" onClick={discard} title="Analyse nicht als Nachweis ablegen">Analyse verwerfen</button>
+              <button className="btn" disabled={!a} onClick={async () => { const f = await bsb().review.exportReceivables(historyId, exportParams, `${fileName.replace('.x_', '_')}.pptx`, 'pptx'); if (f) toast('ok', 'PowerPoint gespeichert.'); }}>PowerPoint herunterladen</button>
+              <button className="btn" disabled={!a} onClick={async () => { const f = await bsb().review.exportReceivables(historyId, exportParams, `${fileName.replace('.x_', '_')}.xlsx`, 'xlsx'); if (f) toast('ok', 'Excel gespeichert.'); }}>Excel herunterladen</button>
+            </>
+          )}
+        </div>
       </div>
 
+      {started && !a && busy && <Spinner label="OP-Liste wird ausgewertet …" />}
       {a && (
         <>
           <div className={`recon ${diff !== null && Math.abs(diff) > 100 ? 'bad' : 'ok'}`}>
             <span>Total OP-Liste <strong>CHF {chf(a.totalChf)}</strong></span>
-            <span>Saldo Forderungen L+L ({r?.balanceAccounts || '–'}) <strong>CHF {r?.balanceChf === null ? '–' : chf(r!.balanceChf)}</strong></span>
+            <span>Saldo Konto {r?.balanceAccounts || '–'} <strong>CHF {r?.balanceChf === null ? '–' : chf(r!.balanceChf)}</strong></span>
             <span>{diff === null ? '' : Math.abs(diff) <= 100 ? '✓ abgestimmt' : <>Differenz <strong>CHF {chf(diff)}</strong></>}</span>
             <Info label="Details zur OP-Liste">
               <dl>
-                <dt>Quelle</dt><dd>{opDoc?.relPath ?? r?.filename}</dd>
-                <dt>Stichtag Liste</dt><dd>{date(r?.listDate ?? null)}</dd>
+                {r?.lists.map(l => <Fragment key={l.docId}><dt>Liste</dt><dd>{l.filename} · {l.items} Posten · per {date(l.listDate)}</dd></Fragment>)}
                 <dt>Posten</dt><dd>{a.items.length} · {a.kpis.customers} Debitoren</dd>
                 {a.checks.map(c => <Fragment key={c.name}><dt>{c.name}</dt><dd>{c.passed ? '✓ ' : '✗ '}{c.message}</dd></Fragment>)}
               </dl>
@@ -156,11 +213,10 @@ function Receivables({ historyId, docs, decisions, update, letter }: {
           {a.checks.filter(c => !c.passed).length > 0 && <div className="problem"><ul>{a.checks.filter(c => !c.passed).map(c => <li key={c.name}>{c.message}</li>)}</ul></div>}
 
           <nav className="tabs sub" role="tablist">
-            {([['faelligkeit', 'Fälligkeitsanalyse'], ['posten', `Einzelposten (${a.items.length})`], ['feststellungen', `Feststellungen (${params.findings.filter(f => f.status === 'offen').length})`]] as [Sub, string][]).map(([k, l]) => (
+            {([['faelligkeit', 'Fälligkeitsanalyse'], ['posten', `Einzelposten (${a.items.length})`], ['feststellungen', `Feststellungen und Notiz (${params.findings.filter(f => f.status === 'offen').length})`]] as [Sub, string][]).map(([k, l]) => (
               <button key={k} role="tab" className={sub === k ? 'active' : ''} onClick={() => setSub(k)}>{l}</button>
             ))}
           </nav>
-
           {sub === 'faelligkeit' && (
             <>
               <div className="charts">
@@ -211,7 +267,7 @@ function Receivables({ historyId, docs, decisions, update, letter }: {
                     </tbody>
                   </table>
                 </div>
-                {cust && <CustomerPanel items={custItems} name={cust.split('|')[1] || cust.split('|')[0]!} file={opDoc?.absPath ?? null} item={item} setItem={setItem} onClose={() => setCust(null)} />}
+                {cust && <CustomerPanel items={custItems} name={cust.split('|')[1] || cust.split('|')[0]!} fileOf={i => opDocOf(i)?.absPath ?? null} item={item} setItem={setItem} onClose={() => setCust(null)} />}
               </div>
             </>
           )}
@@ -251,7 +307,11 @@ function Receivables({ historyId, docs, decisions, update, letter }: {
                   onKeyDown={e => { if (e.key === 'Enter' && newFinding.trim()) { setParams(p => ({ ...p, findings: [...p.findings, { text: newFinding.trim(), status: 'offen' }] })); setNewFinding(''); } }} />
                 <button className="btn" disabled={!newFinding.trim()} onClick={() => { setParams(p => ({ ...p, findings: [...p.findings, { text: newFinding.trim(), status: 'offen' }] })); setNewFinding(''); }}>+ Feststellung erfassen</button>
               </div>
-              <p className="small muted">Die Feststellungen erscheinen in der Analyse ({fileName}), die beim Abschliessen als Nachweis abgelegt wird.</p>
+              <label className="field note-field" style={{ marginTop: 8 }}>
+                <span>Notiz zum Prüfgebiet (erscheint in Excel und PowerPoint)</span>
+                <textarea rows={4} maxLength={2000} value={params.note ?? ''} onChange={e => setParams(p => ({ ...p, note: e.target.value }))} placeholder="z. B. Delkredere pauschal 5 % auf Inland, 10 % auf Ausland; Einzelwertberichtigung Muster AG geprüft." />
+              </label>
+              <p className="small muted">Feststellungen und Notiz erscheinen in der Analyse ({fileName}.xlsx und .pptx), die beim Abschliessen als Nachweis abgelegt wird.</p>
             </div>
           )}
         </>
@@ -260,8 +320,9 @@ function Receivables({ historyId, docs, decisions, update, letter }: {
   );
 }
 
-function CustomerPanel({ items, name, file, item, setItem, onClose }: { items: AgingItem[]; name: string; file: string | null; item: AgingItem | null; setItem: (i: AgingItem) => void; onClose: () => void }) {
+function CustomerPanel({ items, name, fileOf, item, setItem, onClose }: { items: AgingItem[]; name: string; fileOf: (i: AgingItem) => string | null; item: AgingItem | null; setItem: (i: AgingItem) => void; onClose: () => void }) {
   const sel = item ?? items.find(i => (i.daysOverdue ?? 0) > 0) ?? items[0] ?? null;
+  const file = sel ? fileOf(sel) : null;
   return (
     <aside className="panel preview-panel">
       <div className="panel-title"><h3>{name}</h3><span className="panel-nav"><button aria-label="Schliessen" onClick={onClose}>✕</button></span></div>

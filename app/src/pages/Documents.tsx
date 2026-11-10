@@ -23,7 +23,7 @@ function AssignBadge({ d }: { d: ViewDoc }) {
 
 export function Documents({ docs, accounts, filed, initialFilter, onAssign }: {
   docs: ViewDoc[]; accounts: ViewAccount[]; filed?: Record<string, Filed>; initialFilter?: DocFilter;
-  onAssign: (docId: string, accountNumber: string | null | undefined) => void;
+  onAssign: (docId: string, acc: string | string[] | null | undefined) => void;
 }) {
   const [filter, setFilter] = useState<DocFilter>(initialFilter ?? (docs.some(open) ? 'offen' : 'alle'));
   const [sort, setSort] = useState<Sort>('offen');
@@ -70,7 +70,7 @@ export function Documents({ docs, accounts, filed, initialFilter, onAssign }: {
   });
 
   // Nach dem Zuordnen direkt zum nächsten offenen Beleg
-  const assign = (docId: string, acc: string | null | undefined) => {
+  const assign = (docId: string, acc: string | string[] | null | undefined) => {
     const nextOpen = list.slice(idx + 1).find(d => open(d) && d.id !== docId) ?? list.find(d => open(d) && d.id !== docId);
     onAssign(docId, acc);
     if (acc !== undefined && filter === 'offen' && nextOpen) setSel(nextOpen.id);
@@ -124,12 +124,13 @@ export function Documents({ docs, accounts, filed, initialFilter, onAssign }: {
 
 function DocPanel({ d, accounts, filed, pos, count, prev, next, onAssign }: {
   d: ViewDoc; accounts: ViewAccount[]; filed?: Filed; pos: number; count: number; prev: () => void; next: () => void;
-  onAssign: (acc: string | null | undefined) => void;
+  onAssign: (acc: string | string[] | null | undefined) => void;
 }) {
   const [q, setQ] = useState('');
   const amounts = useMemo(() => new Set(d.amountSet ?? []), [d.amountSet]);
-  const current = d.manualAssignment ? (d.irrelevant ? null : d.accounts[0] ?? null) : d.accounts[0] ?? null;
-  const [pick, setPick] = useState<string | null>(current && current !== GENERAL_ACCOUNT ? current : null);
+  // Mehrfachauswahl: ein Beleg (z. B. OP-Liste) kann mehrere Konten belegen
+  const [pick, setPick] = useState<string[]>(d.accounts.filter(n => n !== GENERAL_ACCOUNT));
+  const toggle = (n: string) => setPick(p => (p.includes(n) ? p.filter(x => x !== n) : [...p, n]));
   // Vorschläge: Saldo kommt im Beleg vor; dann Konten ohne Nachweis; dann der Rest
   const rows = useMemo(() => {
     const t = q.trim().toLowerCase();
@@ -173,7 +174,7 @@ function DocPanel({ d, accounts, filed, pos, count, prev, next, onAssign }: {
 
       <div className="assign-box">
         <div className="row" style={{ justifyContent: 'space-between' }}>
-          <strong className="small">Beleg einem Konto zuordnen</strong>
+          <strong className="small">Beleg einem oder mehreren Konten zuordnen</strong>
           {d.manualAssignment && <button className="link small" onClick={() => onAssign(undefined)}>Zuordnung aufheben</button>}
         </div>
         <input type="search" placeholder="Konto suchen (Nummer, Bezeichnung oder Gruppe)" value={q} onChange={e => setQ(e.target.value)} aria-label="Konto suchen" />
@@ -184,8 +185,8 @@ function DocPanel({ d, accounts, filed, pos, count, prev, next, onAssign }: {
               {rows.map(a => {
                 const match = amounts.has(Math.abs(a.balance)) && a.balance !== 0;
                 return (
-                  <tr key={a.accountNumber} data-pick={a.accountNumber} className={pick === a.accountNumber ? 'selected' : ''} onClick={() => setPick(a.accountNumber)} onDoubleClick={() => onAssign(a.accountNumber)}>
-                    <td>{a.accountNumber}</td>
+                  <tr key={a.accountNumber} data-pick={a.accountNumber} className={pick.includes(a.accountNumber) ? 'selected' : ''} onClick={() => toggle(a.accountNumber)} onDoubleClick={() => onAssign([...new Set([...pick, a.accountNumber])])}>
+                    <td><input type="checkbox" checked={pick.includes(a.accountNumber)} readOnly tabIndex={-1} aria-label={`Konto ${a.accountNumber}`} /> {a.accountNumber}</td>
                     <td title={a.accountName}><span className={`dot ${a.status === 'BELEGT' ? 'ok' : a.status === 'PRUEFEN' ? 'warn' : a.status === 'KEIN_NACHWEIS' ? 'bad' : 'grey'}`} /> {a.accountName}{match && <span className="flag match" title="Dieser Saldo kommt im Beleg vor">Betrag passt</span>}</td>
                     <td className="num">{a.balancePreviousYear === null ? '' : chf(a.balancePreviousYear)}</td>
                     <td className="num">{chf(a.balance)}</td>
@@ -197,7 +198,7 @@ function DocPanel({ d, accounts, filed, pos, count, prev, next, onAssign }: {
           </table>
         </div>
         <div className="actions-row">
-          <button className="btn btn-primary grow" disabled={!pick} onClick={() => pick && onAssign(pick)}>Beleg zuordnen{pick ? ` → ${pick}` : ''}</button>
+          <button className="btn btn-primary grow" disabled={!pick.length} onClick={() => onAssign(pick)}>Beleg zuordnen{pick.length ? ` → ${pick.join(', ')}` : ''}</button>
           <button className="btn" onClick={() => onAssign(GENERAL_ACCOUNT)} title="Belege ohne Konto, z. B. HR-Auszug, Statuten">Allgemein (A)</button>
           <button className="btn" onClick={() => onAssign(null)}>Nicht relevant</button>
         </div>

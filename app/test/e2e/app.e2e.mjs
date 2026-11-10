@@ -180,6 +180,12 @@ assert.ok(Object.keys(savedDec.assignments).length >= 2);
 
 // ---------------- Prüfgebiete: Forderungen L+L – Fälligkeitsanalyse ----------------
 await page.getByRole('tab', { name: 'Prüfgebiete' }).click();
+// Nur Belege, die Forderungskonten zugeordnet sind, stehen zur Auswahl; die Analyse startet erst auf Knopfdruck
+await page.locator('.pick-line', { hasText: 'OP_Debitoren' }).waitFor();
+assert.equal(await page.locator('.recon').count(), 0, 'Analyse darf nicht automatisch laufen');
+assert.equal(await page.locator('.pick-line', { hasText: 'Kreditoren_OP' }).count(), 0);
+await page.screenshot({ path: `${shots}-8a-vor-start.png` });
+await page.getByRole('button', { name: 'Analyse starten' }).click();
 await page.locator('.recon').waitFor();
 assert.match(await page.locator('.recon').innerText(), /87'640\.20[\s\S]*✓ abgestimmt/);
 assert.equal(await page.locator('table.kunden tr[data-kunde]').count(), 4);
@@ -188,6 +194,7 @@ await page.locator('.preview-panel .viewer').waitFor();
 await page.locator('.preview-panel tr.hl-row').first().waitFor({ timeout: 20_000 });
 await page.screenshot({ path: `${shots}-8-pruefgebiete.png` });
 await page.getByRole('tab', { name: /Feststellungen/ }).click();
+await page.locator('.note-field textarea').fill('Delkredere pauschal 5 % – angemessen.');
 await page.getByPlaceholder(/Neue Feststellung/).fill('Saldenbestätigung Meier AG einholen');
 await page.getByRole('button', { name: '+ Feststellung erfassen' }).click();
 await page.locator('.finding', { hasText: 'Meier AG' }).waitFor();
@@ -209,6 +216,7 @@ assert.ok(assigned.filter(f => /^[A-Z]+\d*\.\d+_/.test(f)).length >= 12, 'Datein
 assert.ok(assigned.includes(`A.1_${generalDoc.split('/').pop()}`), 'Allgemeine Prüfungen mit Register A');
 const ana = assigned.find(f => /^E\.\d+_Analyse_Fälligkeit\.xlsx$/.test(f));
 assert.ok(ana, 'Fälligkeitsanalyse als Nachweis abgelegt');
+assert.ok(assigned.includes(ana.replace(/\.xlsx$/, '.pptx')), 'PowerPoint mit gleicher Nummer abgelegt');
 const ubs = assigned.find(f => /^B\.\d+_Bank_UBS_Kontoauszug\.pdf$/.test(f));
 assert.ok(ubs, 'Bankauszug mit Register B');
 assert.ok(readFileSync(path.join(target, '01_Zugeordnet', ubs)).length > readFileSync(path.join(FIX, 'Kunde_Upload', 'Bank', 'UBS', 'Kontoauszug.pdf')).length, 'Notizseite vorangestellt');

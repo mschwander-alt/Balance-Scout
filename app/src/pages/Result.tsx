@@ -7,7 +7,7 @@ import { FLAG_LABEL, Info, Modal, Spinner, StatusBadge, WarnIcon, useToast } fro
 import { DocumentPreview } from '../components/DocumentPreview';
 import { Documents } from './Documents';
 import { AuditAreas } from './AuditAreas';
-import { GENERAL_ACCOUNT, accountLabel, deriveView, groupAccounts, type ViewAccount, type ViewDoc } from '../review';
+import { GENERAL_ACCOUNT, accountLabel, targetsOf, deriveView, groupAccounts, type ViewAccount, type ViewDoc } from '../review';
 
 type Tab = 'konten' | 'erfolg' | 'belege' | 'gebiete' | 'saldobilanz' | 'diagnose';
 const isER = (a: { category: string }) => a.category === 'aufwand' || a.category === 'ertrag' || a.category === 'abschluss';
@@ -110,10 +110,24 @@ export function Result({ result: initial, onRepeat }: { result: AuditResult; onR
     const { [a.accountNumber]: _x, ...rest } = d.accepted ?? {};
     return { ...d, accepted: rest };
   });
-  const assign = (docId: string, accountNumber: string | null | undefined) => update(d => {
+  // Zuordnung: ein Konto, mehrere Konten (Array), null = nicht relevant, undefined = aufheben
+  const assign = (docId: string, acc: string | string[] | null | undefined) => update(d => {
     const { [docId]: _x, ...rest } = d.assignments ?? {};
-    return { ...d, assignments: accountNumber === undefined ? rest : { ...rest, [docId]: { accountNumber, at: now(), visum: needVisum() } } };
+    if (acc === undefined || (Array.isArray(acc) && !acc.length)) return { ...d, assignments: rest };
+    const list = Array.isArray(acc) ? acc : acc === null ? [] : [acc];
+    return { ...d, assignments: { ...rest, [docId]: { accountNumber: list[0] ?? null, ...(list.length > 1 ? { accountNumbers: list } : {}), at: now(), visum: needVisum() } } };
   });
+  // Vom Konto aus: Beleg zusätzlich diesem Konto zuordnen (bestehende manuelle Zuordnung bleibt)
+  const assignAlso = (docId: string, num: string) => {
+    const cur = decisions.assignments?.[docId];
+    const prev = cur ? targetsOf(cur) : [];
+    assign(docId, [...new Set([...prev, num])]);
+  };
+  const unassignFrom = (docId: string, num: string) => {
+    const cur = decisions.assignments?.[docId];
+    const next = cur ? targetsOf(cur).filter(n => n !== num) : [];
+    assign(docId, next.length ? next : undefined);
+  };
   const setNote = (num: string, text: string) => update(d => {
     const { [num]: _x, ...rest } = d.notes ?? {};
     return { ...d, notes: text.trim() ? { ...rest, [num]: { text, at: now(), visum: needVisum() } } : rest };
@@ -229,7 +243,7 @@ export function Result({ result: initial, onRepeat }: { result: AuditResult; onR
               note={decisions.notes?.[sel.accountNumber]} accepted={decisions.accepted?.[sel.accountNumber]}
               nav={navInfo(sel.accountNumber)}
               onAccept={() => accept(sel)} onUnaccept={() => unaccept(sel)} onNote={t => setNote(sel.accountNumber, t)}
-              onAssign={docId => assign(docId, sel.accountNumber)} onUnassign={docId => assign(docId, undefined)} onClose={() => setOpen(null)}
+              onAssign={docId => assignAlso(docId, sel.accountNumber)} onUnassign={docId => unassignFrom(docId, sel.accountNumber)} onClose={() => setOpen(null)}
             />
           )}
         </div>
@@ -432,7 +446,9 @@ function AccountPanel({ a, docs, filedPath, note, accepted, nav, onAccept, onUna
   const c = manualDoc ? undefined : all[idx];
   const file = manualDoc ? manualDoc.absPath : c ? c.newPath ?? c.absPath : null;
   const doc = docs.find(d => d.id === (manualDoc?.id ?? c?.documentId));
-  const candidatesToAssign = docs.filter(d => !d.assigned && !d.irrelevant);
+  // Auch bereits zugeordnete Belege wählbar (ein Beleg kann mehrere Konten belegen, z. B. OP-Liste für 1100 und 1101)
+  const candidatesToAssign = docs.filter(d => !d.irrelevant && !d.accounts.includes(a.accountNumber))
+    .sort((x, y) => Number(x.assigned) - Number(y.assigned) || x.relPath.localeCompare(y.relPath, 'de'));
   // Nur bei Problemen sichtbar
   const problems: string[] = [];
   if (a.status === 'PRUEFEN' || a.status === 'KEIN_NACHWEIS') problems.push(...a.reasons.filter(r => !/Texterkennung|Scan/i.test(r)));
@@ -484,8 +500,8 @@ function AccountPanel({ a, docs, filedPath, note, accepted, nav, onAccept, onUna
       </div>
       {showAssign && !manualDoc && (
         <select className="assign" style={{ maxWidth: '100%' }} value="" onChange={e => { if (e.target.value) { onAssign(e.target.value); setShowAssign(false); } }}>
-          <option value="">– Beleg ohne Zuordnung wählen –</option>
-          {candidatesToAssign.map(d => <option key={d.id} value={d.id}>{d.relPath}</option>)}
+          <option value="">– Beleg wählen –</option>
+          {candidatesToAssign.map(d => <option key={d.id} value={d.id}>{d.relPath}{d.assigned ? ` (bereits: ${d.accounts.map(accountLabel).join(', ')})` : ''}</option>)}
         </select>
       )}
       {showNote && (
