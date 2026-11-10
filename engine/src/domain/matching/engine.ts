@@ -11,6 +11,10 @@ export interface MatchAccount {
   accountName: string;
   balance: Cents;
   category: Category;
+  /** Kontowährung (aus dem Kontoblatt); bei Fremdwährung wird der Saldo in dieser Währung abgeglichen */
+  currency?: string;
+  /** Saldo in Kontowährung (nur bei Fremdwährung) */
+  fxBalance?: Cents | null;
 }
 
 export interface MatchDocument {
@@ -131,7 +135,13 @@ export function runMatching(
       continue;
     }
 
-    const target = Math.abs(acc.balance);
+    // Fremdwährungskonto: Abgleich Fremdwährungssaldo ↔ Fremdwährungsbetrag im Nachweis
+    const fx = acc.currency && acc.currency !== 'CHF' && acc.fxBalance !== null && acc.fxBalance !== undefined;
+    if (fx && acc.fxBalance === 0) {
+      results.push({ ...base, status: 'NULLSALDO', best: null, candidates: [], reasons: [`Saldo ${acc.currency} 0 – kein Nachweis erforderlich.`] });
+      continue;
+    }
+    const target = Math.abs(fx ? acc.fxBalance! : acc.balance);
     const tol = Math.max(params.absoluteToleranceCents, Math.round(target * params.relativeTolerance));
     const allowedDocs = params.assignments?.[acc.id];
     const lo = Math.floor((target - tol) / 100) - 1;
@@ -156,7 +166,9 @@ export function runMatching(
     if (r.status === 'NICHT_IM_UMFANG' || r.status === 'NULLSALDO') continue;
     const b = r.best;
     if (!b) {
-      r.reasons.push(`Kein Betrag ${formatChf(Math.abs(r.balance))} (±Toleranz) in den Belegen gefunden.`);
+      const acc = accounts.find(a => a.id === r.accountId);
+      const isFx = acc?.currency && acc.currency !== 'CHF' && acc.fxBalance !== null && acc.fxBalance !== undefined;
+      r.reasons.push(isFx ? `Kein Betrag ${acc!.currency} ${formatChf(Math.abs(acc!.fxBalance!))} (±Toleranz) in den Belegen gefunden.` : `Kein Betrag ${formatChf(Math.abs(r.balance))} (±Toleranz) in den Belegen gefunden.`);
       continue;
     }
     const blocking = b.flags.filter(f => BLOCKING_FLAGS.has(f));
@@ -288,9 +300,13 @@ function scoreCandidate(
       reasons.push(`Stichtag Beleg ${ins.balanceDate} ≠ Bilanzstichtag ${params.closingDate}`);
     }
   }
-  if (c.context.currency && c.context.currency !== 'CHF' && !/\b(EUR|USD|GBP)\b/i.test(acc.accountName)) {
+  const accCur = acc.currency ?? (/\b(EUR|USD|GBP)\b/i.exec(acc.accountName)?.[1]?.toUpperCase() ?? 'CHF');
+  if (c.context.currency && c.context.currency !== accCur) {
     flags.push('CURRENCY_MISMATCH');
-    reasons.push(`Währung im Beleg: ${c.context.currency}`);
+    reasons.push(`Währung im Beleg: ${c.context.currency}, Kontowährung ${accCur}`);
+  } else if (c.context.currency && accCur !== 'CHF' && c.context.currency === accCur) {
+    score += 10;
+    reasons.push(`Währung ${accCur} im Beleg passt zur Kontowährung (+10)`);
   }
 
   return {

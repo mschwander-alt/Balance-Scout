@@ -32,6 +32,10 @@ export interface RunInput {
   targetDir: string | null;
   fileMode?: FileMode;
   absoluteToleranceCents?: Cents;
+  /** Kontoblätter (PDF mit Textebene oder Excel) – für Fremdwährungskonten, Anlagespiegel usw.; kein Nachweis */
+  ledgerPaths?: string[];
+  /** Fremdwährungskurse per Stichtag (CHF je Einheit), z. B. aus der ESTV-Kursliste */
+  fxRates?: { date: string | null; rates: Record<string, number>; source: string };
   scope?: 'balance_sheet' | 'all';
   ocr?: OcrOptions;
   onProgress?: (p: Progress) => void;
@@ -66,6 +70,21 @@ export interface DocumentSummary {
   notePlacement?: PlacementResult | null;
 }
 
+export interface AccountLedgerInfo {
+  currency: string;
+  /** Saldo laut Kontoblatt in Kontowährung */
+  closing: Cents | null;
+  opening: Cents | null;
+  consistent: boolean;
+  /** Fremdwährung: Kurs, CHF-Wert zum Kurs, Bewertungsdifferenz (Buchwert CHF − CHF zum Kurs) */
+  rate: number | null;
+  rateSource: string | null;
+  chfAtRate: Cents | null;
+  valuationDiff: Cents | null;
+  /** CHF-Konto: Saldo Kontoblatt − Saldo Saldobilanz */
+  tbDiff: Cents | null;
+}
+
 export interface RunResult {
   input: Omit<RunInput, 'onProgress'>;
   startedAt: Date;
@@ -73,6 +92,10 @@ export interface RunResult {
   accounts: ClassifiedAccount[];
   validation: ValidationReport;
   trialBalance: Pick<LoadedTrialBalance, 'parts' | 'excluded' | 'digitStats' | 'suggestedDigits'>;
+  /** Kontoblätter (zusammengeführt) */
+  ledger: import('./ingest/ledger.js').Ledger | null;
+  /** Fremdwährung und Abstimmung Kontoblatt je Konto (Kontonummer -> Angaben) */
+  accountLedger: Record<string, AccountLedgerInfo>;
   match: MatchOutput;
   documents: DocumentSummary[];
   byAccount: Map<string, AccountResult>;
@@ -141,6 +164,46 @@ export async function runAudit(input: RunInput): Promise<RunResult> {
       docs.push(await readDocument(f.absPath, f.relPath, { ocr, onProgress: m => progress({ phase: 'lesen', message: m, current: i + 1, total: evidenceFiles.length }) }));
     }
 
+    // 3b. Kontoblätter: ausdrücklich angegebene sowie im Kundenordner erkannte – sie sind kein Nachweis
+    const { parseLedger, looksLikeLedger } = await import('./ingest/ledger.js');
+    const ledgerDocs: EvidenceDocument[] = [];
+    for (const [i, lp] of (input.ledgerPaths ?? []).entries()) {
+      progress({ phase: 'lesen', message: `Kontoblätter ${path.basename(lp)}`, current: i + 1, total: input.ledgerPaths!.length });
+      ledgerDocs.push(await readDocument(lp, path.basename(lp), { ocr, maxOcrPages: 0 })); // ohne Texterkennung (grosse Dateien)
+    }
+    // Kontoblätter im Kundenordner bleiben im Belegverzeichnis, werden aber nicht für den Abgleich verwendet
+    const ledgerIds = new Set<string>();
+    for (const d of docs) if (looksLikeLedger(d.lines)) { ledgerIds.add(d.id); ledgerDocs.push(d); }
+    const ledgers = ledgerDocs.map(d => parseLedger(d.lines, { pageLabels: d.pageLabels, source: d.filename }));
+    const ledger = ledgers.length ? {
+      accounts: ledgers.flatMap(l => l.accounts), period: ledgers[0]!.period, baseCurrency: ledgers[0]!.baseCurrency,
+      warnings: ledgers.flatMap(l => l.warnings), sources: ledgerDocs.map(d => d.relPath),
+    } : null;
+    const norm = (n: string) => n.replace(/\D/g, '').replace(/^0+/, '');
+    const ledgerBy = new Map((ledger?.accounts ?? []).map(a => [norm(a.accountNumber), a]));
+    const accountLedger: Record<string, AccountLedgerInfo> = {};
+    for (const a of accounts) {
+      const la = ledgerBy.get(norm(a.accountNumber));
+      if (!la) continue;
+      const fx = la.currency !== 'CHF';
+      const rate = fx ? input.fxRates?.rates[la.currency] ?? null : null;
+      const chfAtRate = fx && rate !== null && la.closing !== null ? Math.round(la.closing * rate) : null;
+      accountLedger[a.accountNumber] = {
+        currency: la.currency, closing: la.closing, opening: la.opening, consistent: la.consistent,
+        rate, rateSource: rate !== null ? input.fxRates?.source ?? null : null, chfAtRate,
+        valuationDiff: chfAtRate !== null ? a.balanceCurrentYear - chfAtRate : null,
+        tbDiff: !fx && la.closing !== null ? la.closing - a.balanceCurrentYear : null,
+      };
+    }
+
+    // Hinweise aus den Kontoblättern in die Saldobilanz-Prüfung übernehmen
+    for (const w of ledger?.warnings ?? []) validation.issues.push({ rowIndex: 0, severity: 'warning', code: 'LEDGER_CHECK', message: `Kontoblätter: ${w}` });
+    for (const a of accounts) {
+      const li = accountLedger[a.accountNumber];
+      if (li?.tbDiff) validation.issues.push({ rowIndex: a.rowIndex, source: a.source, severity: 'warning', code: 'LEDGER_TB_DIFF', message: `Konto ${a.accountNumber}: Saldo Kontoblatt weicht von der Saldobilanz ab (Differenz ${(li.tbDiff / 100).toFixed(2)}).` });
+      if (li && li.currency !== 'CHF' && li.rate === null) validation.issues.push({ rowIndex: a.rowIndex, source: a.source, severity: 'warning', code: 'FX_RATE_MISSING', message: `Konto ${a.accountNumber} wird in ${li.currency} geführt – Kurs per Stichtag fehlt (Kursliste laden oder Kurs erfassen).` });
+    }
+
     // 4. Abgleich
     progress({ phase: 'abgleich', message: 'Salden werden abgeglichen …' });
     const facts = new Map(docs.map(d => [d.id, detectBalanceDate(d, input.closingDate)]));
@@ -149,6 +212,7 @@ export async function runAudit(input: RunInput): Promise<RunResult> {
     const keyAmount = new Map<string, DocumentSummary['keyAmount']>();
     const amountSet = new Map<string, number[]>();
     for (const d of docs) {
+      if (ledgerIds.has(d.id)) { amountCount.set(d.id, 0); amountSet.set(d.id, []); keyAmount.set(d.id, null); continue; }
       const a = extractAmounts(d.id, d.lines);
       amountCount.set(d.id, a.length);
       amounts.push(...a);
@@ -159,7 +223,10 @@ export async function runAudit(input: RunInput): Promise<RunResult> {
       amountSet.set(d.id, [...new Set(a.map(x => Math.abs(x.cents)))].slice(0, 400));
     }
     const match = runMatching(
-      accounts.map(a => ({ id: `${a.accountNumber}#${a.rowIndex}`, accountNumber: a.accountNumber, accountName: a.accountName, balance: a.balanceCurrentYear, category: a.category })),
+      accounts.map(a => ({
+        id: `${a.accountNumber}#${a.rowIndex}`, accountNumber: a.accountNumber, accountName: a.accountName, balance: a.balanceCurrentYear, category: a.category,
+        currency: accountLedger[a.accountNumber]?.currency, fxBalance: accountLedger[a.accountNumber]?.currency !== 'CHF' ? accountLedger[a.accountNumber]?.closing ?? null : null,
+      })),
       docs.map(d => ({ id: d.id, filename: d.filename, insight: { balanceDate: facts.get(d.id)?.date ?? null, verifiedBalances: [] } })),
       amounts,
       {
@@ -193,7 +260,7 @@ export async function runAudit(input: RunInput): Promise<RunResult> {
 
     const documents: DocumentSummary[] = docs.map(d => ({
       doc: d,
-      docType: guessDocType(d),
+      docType: ledgerIds.has(d.id) ? 'Kontoblatt (kein Nachweis)' : guessDocType(d),
       balanceDate: facts.get(d.id)?.date ?? null,
       balanceDateEvidence: facts.get(d.id)?.evidence ?? null,
       amountCount: amountCount.get(d.id) ?? 0,
@@ -216,6 +283,7 @@ export async function runAudit(input: RunInput): Promise<RunResult> {
       accounts,
       validation,
       trialBalance: { parts: tb.parts, excluded: tb.excluded, digitStats: tb.digitStats, suggestedDigits: tb.suggestedDigits },
+      ledger, accountLedger,
       match,
       documents,
       byAccount: new Map(match.results.map(r => [r.accountId, r])),

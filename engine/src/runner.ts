@@ -24,6 +24,8 @@ export type Request =
   | { id: string; type: 'run'; input: Omit<RunInput, 'onProgress'>; reportDir: string; snapshotPath?: string }
   | { id: string; type: 'finalize'; snapshotPath: string; decisions: ReviewDecisions; targetDir: string | null; fileMode: FileMode; reportDir: string }
   | { id: string; type: 'groups' }
+  /** ESTV-Kursliste (PDF) lesen */
+  | { id: string; type: 'rates'; path: string }
   /** Vertiefte Prüfung Forderungen: Fälligkeitsanalyse (optional als Excel speichern) */
   | { id: string; type: 'receivables'; snapshotPath: string; docId?: string | null; docIds?: string[]; accounts?: string[]; assigned?: Record<string, string[]>; termDays?: number; rates?: Record<string, number>; exportPath?: string; exportFormat?: 'xlsx' | 'pptx'; findings?: { text: string; status: 'offen' | 'erledigt' }[]; visum?: string; note?: string };
 
@@ -82,6 +84,7 @@ export function serializeResult(res: RunResult, excelPath: string, diagnostics: 
       return {
         accountNumber: a.accountNumber, accountName: a.accountName, groupName: a.groupName, groupCode: a.groupCode, groupSource: a.groupSource,
         source: a.source ?? null, category: a.category, manual: res.review?.manual.get(a.accountNumber) ?? null,
+        fx: res.accountLedger?.[a.accountNumber] ?? null,
         balance: a.balanceCurrentYear, balancePreviousYear: a.balancePreviousYear, status: m.status, reasons: m.reasons,
         best: m.best ? withDoc(m.best) : null,
         candidates: m.candidates.slice(1).map(withDoc),
@@ -101,6 +104,8 @@ export function serializeResult(res: RunResult, excelPath: string, diagnostics: 
     trialBalance: res.trialBalance ? { parts: res.trialBalance.parts.map(p => ({ id: p.id, label: p.label, accountCount: p.accountCount, status: p.status })), excluded: res.trialBalance.excluded } : null,
     finalized: !!excelPath,
     analysisFiles: res.analysisFiles ?? [],
+    ledger: res.ledger ? { accounts: res.ledger.accounts.length, fxAccounts: res.ledger.accounts.filter(a => a.currency !== 'CHF').length, consistent: res.ledger.accounts.filter(a => a.consistent).length, warnings: res.ledger.warnings, sources: (res.ledger as { sources?: string[] }).sources ?? [] } : null,
+    fxRates: res.input.fxRates ?? null,
   };
 }
 export type SerializedResult = ReturnType<typeof serializeResult>;
@@ -109,6 +114,21 @@ async function handle(req: Request): Promise<unknown> {
   if (req.type === 'previewTrialBalance') return previewTrialBalance(req);
   if (req.type === 'preview') return renderPreview(req.absPath, req.page);
   if (req.type === 'groups') return { groups: KMU_GROUPS.map(g => ({ code: g.code, name: g.name, category: g.category, subcategory: g.subcategory })), letters: defaultGroupLetters(), general: { code: 'ALLG', name: 'Allgemeine Prüfungen (Belege ohne Konto)', account: '@allgemein' } };
+  if (req.type === 'rates') {
+    const { readDocument } = await import('./ingest/readDocument.js');
+    const { parseEstvRates, looksLikeRateList } = await import('./ingest/fxRates.js');
+    const { LocalOcr } = await import('./ingest/ocr.js');
+    const ocr = new LocalOcr();
+    try {
+      const d = await readDocument(req.path, path.basename(req.path), { ocr, maxOcrPages: 0 });
+      if (!looksLikeRateList(d.lines)) throw new Error('Die Datei sieht nicht wie eine ESTV-Kursliste aus (Devisen – Banknoten).');
+      const r = parseEstvRates(d.lines, `ESTV Kursliste ${path.basename(req.path)}`);
+      if (!Object.keys(r.rates).length) throw new Error('In der Datei wurden keine Kurse gefunden.');
+      return r;
+    } finally {
+      await ocr.close();
+    }
+  }
   if (req.type === 'receivables') {
     const res = await loadSnapshot(req.snapshotPath);
     const { receivablesFor } = await import('./analysis/receivables.js');

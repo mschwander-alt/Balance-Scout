@@ -52,6 +52,17 @@ Hinweis: Das ist eine feste, nachvollziehbare Regelbasis, keine KI.
   **anderer Stichtag im Beleg**, **Betrag aus Texterkennung**.
 - Stichtag wird im Beleg gesucht (`31.12.2025`, `31.12.25`, `31. Dezember 2025`, `2025-12-31`).
 
+## Kontoblätter und Fremdwährung
+- **Kontoblätter** (Abacus, Navision/Business Central; PDF mit Textebene oder Excel, auch mehrere hundert Seiten –
+  rund 400 Seiten in unter 10 Sekunden): je Konto Währung, Saldovortrag, Buchungen (mit Gegenkonto, falls vorhanden),
+  Schlusssaldo und Selbstkontrolle (Saldovortrag + Buchungen = Schlusssaldo). Gescannte Kontoblätter werden nicht
+  automatisch per Texterkennung gelesen. Kontoblätter sind **kein Nachweis** – liegen sie im Kundenordner, werden sie
+  erkannt und vom Abgleich ausgenommen.
+- **Fremdwährungskonten** (Währung laut Kontoblatt): Abgleich Fremdwährungssaldo ↔ Fremdwährungsbetrag im Nachweis;
+  **Bewertung** Buchwert CHF ↔ Saldo FW × Kurs per Stichtag (Bewertungsdifferenz). CHF-Konten: Kontoblatt ↔ Saldobilanz.
+- **ESTV-Kursliste** (PDF „Devisen – Banknoten“ per 31.12.) wird gelesen (Kurs je 1 Einheit, auch bei 100er-Notierung);
+  in der App einmal jährlich laden, unterjährig Kurse manuell erfassen.
+
 ## Durchsicht und Abschluss
 Die Analyse legt noch nichts ab. Erst nach der Durchsicht (`finalizeAudit`) entstehen Ablage und Excel:
 - **Akzeptieren:** Konto „Prüfen“ → „Belegt“ (mit Visum, Datum, Kommentar).
@@ -93,7 +104,7 @@ Zwei realistische Testsätze mit vorab festgelegter Soll-Lösung (`test/fixtures
   Gruppen- und Totalzeilen: mit 4 Ziffern exakt die 27 Konten, gleiches Prüfergebnis.
 - **Durchsicht/Abschluss:** Akzeptieren, manuelle Zuordnung, Register-Präfix, Notizseite im PDF, Notiz-PDF, Excel-Spalten.
 
-`npm test` – 120 Tests (inkl. künstlicher OP-Listen im Aufbau von Abacus, Navision-Scan und Business Central) (Beträge, Saldobilanz, Abgleich, Testsätze, Ablage, Datumserkennung, Excel, Diagnose, Belegvorschau und Fundstellen-Positionen).
+`npm test` – 128 Tests (inkl. künstlicher OP-Listen im Aufbau von Abacus, Navision-Scan und Business Central) (Beträge, Saldobilanz, Abgleich, Testsätze, Ablage, Datumserkennung, Excel, Diagnose, Belegvorschau und Fundstellen-Positionen).
 
 ## Belegvorschau
 `renderPreview(datei, seite)` liefert die Seite als Bild (PDF, Scan, Foto, Bild in Excel), als Tabelle (Excel, CSV)

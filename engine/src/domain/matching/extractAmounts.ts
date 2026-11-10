@@ -30,7 +30,7 @@ const IBAN_RX = /\b[A-Z]{2}\d{2}(?:\s?[A-Z0-9]{4}){3,7}(?:\s?[A-Z0-9]{1,4})?\b/g
 const TIME_RX = /\b\d{1,2}:\d{2}(?::\d{2})?\b/g;
 const PERCENT_RX = /\d+(?:[.,]\d+)?\s?%/g;
 const BALANCE_KW = /\b(saldo|schlusssaldo|endsaldo|kontostand|total|bestand|schlussbestand|guthaben|balance|closing|stand per|saldo per)\b/i;
-const CURRENCY_RX = /\b(CHF|EUR|USD|GBP)\b/;
+const CURRENCY_RX = /\b(CHF|EUR|USD|GBP|JPY|CAD|AUD|SEK|NOK|DKK|PLN|CZK|HUF|CNY|HKD|SGD)\b/;
 
 /**
  * Findet Beträge in Belegzeilen. Datumswerte, IBAN, Uhrzeiten, Prozente und

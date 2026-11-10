@@ -128,6 +128,8 @@ export async function writeExcelReport(res: RunResult, filePath: string): Promis
     ['Erstellt am', res.finishedAt, 'dd.mm.yyyy hh:mm'],
     ['Erstellt durch', 'Balance Scout – automatische Vorbereitung'],
     ['Verantwortliche Prüferin / Prüfer', ''],
+    ['Kontoblätter', res.ledger ? `${res.ledger.accounts.length} Konten (${res.ledger.accounts.filter(x => x.currency !== 'CHF').length} in Fremdwährung)` : '–'],
+    ['Fremdwährungskurse', res.input.fxRates ? `${res.input.fxRates.source}${res.input.fxRates.date ? ` per ${res.input.fxRates.date.split('-').reverse().join('.')}` : ''}` : '–'],
     ['Regelwerk', `${res.match.summary.engineVersion}, Toleranz CHF ${(res.match.summary.params.absoluteToleranceCents / 100).toFixed(2)}`],
   ];
   meta.forEach(([k, v, fmt], i) => {
@@ -226,6 +228,8 @@ export async function writeExcelReport(res: RunResult, filePath: string): Promis
     { name: 'Stichtag Beleg', width: 12 }, { name: 'Bemerkung (automatisch)', width: 44 },
     { name: 'Prüfer-Entscheid', width: 15 }, { name: 'Kommentar Prüfer', width: 40 }, { name: 'Visum', width: 8 }, { name: 'Datum', width: 11 },
     { name: 'Register', width: 9 }, { name: 'Gruppe (KMU-Kontenrahmen)', width: 34 },
+    { name: 'Währung', width: 9 }, { name: 'Saldo Fremdwährung', width: 16 }, { name: 'Kurs (CHF)', width: 11 },
+    { name: 'CHF zum Kurs', width: 15 }, { name: 'Bewertungsdifferenz CHF', width: 15 },
   ], 15, 18);
   const rv = res.review;
   res.accounts.forEach((a, i) => {
@@ -263,8 +267,24 @@ export async function writeExcelReport(res: RunResult, filePath: string): Promis
     }
     ws.getCell(row, 19).value = b ? rv?.registers.get(b.documentId) ?? null : null;
     ws.getCell(row, 20).value = a.groupName ? `${a.groupName}${a.groupSource === 'bezeichnung' ? ' (aus Bezeichnung)' : ''}` : null;
+    // Fremdwährung (aus dem Kontoblatt): Abgleich in Fremdwährung, Bewertung zum Stichtagskurs
+    const fx = res.accountLedger?.[a.accountNumber];
+    const isFx = !!fx && fx.currency !== 'CHF';
+    if (fx) {
+      ws.getCell(row, 21).value = fx.currency;
+      if (isFx) {
+        ws.getCell(row, 22).value = fx.closing === null ? null : fx.closing / 100;
+        ws.getCell(row, 23).value = fx.rate;
+        ws.getCell(row, 24).value = fx.rate !== null && fx.closing !== null ? { formula: `ROUND(V${row}*W${row},2)`, result: (fx.chfAtRate ?? 0) / 100 } : null;
+        ws.getCell(row, 25).value = fx.rate !== null && fx.closing !== null ? { formula: `ROUND(E${row}-X${row},2)`, result: (fx.valuationDiff ?? 0) / 100 } : null;
+        for (const c of [22, 24, 25]) ws.getCell(row, c).numFmt = CHF;
+        ws.getCell(row, 23).numFmt = '0.000000';
+      }
+    }
     const hasDiff = b && Number.isFinite(b.evidenceCents);
-    ws.getCell(row, 12).value = hasDiff
+    if (hasDiff && isFx && fx!.closing !== null) {
+      ws.getCell(row, 12).value = { formula: `IF(OR(K${row}="",V${row}=""),"",ROUND(ABS(K${row})-ABS(V${row}),2))`, result: Math.round(Math.abs(b!.evidenceCents) - Math.abs(fx!.closing)) / 100 };
+    } else ws.getCell(row, 12).value = hasDiff
       ? { formula: `IF(OR(K${row}="",E${row}=""),"",ROUND(ABS(K${row})-ABS(E${row}),2))`, result: Math.round(Math.abs(b!.evidenceCents) - Math.abs(a.balanceCurrentYear)) / 100 }
       : { formula: `IF(OR(K${row}="",E${row}=""),"",ROUND(ABS(K${row})-ABS(E${row}),2))`, result: '' };
     for (const c of [4, 5, 11, 12]) ws.getCell(row, c).numFmt = CHF;
@@ -279,7 +299,8 @@ export async function writeExcelReport(res: RunResult, filePath: string): Promis
   colorRule(ws, `O2:O${lastRow}`, ['Bestätigt', 'Abweichung', 'Offen', 'Nicht anwendbar']);
   ws.addConditionalFormatting({ ref: `L2:L${lastRow}`, rules: [{ type: 'expression', priority: 1, formulae: ['AND(L2<>"",ABS(L2)>=0.005)'], style: { font: { color: { argb: 'FFB3261E' }, bold: true } } }] });
   ws.addConditionalFormatting({ ref: `M2:M${lastRow}`, rules: [{ type: 'expression', priority: 1, formulae: ['AND(M2<>"",Übersicht!$B$6<>"",M2<>Übersicht!$B$6)'], style: { font: { color: { argb: 'FFB3261E' }, bold: true } } }] });
-  ws.autoFilter = { from: 'A1', to: { row: lastRow, column: 20 } };
+  ws.autoFilter = { from: 'A1', to: { row: lastRow, column: 25 } };
+  ws.addConditionalFormatting({ ref: `Y2:Y${lastRow}`, rules: [{ type: 'expression', priority: 1, formulae: ['AND(Y2<>"",ABS(Y2)>=0.005)'], style: { font: { color: { argb: 'FFB3261E' }, bold: true } } }] });
 
   // ---------------- Offene Punkte ----------------
   const op = wb.addWorksheet('Offene Punkte', { pageSetup: { orientation: 'landscape', paperSize: 9, fitToPage: true, fitToWidth: 1, fitToHeight: 0 } });
@@ -352,6 +373,7 @@ export async function writeExcelReport(res: RunResult, filePath: string): Promis
     '5. Differenz = |Wert im Beleg| − |Saldo Stichtag|. Rot = Differenz ≠ 0. Stichtag Beleg rot = weicht vom Bilanzstichtag ab.',
     '6. Belegverzeichnis: alle gefundenen Dateien inkl. Unterordner; Ablage in 01_Zugeordnet, 02_Nicht_zugeordnet bzw. 03_Nicht_relevant.',
     '7. Register (z. B. B.1): Buchstabe der Gruppe im KMU-Kontenrahmen + laufende Nummer; so beginnen auch die abgelegten Dateinamen. Notizen der Prüferin/des Prüfers stehen als erste Seite im PDF bzw. als separates Notiz-PDF.',
+    '8. Fremdwährungskonten (Währung laut Kontoblatt): "Wert im Beleg" und "Differenz" in Fremdwährung (Spalte V); Bewertung = Saldo FW × Kurs per Stichtag (Spalte W, z. B. ESTV-Kursliste), Bewertungsdifferenz = Buchwert CHF − CHF zum Kurs.',
     'Hinweis: Automatische Vorbereitung – Fundstellen und Status sind durch die Prüferin/den Prüfer zu verifizieren.',
   ].forEach((t, i) => {
     const c = an.getCell(`A${i + 1}`);
