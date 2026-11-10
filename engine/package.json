@@ -1,0 +1,47 @@
+{
+  "name": "@balance-scout/engine",
+  "version": "0.13.0",
+  "private": true,
+  "description": "Balance Scout – lokale Prüf-Engine: Saldobilanz, Belege (inkl. Texterkennung), Abgleich, Excel-Dokumentation, Ablage",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "bsb-local": "dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "cli": "tsx src/cli.ts",
+    "prepack": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@napi-rs/canvas": "^1.1.0",
+    "exceljs": "^4.4.0",
+    "jszip": "^3.10.2",
+    "mammoth": "^1.13.0",
+    "papaparse": "^5.7.0",
+    "pdf-lib": "^1.17.1",
+    "pptxgenjs": "^3.12.0",
+    "tesseract.js": "^5.1.1",
+    "unpdf": "^1.9.1",
+    "wasm-feature-detect": "1.9.0",
+    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.6",
+    "@types/papaparse": "^5.5.2",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2",
+    "vitest": "^5.1.0"
+  },
+  "overrides": {
+    "uuid": "^11.1.1",
+    "wasm-feature-detect": "1.9.0"
+  },
+  "files": [
+    "dist",
+    "tessdata",
+    "README.md"
+  ]
+}
