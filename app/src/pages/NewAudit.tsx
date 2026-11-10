@@ -216,7 +216,7 @@ export function NewAudit({ prefill, onStart }: { prefill?: Partial<JobInput>; on
                 {evidence.map(e => (
                   <li key={e.path}>
                     <span>{e.isDirectory ? '📁' : '📄'}</span>
-                    <span className="grow" title={e.path}>{e.path}</span>
+                    <span className="grow path-text" title={e.path}><strong>{e.name}</strong> <span className="muted">{e.path.slice(0, Math.max(0, e.path.length - e.name.length - 1))}</span></span>
                     <button className="icon-btn" aria-label="entfernen" onClick={() => setEvidence(ev => ev.filter(x => x.path !== e.path))}>✕</button>
                   </li>
                 ))}

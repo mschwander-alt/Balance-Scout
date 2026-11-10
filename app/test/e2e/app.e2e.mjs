@@ -241,6 +241,17 @@ assert.deepEqual([eur.fx.currency, eur.fx.closing, eur.fx.valuationDiff], ['EUR'
 assert.equal(fxr.accounts.find(a => a.accountNumber === '1105').fx.valuationDiff, 2750);
 step('Fremdwährung: EUR-Konto in EUR belegt, USD-Bewertungsdifferenz 27.50');
 
+// Sachanlagen: Anlagespiegel aus Kontoblättern
+const AND = path.resolve(root, '..', 'engine', 'test', 'fixtures', 'anlagen');
+const anl = await page.evaluate(F => window.bsb.engine.run({
+  mandate: 'Muster Bau AG', closingDate: '2025-12-31', trialBalancePath: F + '/Saldobilanz_2025.xlsx', signConvention: 'signed', evidencePaths: [F + '/Saldobilanz_2025.xlsx'],
+  targetDir: null, fileMode: 'none', absoluteToleranceCents: 100, ledgerPaths: [F + '/Kontoblaetter_2025.pdf'],
+}), AND);
+const fa = await page.evaluate(id => window.bsb.review.fixedAssets(id, {}), anl.historyId);
+assert.deepEqual(fa.rows.map(x => [x.accountNumber, x.additions, x.disposals, x.depreciation, x.closing]), [['1500', 6000000, 0, 5400000, 12600000], ['1510', 0, 0, 1000000, 3000000], ['1530', 0, 1500000, 2700000, 1800000], ['1600', 0, 0, 4000000, 96000000]]);
+assert.match(fa.rows.find(x => x.accountNumber === '1530').flags.join(' '), /über dem ESTV-Normalsatz von 40 %/);
+step('Anlagespiegel: 4 Konten, Abschreibung Fahrzeuge über ESTV-Satz erkannt');
+
 // Bilanz und Erfolgsrechnung getrennt, mit Zwischensummen: Vorschau über die Schnittstelle
 const SPLIT = path.resolve(root, '..', 'engine', 'test', 'fixtures', 'tb_split');
 const sp = await page.evaluate(p => window.bsb.engine.previewTrialBalance(p, 'signed', { accountDigits: { min: 4, max: 4 } }), [path.join(SPLIT, 'Bilanz_2025.xlsx'), path.join(SPLIT, 'Erfolgsrechnung_2025.pdf')]);

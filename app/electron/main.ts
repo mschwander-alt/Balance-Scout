@@ -312,6 +312,19 @@ function registerIpc(): void {
     writeJson('settings.json', { ...settings(), fxRateLists: lists });
     return lists;
   });
+  // Vertiefte Prüfung Sachanlagen: Anlagespiegel (Anzeige) bzw. Export als Excel
+  ipcMain.handle('review:fixedAssets', (_e, id: string, params: Record<string, unknown>) => {
+    if (!existsSync(userFile(`snapshot-${id}.json`))) throw new Error('Analysedaten fehlen – bitte die Prüfung erneut starten.');
+    return call<unknown>({ type: 'fixedAssets', snapshotPath: userFile(`snapshot-${id}.json`), ...params });
+  });
+  ipcMain.handle('review:exportFixedAssets', async (_e, id: string, params: Record<string, unknown>, suggestedName: string) => {
+    const saved = readJson<{ input?: JobInput } | null>(`result-${id}.json`, null);
+    const r = await dialog.showSaveDialog(win!, { title: 'Anlagespiegel speichern', defaultPath: path.join(saved?.input?.targetDir ?? app.getPath('documents'), suggestedName), filters: [{ name: 'Excel', extensions: ['xlsx'] }] });
+    if (r.canceled || !r.filePath) return null;
+    await call<unknown>({ type: 'fixedAssets', snapshotPath: userFile(`snapshot-${id}.json`), ...params, exportPath: r.filePath });
+    shell.showItemInFolder(r.filePath);
+    return r.filePath;
+  });
   ipcMain.handle('review:groups', () => (groupsCache ??= call<GroupsInfo>({ type: 'groups' })));
   // Schritt 2: Abschliessen – Ablage mit Register, Notizen, Excel
   ipcMain.handle('review:finalize', async (_e, id: string, decisions: ReviewDecisions) => {

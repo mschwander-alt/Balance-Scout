@@ -97,7 +97,22 @@ export interface ReviewDecisions {
   assignments?: Record<string, { accountNumber: string | null; accountNumbers?: string[]; at: string; visum: string }>;
   notes?: Record<string, { text: string; at: string; visum: string }>;
   groupLetters?: Record<string, string>;
-  analyses?: { receivables?: ReceivablesDecision };
+  analyses?: { receivables?: ReceivablesDecision; fixedAssets?: FixedAssetsDecision };
+}
+export type MoveClass = 'zugang' | 'abgang' | 'abschreibung' | 'umbuchung';
+export interface FixedAssetsDecision { accounts?: string[]; categories?: Record<string, string>; classes?: Record<string, MoveClass>; findings: { text: string; status: 'offen' | 'erledigt' }[]; note?: string; visum?: string }
+export interface FixedAssetsResult {
+  available: boolean; reason?: string;
+  candidates: { accountNumber: string; accountName: string; balance: number; suggested: boolean; inLedger: boolean }[];
+  rows: {
+    accountNumber: string; accountName: string; opening: number; additions: number; disposals: number; depreciation: number; transfers: number; closing: number;
+    tbBalance: number | null; tbDiff: number | null; category: string | null; categoryLabel: string | null; estvRate: number | null; effectiveRate: number | null;
+    flags: string[]; consistent: boolean;
+    postings: { key: string; date: string; text: string; contra: string | null; amount: number; cls: MoveClass; auto: MoveClass; why: string; page: number; lineNo: number }[];
+  }[];
+  totals: { opening: number; additions: number; disposals: number; depreciation: number; transfers: number; closing: number; tbBalance: number };
+  categories: { key: string; label: string; rate: number }[];
+  suggestions: string[];
 }
 export interface ReceivablesDecision { docId: string | null; docIds?: string[]; accounts?: string[]; assigned?: Record<string, string[]>; termDays: number; rates: Record<string, number>; findings: { text: string; status: 'offen' | 'erledigt' }[]; visum?: string; note?: string }
 export interface AgingItem {
@@ -185,6 +200,8 @@ export interface BsbBridge {
     save(id: string, d: ReviewDecisions): Promise<boolean>;
     finalize(id: string, d: ReviewDecisions): Promise<unknown>;
     groups(): Promise<GroupsInfo>;
+    fixedAssets(id: string, p: Partial<FixedAssetsDecision>): Promise<FixedAssetsResult>;
+    exportFixedAssets(id: string, p: Partial<FixedAssetsDecision>, suggestedName: string): Promise<string | null>;
     /** ESTV-Kursliste (PDF) wählen, lesen und speichern; liefert alle gespeicherten Listen */
     importRates(): Promise<Record<string, FxRateList> | null>;
     receivables(id: string, p: Partial<ReceivablesDecision>): Promise<ReceivablesResult>;

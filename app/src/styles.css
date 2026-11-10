@@ -341,3 +341,15 @@ table.kunden td { white-space: nowrap; } table.kunden td:first-child { max-width
 .pick-line .grow { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .fx-sub { font-size: 10.5px; color: var(--muted); line-height: 1.1; }
 .fx-line { display: flex; flex-wrap: wrap; gap: 4px 14px; align-items: center; padding: 6px 9px; background: #f7f9fc; border: 1px solid var(--line); border-radius: 6px; }
+/* Eingabeseite: lange Pfade dürfen die Spalten nicht verbreitern */
+.grid2 > *, .grid3 > * { min-width: 0; }
+.paths li { min-width: 0; }
+.paths li .grow, .path-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.drop { overflow: hidden; }
+.cloud { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+.cloud .chip { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.page { overflow-x: hidden; }
+.acc-chips { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 0 18px; }
+table.anlagen td { white-space: nowrap; } table.anlagen td:nth-child(2) { max-width: 220px; overflow: hidden; text-overflow: ellipsis; }
+tr.sub-row > td { background: #fafbfc; padding: 8px 12px; }
+.row > code { max-width: 100%; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: inline-block; vertical-align: middle; }

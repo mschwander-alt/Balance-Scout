@@ -5,7 +5,10 @@ import { Info, Spinner, useToast } from '../components/ui';
 import { DocumentPreview } from '../components/DocumentPreview';
 import type { AgingItem, GroupsInfo, ReceivablesDecision, ReceivablesResult, ReviewDecisions } from '../../electron/shared';
 import type { ViewAccount, ViewDoc } from '../review';
+import { FixedAssets } from './FixedAssets';
 
+/** Prüfgebiete mit Anlagespiegel: mobile/immobile Sachanlagen, immaterielle Werte */
+const FIXED = ['A21', 'A22', 'A23'];
 const BUCKETS = ['Nicht fällig', '1–30 Tage', '31–60 Tage', '61–90 Tage', '> 90 Tage'];
 const SHADES = ['#1f5f9e', '#3b82c4', '#6ea6d9', '#a4c8ea', '#d4e5f6'];
 type Sub = 'faelligkeit' | 'posten' | 'feststellungen';
@@ -31,7 +34,7 @@ export function AuditAreas({ historyId, accounts, docs, groups, decisions, updat
       <aside className="area-list">
         <div className="small muted" style={{ padding: '4px 8px 8px' }}>Gezielte Analysen auf Basis der Kundenunterlagen</div>
         {areas.map(a => (
-          <button key={a.code} className={`area-item ${a.code === cur?.code ? 'active' : ''} ${a.code === 'A12' ? '' : 'later'}`} onClick={() => setArea(a.code)}>
+          <button key={a.code} className={`area-item ${a.code === cur?.code ? 'active' : ''} ${a.code === 'A12' || FIXED.includes(a.code) ? '' : 'later'}`} onClick={() => setArea(a.code)}>
             {a.letter ? <span className="register">{a.letter}</span> : <span className="register empty" />}
             <span className="grow"><span className="area-name">{a.name}</span><span className="small muted">CHF {chf(Math.abs(a.cy))}</span></span>
             <span className="muted">›</span>
@@ -44,7 +47,7 @@ export function AuditAreas({ historyId, accounts, docs, groups, decisions, updat
             {cur.letter && <span className="register lg">{cur.letter}</span>}
             <div className="grow">
               <h2>{cur.name}</h2>
-              <p className="small muted">{cur.code === 'A12' ? 'Vertiefte Prüfung – Fälligkeitsanalyse' : 'Vertiefte Prüfung folgt'}</p>
+              <p className="small muted">{cur.code === 'A12' ? 'Vertiefte Prüfung – Fälligkeitsanalyse' : FIXED.includes(cur.code) ? 'Vertiefte Prüfung – Anlagespiegel und Abschreibungen' : 'Vertiefte Prüfung folgt'}</p>
             </div>
             <div className="saldo-box">
               <span className="small muted">Saldo per {date(closingDate)}</span>
@@ -55,8 +58,10 @@ export function AuditAreas({ historyId, accounts, docs, groups, decisions, updat
         )}
         {cur?.code === 'A12' && historyId ? (
           <Receivables historyId={historyId} docs={docs} decisions={decisions} update={update} letter={cur.letter} defaultRates={rates ?? {}} />
+        ) : cur && FIXED.includes(cur.code) && historyId ? (
+          <FixedAssets historyId={historyId} decisions={decisions} update={update} />
         ) : (
-          <div className="card muted">Für dieses Prüfgebiet ist noch keine vertiefte Analyse verfügbar. Als nächste folgen u. a. der Anlagespiegel (Sachanlagen) und die Fremdwährungsbewertung.</div>
+          <div className="card muted">Für dieses Prüfgebiet ist noch keine vertiefte Analyse verfügbar. Verfügbar sind: Forderungen aus L+L (Fälligkeitsanalyse) sowie Sachanlagen und immaterielle Werte (Anlagespiegel).</div>
         )}
       </section>
     </div>
