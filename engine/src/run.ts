@@ -25,6 +25,9 @@ export interface RunInput {
   trialBalanceMappings?: Record<string, ExplicitMapping>;
   /** Kontonummern haben min..max Ziffern; andere Zeilen (Gruppen, Zwischensummen) werden ausgeblendet */
   accountDigits?: { min: number; max: number };
+  /** Teile der Saldobilanz (Datei bzw. "Datei#Blatt"), die der Prüfer ab- bzw. trotz Doppel zuwählt */
+  skipParts?: string[];
+  forceParts?: string[];
   signConvention?: SignConvention;
   /** Ein oder mehrere Ordner (inkl. Unterordner) und/oder einzelne Dateien */
   evidencePaths: string[];
@@ -110,13 +113,13 @@ export const tbPaths = (input: Pick<RunInput, 'trialBalancePath' | 'trialBalance
 
 /** Saldobilanz aus allen Dateien laden; die alte Einzel-Zuordnung gilt für den ersten Teil. */
 export async function loadTrialBalanceFor(
-  input: Pick<RunInput, 'trialBalancePath' | 'trialBalancePaths' | 'trialBalanceMapping' | 'trialBalanceMappings' | 'accountDigits'>,
+  input: Pick<RunInput, 'trialBalancePath' | 'trialBalancePaths' | 'trialBalanceMapping' | 'trialBalanceMappings' | 'accountDigits' | 'skipParts' | 'forceParts'>,
   ocr?: LocalOcr,
 ): Promise<LoadedTrialBalance> {
   const paths = tbPaths(input);
   // Alte Einzel-Zuordnung: gilt für den ersten Teil der ersten Datei (Schlüssel = Pfad)
   const mappings = input.trialBalanceMappings ?? (input.trialBalanceMapping ? { [paths[0]!]: input.trialBalanceMapping } : undefined);
-  const tb = await loadTrialBalance(paths, { mappings, accountDigits: input.accountDigits, ocr });
+  const tb = await loadTrialBalance(paths, { mappings, accountDigits: input.accountDigits, ocr, skipParts: input.skipParts, forceParts: input.forceParts });
   const err = tb.parts.find(p => p.status === 'zuordnen');
   if (err && !tb.rows.length) {
     const { MappingError } = await import('./domain/trialBalance/parser.js');

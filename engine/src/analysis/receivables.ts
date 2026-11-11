@@ -279,8 +279,28 @@ export interface AgingParams {
   /** Kurse je Fremdwährung in CHF (z. B. { EUR: 0.93 }) */
   rates: Record<string, number>;
   baseCurrency?: string;
+  /** Hilfe durch den Prüfer: wie die Fälligkeit bestimmt wird (Standard: Fälligkeit laut Liste, sonst Belegdatum + Frist) */
+  dueMode?: DueMode;
+  /** Zahlungsfrist je Kunde (Schlüssel Kundennummer oder Name) */
+  customerTerms?: Record<string, number>;
+  /** Korrekturen je Posten (Schlüssel siehe itemKey) */
+  corrections?: Record<string, ItemCorrection>;
+  /** Stichtag der Liste, falls nicht oder falsch erkannt */
+  listDate?: string | null;
 }
-export interface AgedItem extends OpItem { due: string | null; daysOverdue: number | null; bucket: number; amountChf: Cents | null }
+/** auto = Fälligkeit laut Liste, sonst Belegdatum + Frist · term = immer Belegdatum + Frist · lastDate = letztes Datum der Zeile ist die Fälligkeit */
+export type DueMode = 'auto' | 'term' | 'lastDate';
+export interface ItemCorrection { due?: string | null; date?: string | null; amount?: Cents; exclude?: boolean; customerName?: string; comment?: string }
+export const itemKey = (i: Pick<OpItem, 'sourceDocId' | 'page' | 'lineNo'>) => `${i.sourceDocId ?? ''}|${i.page}|${i.lineNo}`;
+export interface AgedItem extends OpItem {
+  due: string | null; daysOverdue: number | null; bucket: number; amountChf: Cents | null;
+  key: string;
+  /** Herleitung der Fälligkeit, z. B. „Fälligkeit laut Liste“, „Belegdatum + 30 Tage“, „manuell“ */
+  dueWhy: string;
+  /** vom Prüfer korrigiert */
+  corrected: boolean;
+  comment?: string;
+}
 export interface AgedCustomer { customerNo: string; customerName: string; totalChf: Cents; buckets: Cents[]; credits: Cents; maxDaysOverdue: number; items: number; dunningLevel: number | null }
 export interface Aging {
   params: AgingParams;
@@ -297,6 +317,8 @@ export interface Aging {
   kpis: { overdue90: Cents; overdue90Share: number; overdueCustomers: number; customers: number; largestOverdue: { customer: string; amount: Cents } | null; avgDaysOverdue: number };
   checks: { name: string; passed: boolean; message: string }[];
   missingRates: string[];
+  /** vom Prüfer ausgeschlossene Posten (nicht in den Summen) */
+  excluded: AgedItem[];
 }
 
 const dayDiff = (a: string, b: string) => Math.round((Date.parse(`${a}T00:00:00Z`) - Date.parse(`${b}T00:00:00Z`)) / 86_400_000);
@@ -308,13 +330,26 @@ export function analyzeAging(list: OpList, p: AgingParams): Aging {
   const base = p.baseCurrency ?? list.baseCurrency ?? 'CHF';
   const missing = new Set<string>();
   const rate = (c: string) => (c === base ? 1 : p.rates[c] ?? null);
-  const items: AgedItem[] = list.items.map(i => {
-    const due = i.dueDate ?? (i.date ? addDays(i.date, p.termDays) : null);
+  const mode = p.dueMode ?? 'auto';
+  const all: AgedItem[] = list.items.map(i0 => {
+    const key = itemKey(i0);
+    const c = p.corrections?.[key];
+    const i = { ...i0, ...(c?.customerName ? { customerName: c.customerName } : {}), ...(c?.amount !== undefined ? { amount: c.amount } : {}), ...(c?.date !== undefined ? { date: c.date } : {}) };
+    const term = p.customerTerms?.[i.customerNo] ?? p.customerTerms?.[i.customerName] ?? p.termDays;
+    const lineDates = [...i.line.matchAll(DATE)].map(m => iso(m[1]!, m[2]!, m[3]!)).filter((x): x is string => !!x);
+    let due: string | null; let dueWhy: string;
+    if (c?.due !== undefined) { due = c.due; dueWhy = 'manuell erfasst'; }
+    else if (mode === 'lastDate' && lineDates.length >= 2) { due = lineDates[lineDates.length - 1]!; dueWhy = 'letztes Datum der Zeile (Vorgabe Prüfer)'; }
+    else if (mode !== 'term' && i.dueDate) { due = i.dueDate; dueWhy = 'Fälligkeit laut Liste'; }
+    else if (i.date) { due = addDays(i.date, term); dueWhy = `Belegdatum + ${term} Tage${term !== p.termDays ? ' (Frist des Kunden)' : ''}`; }
+    else { due = null; dueWhy = 'kein Datum – bitte erfassen'; }
     const days = due ? dayDiff(p.closingDate, due) : null;
     const r = rate(i.currency);
-    if (r === null) missing.add(i.currency);
-    return { ...i, due, daysOverdue: days, bucket: bucketOf(days), amountChf: r === null ? null : Math.round(i.amount * r) };
+    if (r === null && !c?.exclude) missing.add(i.currency);
+    return { ...i, key, due, dueWhy, corrected: !!c, comment: c?.comment, daysOverdue: days, bucket: bucketOf(days), amountChf: r === null ? null : Math.round(i.amount * r) };
   });
+  const excludedItems = all.filter(i => p.corrections?.[i.key]?.exclude);
+  const items = all.filter(i => !p.corrections?.[i.key]?.exclude);
   const byCust = new Map<string, AgedCustomer>();
   for (const i of items) {
     const k = `${i.customerNo}|${i.customerName}`;
@@ -353,7 +388,16 @@ export function analyzeAging(list: OpList, p: AgingParams): Aging {
     const s = list.items.filter(i => i.currency === g.currency).reduce((a, i) => a + i.amount, 0);
     checks.push({ name: `Gesamttotal ${g.currency}`, passed: Math.abs(s - g.amount) <= 1, message: `Summe der Posten ${g.currency} ${fmt(s)} · laut Liste ${fmt(g.amount)}${Math.abs(s - g.amount) > 1 ? ` · Differenz ${fmt(s - g.amount)}` : ''}` });
   }
-  if (list.listDate) checks.push({ name: 'Stichtag der Liste', passed: list.listDate === p.closingDate, message: list.listDate === p.closingDate ? `OP-Liste per ${fmtD(list.listDate)} = Bilanzstichtag.` : `OP-Liste per ${fmtD(list.listDate)}, Bilanzstichtag ${fmtD(p.closingDate)} – Liste per Bilanzstichtag einholen.` });
+  const ld = p.listDate ?? list.listDate;
+  if (ld) checks.push({ name: 'Stichtag der Liste', passed: ld === p.closingDate, message: (ld === p.closingDate ? `OP-Liste per ${fmtD(ld)} = Bilanzstichtag.` : `OP-Liste per ${fmtD(ld)}, Bilanzstichtag ${fmtD(p.closingDate)} – Liste per Bilanzstichtag einholen.`) + (p.listDate ? ' (Stichtag vom Prüfer erfasst)' : '') });
+  else checks.push({ name: 'Stichtag der Liste', passed: false, message: 'Stichtag der OP-Liste nicht erkannt – bitte unter „Hilfe zur Liste“ erfassen.' });
+  const noDue = items.filter(i => !i.due && i.amount > 0);
+  if (noDue.length) checks.push({ name: 'Fälligkeit', passed: false, message: `${noDue.length} Posten ohne Datum – Fälligkeit je Posten erfassen (Einzelposten).` });
+  const corr = all.filter(i => i.corrected);
+  if (corr.length) checks.push({ name: 'Korrekturen Prüfer', passed: true, message: `${corr.length} Posten vom Prüfer korrigiert${excludedItems.length ? `, davon ${excludedItems.length} ausgeschlossen (CHF ${fmt(excludedItems.reduce((a, i) => a + (i.amountChf ?? 0), 0))})` : ''} – in der Dokumentation ausgewiesen.` });
+  // Plausibilität: Fälligkeit vor Belegdatum bzw. sehr lange Frist deutet auf vertauschte Spalten hin
+  const odd = items.filter(i => i.date && i.due && (i.due < i.date || dayDiff(i.due, i.date) > 180));
+  if (odd.length) checks.push({ name: 'Plausibilität Fälligkeit', passed: false, message: `${odd.length} Posten mit Fälligkeit vor dem Belegdatum oder mehr als 180 Tage danach – Datumsspalten prüfen (Hilfe zur Liste: „Fälligkeit bestimmen“).` });
   if (list.unreadable.length) checks.push({ name: 'Lesbarkeit', passed: false, message: `${list.unreadable.length} Postenzeile(n) ohne lesbaren Betrag (S. ${[...new Set(list.unreadable.map(u => u.page))].join(', ')}).` });
   if (missing.size) checks.push({ name: 'Fremdwährungskurse', passed: false, message: `Kurs per Stichtag fehlt für ${[...missing].join(', ')} – diese Posten sind in den CHF-Summen nicht enthalten.` });
 
@@ -364,7 +408,7 @@ export function analyzeAging(list: OpList, p: AgingParams): Aging {
       largestOverdue: largest ? { customer: largest.customerName || largest.customerNo, amount: largest.buckets.slice(1).reduce((a, b) => a + b, 0) } : null,
       avgDaysOverdue: Math.round(avg),
     },
-    checks, missingRates: [...missing],
+    checks, missingRates: [...missing], excluded: excludedItems,
   };
 }
 const fmtD = (iso: string) => iso.split('-').reverse().join('.');
@@ -393,6 +437,10 @@ export interface ReceivablesParams {
   accounts?: string[] | null;
   termDays?: number;
   rates?: Record<string, number>;
+  dueMode?: DueMode;
+  customerTerms?: Record<string, number>;
+  corrections?: Record<string, ItemCorrection>;
+  listDate?: string | null;
 }
 export interface ReceivablesResult {
   /** Belege, die Konten der Forderungen L+L zugeordnet sind */
@@ -450,7 +498,7 @@ export function receivablesFor(res: ResLike, p: ReceivablesParams, assignedOverr
     baseCurrency: parsed[0]!.list.baseCurrency,
     unreadable: parsed.flatMap(x => x.list.unreadable),
   };
-  const aging = analyzeAging(merged, { closingDate: res.input.closingDate, termDays: p.termDays ?? 30, rates: p.rates ?? {} });
+  const aging = analyzeAging(merged, { closingDate: res.input.closingDate, termDays: p.termDays ?? 30, rates: p.rates ?? {}, dueMode: p.dueMode, customerTerms: p.customerTerms, corrections: p.corrections, listDate: p.listDate || null });
   if (parsed.length > 1) {
     for (const x of parsed) for (const g of x.list.grandTotals) {
       const s = x.list.items.filter(i => i.currency === g.currency).reduce((a, i) => a + i.amount, 0);
@@ -460,6 +508,6 @@ export function receivablesFor(res: ResLike, p: ReceivablesParams, assignedOverr
   for (const x of parsed) if (!x.list.items.length) aging.checks.push({ name: `Liste ${x.d.doc.filename}`, passed: false, message: `${x.d.doc.filename}: keine offenen Posten erkannt – ist das eine OP-Liste?` });
   return {
     ...base, lists: parsed.map(x => ({ docId: x.d.doc.id, filename: x.d.doc.filename, items: x.list.items.length, listDate: x.list.listDate })),
-    listDate: merged.listDate, currencies: [...new Set(merged.items.map(i => i.currency))], aging, suggestions: suggestFindings(aging, balanceChf),
+    listDate: p.listDate || merged.listDate, currencies: [...new Set(merged.items.map(i => i.currency))], aging, suggestions: suggestFindings(aging, balanceChf),
   };
 }

@@ -18,7 +18,7 @@ export type Request =
   | { id: string; type: 'preview'; absPath: string; page: number }
   | {
       id: string; type: 'previewTrialBalance'; path?: string; paths?: string[]; mapping?: ExplicitMapping; mappings?: Record<string, ExplicitMapping>;
-      accountDigits?: { min: number; max: number }; signConvention?: SignConvention; ocr?: { langPath?: string };
+      accountDigits?: { min: number; max: number }; signConvention?: SignConvention; ocr?: { langPath?: string }; skipParts?: string[]; forceParts?: string[];
     }
   /** Analyse (Lesen + Abgleich). Mit snapshotPath: ohne Ablage/Excel – Abschluss folgt nach der Durchsicht. */
   | { id: string; type: 'run'; input: Omit<RunInput, 'onProgress'>; reportDir: string; snapshotPath?: string }
@@ -29,7 +29,7 @@ export type Request =
   /** ESTV-Kursliste (PDF) lesen */
   | { id: string; type: 'rates'; path: string }
   /** Vertiefte Prüfung Forderungen: Fälligkeitsanalyse (optional als Excel speichern) */
-  | { id: string; type: 'receivables'; snapshotPath: string; docId?: string | null; docIds?: string[]; accounts?: string[]; assigned?: Record<string, string[]>; termDays?: number; rates?: Record<string, number>; exportPath?: string; exportFormat?: 'xlsx' | 'pptx'; findings?: { text: string; status: 'offen' | 'erledigt' }[]; visum?: string; note?: string };
+  | { id: string; type: 'receivables'; snapshotPath: string; docId?: string | null; docIds?: string[]; accounts?: string[]; assigned?: Record<string, string[]>; termDays?: number; rates?: Record<string, number>; dueMode?: 'auto' | 'term' | 'lastDate'; customerTerms?: Record<string, number>; corrections?: Record<string, { due?: string | null; date?: string | null; amount?: number; exclude?: boolean; customerName?: string; comment?: string }>; listDate?: string | null; exportPath?: string; exportFormat?: 'xlsx' | 'pptx'; findings?: { text: string; status: 'offen' | 'erledigt' }[]; visum?: string; note?: string };
 
 type Port = { postMessage(m: unknown): void; on(ev: 'message', cb: (m: unknown) => void): void };
 const parentPort: Port | undefined = (process as unknown as { parentPort?: Port }).parentPort;
@@ -42,7 +42,7 @@ async function previewTrialBalance(r: Extract<Request, { type: 'previewTrialBala
   let tb;
   try {
     tb = await (await import('./domain/trialBalance/load.js')).loadTrialBalance(paths, {
-      ocr, accountDigits: r.accountDigits,
+      ocr, accountDigits: r.accountDigits, skipParts: r.skipParts, forceParts: r.forceParts,
       mappings: r.mappings ?? (r.mapping ? { [paths[0]!]: r.mapping } : undefined),
     });
   } finally {

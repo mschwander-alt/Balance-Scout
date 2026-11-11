@@ -207,6 +207,12 @@ export function detectMapping(grid: Grid): { headerRowIndex: number; mapping: Co
         } else { found.balancePrevDebit = d2; found.balancePrevCredit = h2; }
       }
     }
+    // Nur „Konto“ (bzw. nur „Bezeichnung“) im Kopf, Nummer und Bezeichnung in derselben Zelle
+    if ((found.accountNumber === undefined) !== (found.accountName === undefined)) {
+      const col = (found.accountNumber ?? found.accountName)!;
+      const data = grid.slice(r + 1, r + 200).map(x => x[col]).filter(v => v !== null && v !== undefined && String(v).trim());
+      if (data.length && data.filter(v => splitCombined(v)).length >= data.length * 0.5) { found.accountNumber = col; found.accountName = col; }
+    }
     const hasBalance = found.balanceCurrentYear !== undefined || (found.balanceDebit !== undefined && found.balanceCredit !== undefined);
     if (found.accountNumber !== undefined && found.accountName !== undefined && hasBalance) {
       return { headerRowIndex: r, mapping: realignAmountColumns(grid, r, found as ColumnMapping) };
@@ -244,7 +250,7 @@ function realignAmountColumns(grid: Grid, headerRow: number, m: ColumnMapping): 
 export function inferMapping(grid: Grid): { headerRowIndex: number; mapping: ColumnMapping } | null {
   const rows = grid.slice(0, 400);
   const width = Math.max(0, ...rows.map(r => r.length));
-  const isAcc = (v: Cell | undefined) => (typeof v === 'number' && Number.isInteger(v) && v >= 100 && v < 1e8) || (typeof v === 'string' && /^\s*\d{3,8}\s*$/.test(v));
+  const isAcc = (v: Cell | undefined) => (typeof v === 'number' && Number.isInteger(v) && v >= 100 && v < 1e8) || (typeof v === 'string' && (/^\s*\d{3,8}\s*$/.test(v) || !!splitCombined(v)));
   const isNum = (v: Cell | undefined) => typeof v === 'number' || (typeof v === 'string' && !!parseAmount(v) && /\d/.test(v) && !/[a-z]{3}/i.test(v.replace(/chf/i, '')));
   const isText = (v: Cell | undefined) => typeof v === 'string' && /[a-zäöü]{3}/i.test(v);
   let acc = -1;
@@ -256,10 +262,11 @@ export function inferMapping(grid: Grid): { headerRowIndex: number; mapping: Col
   if (acc < 0 || best < 3) return null;
   const accRows = rows.map((r, i) => ({ r, i })).filter(x => isAcc(x.r[acc]));
   let name = -1;
+  if (accRows.filter(x => splitCombined(x.r[acc])).length >= accRows.length * 0.6) name = acc;
   for (let c = acc + 1; c < width && name < 0; c++) if (accRows.filter(x => isText(x.r[c])).length >= accRows.length * 0.6) name = c;
   if (name < 0) return null;
   const nums: number[] = [];
-  for (let c = name + 1; c < width; c++) if (accRows.filter(x => isNum(x.r[c])).length >= accRows.length * 0.5) nums.push(c);
+  for (let c = Math.max(acc, name) + 1; c < width; c++) if (accRows.filter(x => isNum(x.r[c])).length >= accRows.length * 0.5) nums.push(c);
   if (!nums.length) return null;
   const headerRowIndex = Math.max(0, accRows[0]!.i - 1);
   return { headerRowIndex, mapping: { accountNumber: acc, accountName: name, balanceCurrentYear: nums[0], ...(nums[1] !== undefined ? { balancePreviousYear: nums[1] } : {}) } };
@@ -292,8 +299,15 @@ export function parseTrialBalance(grid: Grid, explicit?: { headerRowIndex: numbe
     const nameRaw = row[mapping.accountName];
     const cyRaw = mapping.balanceCurrentYear !== undefined ? row[mapping.balanceCurrentYear] : row[mapping.balanceDebit ?? -1] ?? row[mapping.balanceCredit ?? -1];
 
-    const accountNumber = normalizeAccountNumber(numRaw);
-    const accountName = String(nameRaw ?? '').trim();
+    let accountNumber = normalizeAccountNumber(numRaw);
+    let accountName = String(nameRaw ?? '').trim();
+    // Nummer und Bezeichnung in einer Zelle ("1020 Bank UBS") – auch wenn die Bezeichnungsspalte separat leer ist
+    const comb = splitCombined(numRaw);
+    if (comb && (mapping.accountNumber === mapping.accountName || !accountName || accountName === String(numRaw).trim())) { accountNumber = comb.no; accountName = comb.name; }
+    else if (!/^\d/.test(accountNumber)) {
+      const c2 = splitCombined(nameRaw);
+      if (c2 && !accountNumber) { accountNumber = c2.no; accountName = c2.name; }
+    }
 
     if (!accountNumber && !accountName && (cyRaw === null || cyRaw === undefined || cyRaw === '')) continue; // Leerzeile
     // Wiederholte Kopfzeile (z. B. auf jeder PDF-Seite)
@@ -365,6 +379,13 @@ function parseCell(v: Cell | undefined): Cents | null | undefined {
   if (v === null || v === undefined || (typeof v === 'string' && v.trim() === '')) return null;
   const p = parseAmount(v);
   return p ? p.cents : undefined;
+}
+
+/** "1020 Bank UBS", "1020 - Bank UBS", "1020: Bank" in einer Zelle -> Nummer und Bezeichnung */
+export function splitCombined(v: Cell | undefined): { no: string; name: string } | null {
+  if (typeof v !== 'string') return null;
+  const m = /^\s*(\d{3,8}(?:\.\d{1,4})?)\s*(?:[-–:|]\s*|\s+)(\D.*?)\s*$/.exec(v);
+  return m ? { no: m[1]!, name: m[2]! } : null;
 }
 
 function normalizeAccountNumber(v: Cell | undefined): string {

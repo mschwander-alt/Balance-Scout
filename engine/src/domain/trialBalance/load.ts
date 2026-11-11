@@ -22,6 +22,8 @@ export interface TbPartInfo {
   guessed?: boolean;
   /** ignoriert = keine Kontenliste erkannt (z. B. Deckblatt) */
   status: 'ok' | 'ignoriert' | 'zuordnen';
+  /** Grund, falls ignoriert (z. B. gleiche Konten wie ein anderes Blatt) */
+  reason?: string;
 }
 
 export interface LoadedTrialBalance {
@@ -39,6 +41,9 @@ export interface LoadOptions {
   mappings?: Record<string, ExplicitMapping>;
   accountDigits?: { min: number; max: number };
   ocr?: import('../../ingest/ocr.js').LocalOcr;
+  /** Vom Prüfer: Teile (Datei/Blatt-IDs), die nicht bzw. trotz Doppel verwendet werden sollen */
+  skipParts?: string[];
+  forceParts?: string[];
 }
 
 /**
@@ -84,7 +89,27 @@ export async function loadTrialBalance(paths: string[], opts: LoadOptions = {}):
   const issues: RowIssue[] = [];
   const digitStats: Record<number, number> = {};
   const anyDetected = parts.some(p => p.info.used);
+  // Mehrere Blätter/Dateien mit (weitgehend) denselben Konten: nur das vollständigste verwenden, sonst würden Konten
+  // doppelt eingelesen (z. B. Blatt „Saldobilanz“ und Blatt „Bilanz“ als Auszug, oder Blätter je Jahr)
+  const numsOf = new Map<TbPartInfo, Set<string>>();
+  for (const { info, grid } of parts) if (info.used) numsOf.set(info, new Set(parseTrialBalance(grid, info.used, { accountDigits: opts.accountDigits }).rows.map(r => r.accountNumber)));
+  const ordered = [...numsOf.keys()].sort((a, b) => numsOf.get(b)!.size - numsOf.get(a)!.size);
+  const kept: TbPartInfo[] = [];
+  for (const info of ordered) {
+    const mine = numsOf.get(info)!;
+    if (opts.skipParts?.includes(info.id)) { info.status = 'ignoriert'; info.reason = 'vom Prüfer abgewählt'; continue; }
+    const dup = kept.find(k => { const o = numsOf.get(k)!; let n = 0; for (const x of mine) if (o.has(x)) n++; return mine.size > 0 && n / mine.size >= 0.5; });
+    if (dup && !opts.forceParts?.includes(info.id)) {
+      info.status = 'ignoriert';
+      info.reason = `enthält dieselben Konten wie „${dup.label}“`;
+      issues.push({ rowIndex: 0, source: info.label, severity: 'warning', code: 'PART_DUPLICATE', message: `${info.label}: enthält überwiegend dieselben Konten wie „${dup.label}“ – nicht berücksichtigt, damit keine Konten doppelt gezählt werden (bei Bedarf in der Vorschau wieder einschliessen).` });
+      continue;
+    }
+    kept.push(info);
+  }
+  const seen = new Map<string, { label: string; rowIndex: number; balance: number }>();
   for (const { info, grid } of parts) {
+    if (info.used && info.status === 'ignoriert') continue;
     if (!info.used) {
       // Ein Blatt ohne Kontenliste (Deckblatt, Notizen) neben anderen Teilen wird ignoriert;
       // ist es der einzige Teil einer Datei bzw. wurde gar nichts erkannt, muss zugeordnet werden.
@@ -100,7 +125,19 @@ export async function loadTrialBalance(paths: string[], opts: LoadOptions = {}):
     const src = multi ? info.label : undefined;
     info.accountCount = parsed.rows.length;
     if (info.guessed) issues.push({ rowIndex: 0, source: info.label, severity: 'warning', code: 'PART_GUESSED', message: `${info.label}: Kopfzeile nicht erkannt – Spalten angenommen (erste Betragsspalte = aktuelles Jahr). Bitte mit „Konten anzeigen“ kontrollieren.` });
-    rows.push(...parsed.rows.map(r => ({ ...r, source: src })));
+    // Gleiches Konto mehrfach (wiederholte Seiten, Teilblätter): nur einmal übernehmen und nachvollziehbar ausweisen
+    for (const r of parsed.rows) {
+      const prev = seen.get(r.accountNumber);
+      if (prev) {
+        const same = prev.balance === r.balanceCurrentYear;
+        excluded.push({ rowIndex: r.rowIndex, source: src, accountNumber: r.accountNumber, accountName: r.accountName, balance: r.balanceCurrentYear, reason: `doppelt – bereits ${prev.label ? `${prev.label}, ` : ''}Zeile ${prev.rowIndex}${same ? ' (gleicher Saldo)' : ' (anderer Saldo – prüfen!)'}` });
+        if (!same) issues.push({ rowIndex: r.rowIndex, source: src, severity: 'warning', code: 'DUPLICATE_DIFFERENT', message: `Konto ${r.accountNumber} kommt mehrfach mit unterschiedlichem Saldo vor (übernommen: Zeile ${prev.rowIndex}) – Saldobilanz prüfen.` });
+        info.accountCount--;
+        continue;
+      }
+      seen.set(r.accountNumber, { label: src ?? '', rowIndex: r.rowIndex, balance: r.balanceCurrentYear });
+      rows.push({ ...r, source: src });
+    }
     excluded.push(...parsed.excluded.map(e => ({ ...e, source: src })));
     issues.push(...ocrTrialBalanceIssue(info.ocrPages).map(i => ({ ...i, source: src, message: src ? `${src}: ${i.message}` : i.message })));
     issues.push(...parsed.issues.map(i => ({ ...i, source: src })));

@@ -134,18 +134,29 @@ export async function agingWorkbook(a: Aging, m: AgingMeta): Promise<Buffer> {
 
   // ---------------- Einzelposten ----------------
   const ep = wb.addWorksheet('Einzelposten', { pageSetup: ps });
-  const ecols = ['Debitor', 'Name', 'Beleg', 'Belegart', 'Belegdatum', 'Fällig', 'Tage überfällig', 'Altersklasse', 'Währung', 'Betrag (Währung)', 'Betrag CHF', 'Mahnstufe', 'Seite OP-Liste'];
-  [11, 30, 12, 13, 12, 12, 10, 13, 8, 15, 15, 9, 9].forEach((w, i) => (ep.getColumn(i + 1).width = w));
+  const ecols = ['Debitor', 'Name', 'Beleg', 'Belegart', 'Belegdatum', 'Fällig', 'Tage überfällig', 'Altersklasse', 'Währung', 'Betrag (Währung)', 'Betrag CHF', 'Mahnstufe', 'Seite OP-Liste', 'Fälligkeit hergeleitet aus', 'Korrektur Prüfer'];
+  [11, 30, 12, 13, 12, 12, 10, 13, 8, 15, 15, 9, 9, 28, 30].forEach((w, i) => (ep.getColumn(i + 1).width = w));
   ep.addTable({
     name: 'tblPosten', ref: 'A1', headerRow: true, style: { theme: 'TableStyleLight9', showRowStripes: true },
     columns: ecols.map(name => ({ name, filterButton: true })),
-    rows: a.items.map(i => [i.customerNo, i.customerName, i.docNo, i.docType, d(i.date), d(i.due), i.daysOverdue, i.amount < 0 ? 'Gutschr./VZ' : BUCKETS[i.bucket], i.currency, i.amount / 100, i.amountChf === null ? null : i.amountChf / 100, i.dunningLevel, i.page]),
+    rows: a.items.map(i => [i.customerNo, i.customerName, i.docNo, i.docType, d(i.date), d(i.due), i.daysOverdue, i.amount < 0 ? 'Gutschr./VZ' : BUCKETS[i.bucket], i.currency, i.amount / 100, i.amountChf === null ? null : i.amountChf / 100, i.dunningLevel, i.page, i.dueWhy ?? '', i.corrected ? `korrigiert${i.comment ? `: ${i.comment}` : ''}` : '']),
   });
   for (let i = 2; i <= a.items.length + 1; i++) {
     ep.getCell(i, 5).numFmt = DATE; ep.getCell(i, 6).numFmt = DATE; ep.getCell(i, 10).numFmt = CHF; ep.getCell(i, 11).numFmt = CHF;
   }
   ep.views = [{ state: 'frozen', ySplit: 1, xSplit: 2 }];
 
+  // Vom Prüfer ausgeschlossene Posten (nachvollziehbar dokumentiert)
+  if (a.excluded?.length) {
+    const ex = wb.addWorksheet('Ausgeschlossen', { pageSetup: ps });
+    ex.addTable({
+      name: 'tblAusgeschlossen', ref: 'A1', headerRow: true, style: { theme: 'TableStyleLight9', showRowStripes: true },
+      columns: ['Debitor', 'Name', 'Beleg', 'Belegdatum', 'Währung', 'Betrag (Währung)', 'Seite OP-Liste', 'Begründung'].map(name => ({ name, filterButton: true })),
+      rows: a.excluded.map(i => [i.customerNo, i.customerName, i.docNo, d(i.date), i.currency, i.amount / 100, i.page, i.comment ?? '']),
+    });
+    [11, 30, 12, 12, 8, 15, 9, 40].forEach((w, i) => (ex.getColumn(i + 1).width = w));
+    ex.headerFooter.oddFooter = `&L${m.mandate}&C&A – Seite &P von &N&RBalance Scout`;
+  }
   for (const sh of [ov, ag, ku, ep]) sh.headerFooter.oddFooter = `&L${m.mandate}&C&A – Seite &P von &N&RBalance Scout`;
   return Buffer.from(await wb.xlsx.writeBuffer());
 }

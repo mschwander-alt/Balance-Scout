@@ -59,6 +59,22 @@ Hinweis: Das ist eine feste, nachvollziehbare Regelbasis, keine KI.
 - Stehen die Beträge in Excel nicht genau unter „Soll“/„Haben“ (verbundene Kopfzellen), wird die benachbarte
   Spalte mit Beträgen verwendet. Manuell zuordenbar unter „Spalten zuordnen“ (inkl. Soll/Haben Vorjahr).
 
+## Saldobilanz: mehrere Blätter, Nummer+Bezeichnung in einer Zelle, Doppel
+- Mehrere Blätter/Dateien mit überwiegend denselben Konten (z. B. „Saldobilanz“ und Auszug „Bilanz“, Blätter je Jahr):
+  nur das vollständigste wird verwendet, die anderen erscheinen als „nicht verwendet – enthält dieselben Konten wie …“
+  und können in der Vorschau per Häkchen wieder ein- bzw. ausgeschlossen werden. Bilanz- und ER-Blatt (verschiedene
+  Konten) werden weiterhin zusammengeführt.
+- Gleiches Konto mehrfach: nur einmal übernommen; ausgewiesen unter „ausgeblendete Zeilen“ („doppelt – bereits Zeile …“),
+  bei anderem Saldo zusätzlich Warnung.
+- „1020 Bank UBS“, „1020 - Bank“ oder „1020: Bank“ in einer Zelle wird in Nummer und Bezeichnung getrennt.
+
+## Forderungen: Hilfe durch den Prüfer
+- „Hilfe zur Liste“: Fälligkeit bestimmen (laut Liste / immer Belegdatum + Frist / letztes Datum der Zeile),
+  Stichtag der Liste erfassen; Frist je Kunde; je Posten Fälligkeit, Belegdatum, Betrag korrigieren oder ausschliessen
+  (mit Begründung). Jeder Posten zeigt die Herleitung der Fälligkeit; Korrekturen und ausgeschlossene Posten stehen im Excel.
+- Plausibilitätskontrolle: Fälligkeit vor Belegdatum oder > 180 Tage danach (vertauschte Spalten?), Posten ohne Datum,
+  Stichtag der Liste nicht erkannt.
+
 ## Kontoblätter und Fremdwährung
 - **Kontoblätter** (Abacus, Navision/Business Central; PDF mit Textebene oder Excel, auch mehrere hundert Seiten –
   rund 400 Seiten in unter 10 Sekunden): je Konto Währung, Saldovortrag, Buchungen (mit Gegenkonto, falls vorhanden),
@@ -135,7 +151,7 @@ Zwei realistische Testsätze mit vorab festgelegter Soll-Lösung (`test/fixtures
   Gruppen- und Totalzeilen: mit 4 Ziffern exakt die 27 Konten, gleiches Prüfergebnis.
 - **Durchsicht/Abschluss:** Akzeptieren, manuelle Zuordnung, Register-Präfix, Notizseite im PDF, Notiz-PDF, Excel-Spalten.
 
-`npm test` – 140 Tests (inkl. künstlicher OP-Listen im Aufbau von Abacus, Navision-Scan und Business Central sowie Business-Central-Kontoblätter mit indirekter Abschreibung) (Beträge, Saldobilanz, Abgleich, Testsätze, Ablage, Datumserkennung, Excel, Diagnose, Belegvorschau und Fundstellen-Positionen).
+`npm test` – 146 Tests (inkl. künstlicher OP-Listen im Aufbau von Abacus, Navision-Scan und Business Central sowie Business-Central-Kontoblätter mit indirekter Abschreibung) (Beträge, Saldobilanz, Abgleich, Testsätze, Ablage, Datumserkennung, Excel, Diagnose, Belegvorschau und Fundstellen-Positionen).
 
 ## Belegvorschau
 `renderPreview(datei, seite)` liefert die Seite als Bild (PDF, Scan, Foto, Bild in Excel), als Tabelle (Excel, CSV)
