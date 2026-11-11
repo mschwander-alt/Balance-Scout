@@ -52,12 +52,25 @@ Hinweis: Das ist eine feste, nachvollziehbare Regelbasis, keine KI.
   **anderer Stichtag im Beleg**, **Betrag aus Texterkennung**.
 - Stichtag wird im Beleg gesucht (`31.12.2025`, `31.12.25`, `31. Dezember 2025`, `2025-12-31`).
 
+## Saldobilanz mit Soll/Haben-Spalten (Navision)
+- Stehen Soll und Haben in getrennten Spalten – auch zweimal nebeneinander für aktuelles Jahr und Vorjahr
+  („Dieses Jahr bis 31.12.2025 | 31.12.2024“) – wird Saldo = Soll − Haben gerechnet; welches Paar das aktuelle
+  Jahr ist, entscheidet die Jahreszahl über der Kopfzeile.
+- Stehen die Beträge in Excel nicht genau unter „Soll“/„Haben“ (verbundene Kopfzellen), wird die benachbarte
+  Spalte mit Beträgen verwendet. Manuell zuordenbar unter „Spalten zuordnen“ (inkl. Soll/Haben Vorjahr).
+
 ## Kontoblätter und Fremdwährung
 - **Kontoblätter** (Abacus, Navision/Business Central; PDF mit Textebene oder Excel, auch mehrere hundert Seiten –
   rund 400 Seiten in unter 10 Sekunden): je Konto Währung, Saldovortrag, Buchungen (mit Gegenkonto, falls vorhanden),
   Schlusssaldo und Selbstkontrolle (Saldovortrag + Buchungen = Schlusssaldo). Gescannte Kontoblätter werden nicht
   automatisch per Texterkennung gelesen. Kontoblätter sind **kein Nachweis** – liegen sie im Kundenordner, werden sie
   erkannt und vom Abgleich ausgenommen.
+- **Business Central „Fibukonto – Kontoblatt“** (Excel, ein Blatt je Konto, Layout Gegenkontoinfo): Kontokopf
+  „1500 | Bezeichnung“, leerer Anfangssaldo = 0, Endsaldo Soll | Haben | Saldo, Periode „01.01.25..31.12.25“;
+  Gegenkonto nur bei Art F (Sachkonto) – A = Anlage, B = Bank, D/K = Debitor/Kreditor; Belegnummer aus der Spalte.
+- **Diagnose:** Werden in einer Kontoblatt-Datei keine Konten erkannt, erscheint ein Hinweis unter „Saldobilanz-Prüfung“
+  und im Prüfgebiet; der Diagnosebericht zeigt den Aufbau der ersten Zeilen **ohne Inhalte** (DATUM, BETRAG, NRn, x).
+  Liegen die Kontoblätter in einem anderen Geschäftsjahr als der Bilanzstichtag, gibt es ebenfalls einen Hinweis.
 - **Fremdwährungskonten** (Währung laut Kontoblatt): Abgleich Fremdwährungssaldo ↔ Fremdwährungsbetrag im Nachweis;
   **Bewertung** Buchwert CHF ↔ Saldo FW × Kurs per Stichtag (Bewertungsdifferenz). CHF-Konten: Kontoblatt ↔ Saldobilanz.
 - **ESTV-Kursliste** (PDF „Devisen – Banknoten“ per 31.12.) wird gelesen (Kurs je 1 Einheit, auch bei 100er-Notierung);
@@ -72,6 +85,14 @@ Hinweis: Das ist eine feste, nachvollziehbare Regelbasis, keine KI.
 - Abschreibungsanalyse: effektiver Satz = Abschreibung / (Anfangsbestand + Zugänge − Abgänge) gegenüber den
   ESTV-Normalsätzen (Merkblatt A 1995), Kategorie je Konto wählbar; Hinweise bei Überschreitung, Sofortabschreibung,
   Abschreibung auf Land, Differenz zur Saldobilanz. Excel `Analyse_Anlagespiegel.xlsx` (Anlagespiegel + Buchungen).
+- **Indirekte Abschreibung:** Wertberichtigungskonten („Abschr. und Wertberichtigungen …“, „WB …“) werden dem
+  Anlagekonto davor zugeordnet (z. B. 1501 → 1500) und zusammengefasst: Buchwerte im Anlagespiegel, zusätzlich
+  Anschaffungswerte und kumulierte Abschreibungen (Blatt „Anschaffungswerte“). Auf dem WB-Konto gilt Haben =
+  Abschreibung, Soll = Auflösung bei Abgang (gleicher Beleg/Tag wie der Abgang) bzw. Korrektur der Abschreibung
+  (Gegenkonto 68xx). Haben-Buchungen mit gleichem Beleg wie die Aktivierung (Skonto/Rabatt) mindern den Zugang.
+  Zusätzlich Satz vom Anschaffungswert (Vergleich mit halbem ESTV-Satz für lineare Abschreibung).
+- **Abstimmung Abschreibungen ↔ Aufwand:** Summe Abschreibungen laut Anlagespiegel gegen die Aufwandkonten 68xx
+  bzw. „Abschreibungen …“ laut Saldobilanz (Differenz als Feststellung).
 
 ## Durchsicht und Abschluss
 Die Analyse legt noch nichts ab. Erst nach der Durchsicht (`finalizeAudit`) entstehen Ablage und Excel:
@@ -114,7 +135,7 @@ Zwei realistische Testsätze mit vorab festgelegter Soll-Lösung (`test/fixtures
   Gruppen- und Totalzeilen: mit 4 Ziffern exakt die 27 Konten, gleiches Prüfergebnis.
 - **Durchsicht/Abschluss:** Akzeptieren, manuelle Zuordnung, Register-Präfix, Notizseite im PDF, Notiz-PDF, Excel-Spalten.
 
-`npm test` – 132 Tests (inkl. künstlicher OP-Listen im Aufbau von Abacus, Navision-Scan und Business Central) (Beträge, Saldobilanz, Abgleich, Testsätze, Ablage, Datumserkennung, Excel, Diagnose, Belegvorschau und Fundstellen-Positionen).
+`npm test` – 140 Tests (inkl. künstlicher OP-Listen im Aufbau von Abacus, Navision-Scan und Business Central sowie Business-Central-Kontoblätter mit indirekter Abschreibung) (Beträge, Saldobilanz, Abgleich, Testsätze, Ablage, Datumserkennung, Excel, Diagnose, Belegvorschau und Fundstellen-Positionen).
 
 ## Belegvorschau
 `renderPreview(datei, seite)` liefert die Seite als Bild (PDF, Scan, Foto, Bild in Excel), als Tabelle (Excel, CSV)

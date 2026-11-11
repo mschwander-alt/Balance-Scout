@@ -165,7 +165,7 @@ export async function runAudit(input: RunInput): Promise<RunResult> {
     }
 
     // 3b. Kontoblätter: ausdrücklich angegebene sowie im Kundenordner erkannte – sie sind kein Nachweis
-    const { parseLedger, looksLikeLedger } = await import('./ingest/ledger.js');
+    const { parseLedger, looksLikeLedger, lineShape } = await import('./ingest/ledger.js');
     const ledgerDocs: EvidenceDocument[] = [];
     for (const [i, lp] of (input.ledgerPaths ?? []).entries()) {
       progress({ phase: 'lesen', message: `Kontoblätter ${path.basename(lp)}`, current: i + 1, total: input.ledgerPaths!.length });
@@ -175,9 +175,18 @@ export async function runAudit(input: RunInput): Promise<RunResult> {
     const ledgerIds = new Set<string>();
     for (const d of docs) if (looksLikeLedger(d.lines)) { ledgerIds.add(d.id); ledgerDocs.push(d); }
     const ledgers = ledgerDocs.map(d => parseLedger(d.lines, { pageLabels: d.pageLabels, source: d.filename }));
+    const ledgerFiles = ledgerDocs.map((d, i) => {
+      const l = ledgers[i]!;
+      const dates = l.accounts.flatMap(a => a.postings.map(p => p.date)).sort();
+      return {
+        filename: d.relPath, pages: d.pageCount, readStatus: d.status, accounts: l.accounts.length, consistent: l.accounts.filter(a => a.consistent).length,
+        postings: l.accounts.reduce((s, a) => s + a.postings.length, 0), from: l.period.from ?? dates[0] ?? null, to: l.period.to ?? dates[dates.length - 1] ?? null,
+        shape: l.accounts.length ? undefined : d.lines.filter(x => x.text.trim()).slice(0, 15).map(x => lineShape(x.text.replace(/\s+/g, ' ').trim())),
+      };
+    });
     const ledger = ledgers.length ? {
-      accounts: ledgers.flatMap(l => l.accounts), period: ledgers[0]!.period, baseCurrency: ledgers[0]!.baseCurrency,
-      warnings: ledgers.flatMap(l => l.warnings), sources: ledgerDocs.map(d => d.relPath),
+      accounts: ledgers.flatMap(l => l.accounts), period: ledgers.find(l => l.period.from)?.period ?? ledgers[0]!.period, baseCurrency: ledgers[0]!.baseCurrency,
+      warnings: ledgers.flatMap(l => l.warnings), sources: ledgerDocs.map(d => d.relPath), files: ledgerFiles,
     } : null;
     const norm = (n: string) => n.replace(/\D/g, '').replace(/^0+/, '');
     const ledgerBy = new Map((ledger?.accounts ?? []).map(a => [norm(a.accountNumber), a]));
@@ -197,6 +206,11 @@ export async function runAudit(input: RunInput): Promise<RunResult> {
     }
 
     // Hinweise aus den Kontoblättern in die Saldobilanz-Prüfung übernehmen
+    const dmy = (d: string) => d.split('-').reverse().join('.');
+    for (const f of ledgerFiles) {
+      if (!f.accounts) validation.issues.push({ rowIndex: 0, severity: 'warning', code: 'LEDGER_EMPTY', message: `Kontoblätter „${f.filename}“: keine Konten erkannt – ${f.readStatus === 'unreadable' || f.readStatus === 'unsupported' || f.readStatus === 'error' ? 'kein lesbarer Text (eingescannt?). Bitte die Kontoblätter als Excel oder als PDF mit Textebene aus der Buchhaltung exportieren.' : 'der Aufbau wurde nicht erkannt. Bitte den Diagnosebericht und eine Beispielseite (ohne Kundendaten) melden; bis dahin stehen Anlagespiegel und Fremdwährungs-Abgleich für diese Datei nicht zur Verfügung.'}` });
+      else if (f.to && input.closingDate && f.to.slice(0, 4) !== input.closingDate.slice(0, 4)) validation.issues.push({ rowIndex: 0, severity: 'warning', code: 'LEDGER_PERIOD', message: `Kontoblätter „${f.filename}“ umfassen ${f.from ? `${dmy(f.from)} – ` : 'bis '}${dmy(f.to)}, der Bilanzstichtag ist ${dmy(input.closingDate)} – richtiges Geschäftsjahr?` });
+    }
     for (const w of ledger?.warnings ?? []) validation.issues.push({ rowIndex: 0, severity: 'warning', code: 'LEDGER_CHECK', message: `Kontoblätter: ${w}` });
     for (const a of accounts) {
       const li = accountLedger[a.accountNumber];

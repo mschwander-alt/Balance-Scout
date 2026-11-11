@@ -27,6 +27,17 @@ export function diagnosticReport(res: RunResult): string {
   });
   lines.push('');
   lines.push('Konten ohne Nachweis nach Kontenklasse: ' + summarizeMissing(res));
+  const lf = res.ledger?.files ?? [];
+  if (lf.length) {
+    lines.push('');
+    lines.push('Kontoblätter: Datei | Seiten/Blätter | Lesart | Konten | stimmig | Buchungen | Zeitraum');
+    lf.forEach((f, i) => lines.push([`K${i + 1}`, f.pages, f.readStatus, f.accounts, f.consistent, f.postings, `${f.from ?? '?'} – ${f.to ?? '?'}`].join(' | ')));
+    lf.forEach((f, i) => {
+      if (!f.shape?.length) return;
+      lines.push(`Aufbau K${i + 1} (keine Konten erkannt; Inhalte ersetzt: DATUM, BETRAG, NRn = Nummer mit n Ziffern, x = Wort):`);
+      for (const s2 of f.shape) lines.push(`  ${s2}`);
+    });
+  }
   return lines.join('\n');
 }
 

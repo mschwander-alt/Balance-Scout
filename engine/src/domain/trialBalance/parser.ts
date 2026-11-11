@@ -13,6 +13,9 @@ export interface ColumnMapping {
   balanceForeignCurrency?: number;
   balanceDebit?: number;
   balanceCredit?: number;
+  /** Vorjahr in getrennten Spalten Soll / Haben (z. B. Navision „Dieses Jahr bis …“ zweimal) */
+  balancePrevDebit?: number;
+  balancePrevCredit?: number;
 }
 
 export interface TrialBalanceRow {
@@ -136,6 +139,8 @@ const HEADER_ALIASES: Record<keyof ColumnMapping, RegExp[]> = {
   balanceForeignCurrency: [/^(saldo )?fw$/i, /^fremdw(ä|ae)hrung$/i, /^saldo fremdw(ä|ae)hrung$/i, /^foreign( currency)?$/i],
   balanceDebit: [/^soll( chf)?$/i, /^debit$/i, /^saldo soll$/i, /^soll-?saldo$/i, /^aufwand( chf)?$/i, /^aktiven( chf)?$/i],
   balanceCredit: [/^haben( chf)?$/i, /^credit$/i, /^saldo haben$/i, /^haben-?saldo$/i, /^ertrag( chf)?$/i, /^passiven( chf)?$/i],
+  balancePrevDebit: [],
+  balancePrevCredit: [],
 };
 
 /** Jahreszahl in einer Kopfzelle, z. B. "2025", "Saldo 2025", "31.12.2025", "Ist 2025", "GJ 2025", "01.01.-31.12.2025" */
@@ -184,12 +189,52 @@ export function detectMapping(grid: Grid): { headerRowIndex: number; mapping: Co
       if (found.balanceDebit !== undefined && /aufwand|aktiven/i.test(cells[found.balanceDebit]!)) delete found.balanceDebit;
       if (found.balanceCredit !== undefined && /ertrag|passiven/i.test(cells[found.balanceCredit]!)) delete found.balanceCredit;
     }
+    // Zweites Paar Soll/Haben (Vorjahr) – welches Paar das aktuelle Jahr ist, entscheidet die Jahreszahl darüber
+    if (found.balanceDebit !== undefined && found.balanceCredit !== undefined && found.balanceCurrentYear === undefined) {
+      const d2 = cells.findIndex((h, c) => c > found.balanceCredit! && HEADER_ALIASES.balanceDebit.some(rx => rx.test(h)) && !/aufwand|aktiven/i.test(h));
+      const h2 = d2 >= 0 ? cells.findIndex((h, c) => c > d2 && HEADER_ALIASES.balanceCredit.some(rx => rx.test(h)) && !/ertrag|passiven/i.test(h)) : -1;
+      if (d2 >= 0 && h2 >= 0) {
+        const yearAbove = (col: number): number | null => {
+          for (let k = r - 1; k >= Math.max(0, r - 4); k--) {
+            const above = (grid[k] ?? []).map(x => String(x ?? '').trim());
+            for (let c = col; c >= 0; c--) { const y = above[c] ? headerYear(above[c]!) : null; if (y) return y; if (above[c]) break; }
+          }
+          return null;
+        };
+        const y1 = yearAbove(found.balanceDebit), y2 = yearAbove(d2);
+        if (y1 !== null && y2 !== null && y2 > y1) {
+          [found.balancePrevDebit, found.balancePrevCredit, found.balanceDebit, found.balanceCredit] = [found.balanceDebit, found.balanceCredit, d2, h2];
+        } else { found.balancePrevDebit = d2; found.balancePrevCredit = h2; }
+      }
+    }
     const hasBalance = found.balanceCurrentYear !== undefined || (found.balanceDebit !== undefined && found.balanceCredit !== undefined);
     if (found.accountNumber !== undefined && found.accountName !== undefined && hasBalance) {
-      return { headerRowIndex: r, mapping: found as ColumnMapping };
+      return { headerRowIndex: r, mapping: realignAmountColumns(grid, r, found as ColumnMapping) };
     }
   }
   return null;
+}
+
+/**
+ * Beträge stehen in Exporten (z. B. Navision/Business Central nach Excel, verbundene Kopfzellen) oft nicht genau
+ * unter der Überschrift „Soll“/„Haben“, sondern eine bis zwei Spalten daneben. Ist die Spalte unter der Überschrift
+ * leer, wird die nächste Spalte mit Beträgen verwendet, die keiner anderen Überschrift gehört.
+ */
+function realignAmountColumns(grid: Grid, headerRow: number, m: ColumnMapping): ColumnMapping {
+  const keys = ['balanceCurrentYear', 'balancePreviousYear', 'balanceDebit', 'balanceCredit', 'balancePrevDebit', 'balancePrevCredit', 'balanceForeignCurrency'] as const;
+  const data = grid.slice(headerRow + 1, headerRow + 400);
+  const numeric = (c: number) => data.filter(row => { const v = row[c]; return typeof v === 'number' || (typeof v === 'string' && /\d/.test(v) && parseAmount(v) !== null); }).length;
+  const header = (grid[headerRow] ?? []).map(x => String(x ?? '').trim());
+  const out = { ...m };
+  const used = () => new Set(Object.values(out).filter((v): v is number => typeof v === 'number'));
+  for (const k of keys) {
+    const c = out[k];
+    if (c === undefined || numeric(c) > 0) continue;
+    const u = used();
+    const cand = [1, -1, 2, -2, 3, -3].map(d => c + d).filter(x => x >= 0 && !u.has(x) && !header[x] && numeric(x) > 0);
+    if (cand[0] !== undefined) out[k] = cand[0];
+  }
+  return out;
 }
 
 /**
@@ -292,7 +337,12 @@ export function parseTrialBalance(grid: Grid, explicit?: { headerRowIndex: numbe
       issues.push({ rowIndex: excelRow, severity: 'error', code: 'INVALID_AMOUNT', message: `Konto ${accountNumber}: Saldo "${String(cyRaw)}" ist kein gültiger Betrag.` });
       continue;
     }
-    const py = mapping.balancePreviousYear !== undefined ? parseCell(row[mapping.balancePreviousYear]) : null;
+    let py: Cents | null | undefined = mapping.balancePreviousYear !== undefined ? parseCell(row[mapping.balancePreviousYear]) : null;
+    if (mapping.balancePreviousYear === undefined && mapping.balancePrevDebit !== undefined && mapping.balancePrevCredit !== undefined) {
+      const d = parseCell(row[mapping.balancePrevDebit]);
+      const h = parseCell(row[mapping.balancePrevCredit]);
+      py = d === undefined || h === undefined ? undefined : (d ?? 0) - (h ?? 0);
+    }
     if (py === undefined) {
       issues.push({ rowIndex: excelRow, severity: 'warning', code: 'INVALID_AMOUNT_PY', message: `Konto ${accountNumber}: Vorjahressaldo ungültig, wird ignoriert.` });
     }

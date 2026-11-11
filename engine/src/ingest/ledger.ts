@@ -43,6 +43,36 @@ export interface Ledger {
   warnings: string[];
   /** Herkunft (Dateien) */
   sources?: string[];
+  /** Je Datei: erkannte Konten/Buchungen (Diagnose, z. B. „0 Konten“ bei unbekanntem Aufbau) */
+  files?: LedgerFileInfo[];
+}
+export interface LedgerFileInfo {
+  filename: string; pages: number; readStatus: string; accounts: number; consistent: number; postings: number;
+  from: string | null; to: string | null;
+  /** Nur wenn keine Konten erkannt: Aufbau der ersten Zeilen ohne Inhalte (für den anonymen Diagnosebericht) */
+  shape?: string[];
+}
+
+const KEYWORDS = /^(konto|kontonr\.?|kontonummer|bezeichnung|datum|buchungs-?datum|valuta|beleg|belegnr\.?|belegnummer|text|buchungstext|beschreibung|gegenkonto|gegenkonto bez\.?|gk|soll|haben|saldo|betrag|währung|wahrung|kurs|chf|eur|usd|gbp|vortrag|saldovortrag|anfangssaldo|jahresvortrag|endsaldo|schlusssaldo|total|summe|periode|seite|mwst|laufnr\.?|lfd\.? nr\.?|code|f|a|b|d|k)$/i;
+/** Zeile ohne Inhalte beschreiben: Datum/Betrag/Nummer/Text, bekannte Spaltenwörter bleiben stehen */
+export function lineShape(text: string): string {
+  const tok = (w: string): string => {
+    const t = w.replace(/[:;,]$/, '');
+    if (KEYWORDS.test(t)) return w;
+    if (/^\d{1,2}\.\d{1,2}\.\d{2,4}(\.\.\d{1,2}\.\d{1,2}\.\d{2,4})?$/.test(t)) return t.includes('..') ? 'DATUM..DATUM' : 'DATUM';
+    if (/^\d{4}-\d{2}-\d{2}/.test(t)) return 'DATUM';
+    if (/^-?[\d'’]+[.,]\d{2}-?$/.test(t) || /^-\d+$/.test(t)) return 'BETRAG';
+    if (/^\d+$/.test(t)) return `NR${t.length}`;
+    if (/^[A-Z]{1,4}-?\d+/.test(t) || /^\d+[-/]\d+$/.test(t)) return 'BELEGNR';
+    return /\d/.test(t) ? '9' : 'x';
+  };
+  const cells = text.includes(' | ') ? text.split(' | ') : [text];
+  return cells.map(c => {
+    const t = c.trim();
+    if (!t) return '';
+    if (KEYWORDS.test(t)) return t;
+    return t.split(/\s+/).map(tok).join(' ').replace(/\bx( x)+\b/g, 'x…');
+  }).join(' | ');
 }
 
 const CURRENCIES = 'CHF|EUR|USD|GBP|JPY|CAD|AUD|SEK|NOK|DKK|PLN|CZK|HUF|CNY|HKD|SGD|NZD|TRY|ZAR|BRL|MXN|INR';
@@ -115,6 +145,8 @@ export function parseLedger(lines: EvidenceLine[], opts: { pageLabels?: Record<n
   let baseCurrency = 'CHF';
   let from: string | null = null;
   let to: string | null = null;
+  // Business Central "Fibukonto – Kontoblatt" (Spalten Belegnr. | Text | Gegenkonto | Gegenkonto Bez.)
+  let bcLayout = false;
 
   // Navision/Business Central druckt einen Saldo von 0.00 nicht; Abacus druckt bei Buchungen ohne Betrag in
   // Fremdwährung den unveränderten Saldo. Ein einzelner Betrag = bisheriger Saldo bedeutet daher je nach System Verschiedenes.
@@ -131,10 +163,12 @@ export function parseLedger(lines: EvidenceLine[], opts: { pageLabels?: Record<n
     cur = a;
   };
 
-  for (const ln of lines) {
+  for (let li = 0; li < lines.length; li++) {
+    const ln = lines[li]!;
     const t = ln.text.replace(/\s+/g, ' ').trim();
     if (!t) continue;
     const cells = t.includes(' | ');
+    if (cells && /gegenkonto bez/i.test(t)) bcLayout = true;
     if (ln.page !== lastPage) {
       lastPage = ln.page;
       pageCurrency = null;
@@ -146,7 +180,7 @@ export function parseLedger(lines: EvidenceLine[], opts: { pageLabels?: Record<n
     // Berichtswährung / Zeitraum
     const bw = new RegExp(`berichtswährung:?\\s*(${CURRENCIES})`, 'i').exec(t);
     if (bw) baseCurrency = bw[1]!.toUpperCase();
-    const per = /(?:startdatum:?\s*|\()(\d{1,2}\.\d{1,2}\.\d{4})\s*(?:enddatum:?|-)\s*(\d{1,2}\.\d{1,2}\.\d{4})/i.exec(t);
+    const per = /(?:startdatum:?\s*|\(|periode:?\s*|datumsfilter:?\s*)(\d{1,2}\.\d{1,2}\.\d{2,4})\s*(?:enddatum:?|-|\.\.)\s*(\d{1,2}\.\d{1,2}\.\d{2,4})/i.exec(t);
     if (per && !from) {
       const [a, b] = [per[1]!, per[2]!].map(x => x.split('.'));
       from = iso(a![0]!, a![1]!, a![2]!);
@@ -163,6 +197,9 @@ export function parseLedger(lines: EvidenceLine[], opts: { pageLabels?: Record<n
     if (km) { open(km[1]!, km[2]!.split(' | ')[0]!, ln.page); continue; }
     const nm = /^(\d{4,8})(?: \| | )(.+?)(?: \| | )(jahresvortrag|saldovortrag|anfangssaldo)\b/i.exec(t);
     if (nm) open(nm[1]!, nm[2]!.replace(/ \| /g, ' '), ln.page);
+    // Business Central "Fibukonto – Kontoblatt": Kopf "1020 | Bezeichnung", Anfangssaldo in der nächsten Zeile
+    const bm = !nm && !DATE_AT_START.test(t) ? /^(\d{3,8})(?: \| | {2,})(\D.{1,80})$/.exec(t) : null;
+    if (bm && lines.slice(li + 1, li + 4).some(x => OPENING.test(x.text))) { bcLayout = true; open(bm[1]!, bm[2]!.replace(/ \| /g, ' '), ln.page); continue; }
     if (!cur) continue;
     const a = cur as LedgerAccount;
     if (CARRY.test(t)) continue;
@@ -172,12 +209,19 @@ export function parseLedger(lines: EvidenceLine[], opts: { pageLabels?: Record<n
     const after = (rx: RegExp) => { const m = rx.exec(t); return m ? amounts(t.slice(m.index + m[0].length), cells) : []; };
     if (OPENING.test(t) && !DATE_AT_START.test(t)) {
       const v = after(OPENING);
-      if (a.opening === null) a.opening = v.length ? v[0]! : /\b0\b/.test(t) ? 0 : null;
+      // leerer Anfangssaldo = 0 (Business Central druckt 0.00 nicht)
+      if (a.opening === null) a.opening = v.length ? v[0]! : 0;
       continue;
     }
     if (CLOSING.test(t) && !DATE_AT_START.test(t)) {
+      // Schlusssaldo: der Wert, der zum letzten laufenden Saldo passt; sonst Soll|Haben|Saldo-Muster; sonst der erste Betrag
       const v = after(CLOSING);
-      if (v.length) a.closing = v[0]!;
+      const last = a.postings.length ? a.postings[a.postings.length - 1]!.balance : a.opening;
+      const fit = last !== null && last !== undefined ? v.find(x => Math.abs(x - last) <= 1) : undefined;
+      const triple = v.length >= 3 && a.opening !== null && Math.abs(v[2]! - (a.opening + v[0]! - v[1]!)) <= 1 ? v[2] : undefined;
+      if (fit !== undefined) a.closing = fit;
+      else if (triple !== undefined) a.closing = triple;
+      else if (v.length) a.closing = v[0]!;
       continue;
     }
     // Buchung: beginnt mit Datum, mind. Betrag + Saldo (bei Excel-Zellen ggf. nur Betrag)
@@ -215,8 +259,20 @@ export function parseLedger(lines: EvidenceLine[], opts: { pageLabels?: Record<n
         if (prev !== null && prev !== undefined && balance !== null) amount = balance - prev;
       }
       if (amount === 0) continue;
-      const contra = /\b(\d{4,6})(?: \| | )(?:F|CF|d\+?|k\+?|[A-Z]{1,2}\+?)\b/.exec(t.slice(10))?.[1] ?? null;
-      const docNo = /\b(?:F|CF|d\+?|k\+?)(?: \| | )(\d{1,8})\b/.exec(t)?.[1] ?? null;
+      // Gegenkonto: Abacus "69250 F", Business Central "F | 6940" (Kürzel vor der Nummer)
+      let contra: string | null;
+      let docNo: string | null;
+      if (bcLayout && cells) {
+        // Business Central: "Datum | Belegnr. | Text | F | 6820 | Bezeichnung | Laufnr. | …" – nur Art F (Fibukonto) ist ein Sachkonto;
+        // A = Anlage, B = Bankkonto, D/K = Debitor/Kreditor. Zahlen im Text (z. B. Jahreszahlen) sind kein Gegenkonto.
+        const parts = t.split(' | ');
+        docNo = parts[1] && /^[^\s]{1,20}$/.test(parts[1]) && !DATE_AT_START.test(parts[1]) ? parts[1] : null;
+        const ty = / \| ([A-Z]) \| (\d{3,8})(?= \| |$)/.exec(t);
+        contra = ty && ty[1] === 'F' ? ty[2]! : null;
+      } else {
+        contra = /\b(\d{4,6})(?: \| | )(?:F|CF|d\+?|k\+?|[A-Z]{1,2}\+?)\b/.exec(t.slice(10))?.[1] ?? /(?:^| \| )[FBG](?: \| )(\d{4,6})(?: \| |$)/.exec(t)?.[1] ?? null;
+        docNo = /\b(?:F|CF|d\+?|k\+?)(?: \| | )(\d{1,8})\b/.exec(t)?.[1] ?? null;
+      }
       // ohne gedruckten Saldo: laufenden Saldo fortschreiben
       if (balance === null && prev !== null && prev !== undefined) balance = prev + amount;
       a.postings.push({ date: iso(dm[1]!, dm[2]!, dm[3]!), text: postingText(t.slice(dm[0].length)), contra, docNo, amount, balance, page: ln.page, lineNo: ln.lineNo });
