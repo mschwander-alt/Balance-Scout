@@ -46,10 +46,6 @@ export function NewAudit({ prefill, onStart }: { prefill?: Partial<JobInput>; on
         setMode(s.fileMode);
         setTol(s.toleranceChf);
         setSign(s.signConvention);
-        if (s.accountDigits) {
-          setDigits(s.accountDigits);
-          setDigitsTouched(true);
-        }
       }
     });
   }, [prefill]);
@@ -69,7 +65,15 @@ export function NewAudit({ prefill, onStart }: { prefill?: Partial<JobInput>; on
       e => toast('error', `Saldobilanz: ${(e as Error).message}`),
     ).finally(() => setPreviewBusy(false));
   }, [tbs, sign, mappings, digits, digitsTouched, toast]);
-  const addTb = (items: PickedPath[]) => setTbs(cur => [...cur, ...items.filter(i => !cur.some(c => c.path === i.path))]);
+  // Neue Datei(en): Ziffernbereich neu aus den Kontonummern vorschlagen (nie aus einer früheren Prüfung übernehmen)
+  const addTb = (items: PickedPath[]) => {
+    setTbs(cur => [...cur, ...items.filter(i => !cur.some(c => c.path === i.path))]);
+    setDigitsTouched(false);
+    setDigits(null);
+  };
+  // Ausgeblendete Zeilen mit MEHR Ziffern als eingestellt sind vermutlich echte Konten
+  const longer = preview?.excluded?.filter(e => digits && e.accountNumber.replace(/\D/g, '').length > digits.max && e.balance !== null && e.balance !== 0) ?? [];
+  const longerDigits = longer.length ? Math.max(...longer.map(e => e.accountNumber.replace(/\D/g, '').length)) : 0;
 
   const addEvidence = (items: PickedPath[]) => setEvidence(ev => [...ev, ...items.filter(i => !ev.some(e => e.path === i.path))]);
   const onDrop = async (e: DragEvent, kind: 'tb' | 'ev') => {
@@ -110,7 +114,6 @@ export function NewAudit({ prefill, onStart }: { prefill?: Partial<JobInput>; on
   const rateList = settings?.fxRateLists?.[closing] ?? null;
   const fxRates: FxRateList | undefined = manualRates ? { date: closing, rates: manualRates, source: 'manuell erfasst' } : rateList ?? undefined;
   const start = () => {
-    if (digits) void bsb().app.saveSettings({ accountDigits: digits });
     onStart({
       mandate: mandate.trim(), client: client.trim() || undefined, closingDate: closing || null, trialBalancePath: tbs[0]!.path,
       trialBalancePaths: tbs.map(t => t.path), trialBalanceMappings: Object.keys(mappings).length ? mappings : undefined,
@@ -174,7 +177,13 @@ export function NewAudit({ prefill, onStart }: { prefill?: Partial<JobInput>; on
               </select>
             </label>
           </div>
-          {digits && !digitsTouched && preview?.suggestedDigits && <p className="small muted">Ziffernbereich automatisch vorgeschlagen – Gruppen und Zwischensummen mit kürzeren Nummern werden ausgeblendet.</p>}
+          {digits && !digitsTouched && preview?.suggestedDigits && <p className="small muted">Ziffernbereich aus den Kontonummern der Datei vorgeschlagen – Gruppen und Zwischensummen mit kürzeren Nummern werden ausgeblendet.</p>}
+          {longer.length > 0 && (
+            <div className="warn-box small" style={{ marginTop: 6 }}>
+              {longer.length} Zeilen mit {longerDigits}-stelliger Nummer und Saldo werden ausgeblendet (z. B. {longer.slice(0, 2).map(e => `${e.accountNumber} ${e.accountName}`).join(', ')}) – vermutlich Konten.{' '}
+              <button className="link small" onClick={() => { setDigitsTouched(true); setDigits(d => ({ min: d?.min ?? longerDigits, max: longerDigits })); }}>Bereich auf {digits?.min}–{longerDigits} Ziffern erweitern</button>
+            </div>
+          )}
           {previewBusy && <Spinner label="Saldobilanz wird geprüft …" />}
           {preview && !previewBusy && (
             <div style={{ marginTop: 10 }}>
