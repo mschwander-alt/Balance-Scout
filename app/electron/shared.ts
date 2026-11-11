@@ -11,6 +11,8 @@ export interface ColumnMapping {
   balanceForeignCurrency?: number;
   balanceDebit?: number;
   balanceCredit?: number;
+  balancePrevDebit?: number;
+  balancePrevCredit?: number;
 }
 
 /** Synchronisierter Cloud-Ordner (OneDrive / SharePoint) auf diesem PC */
@@ -103,9 +105,12 @@ export type MoveClass = 'zugang' | 'abgang' | 'abschreibung' | 'umbuchung';
 export interface FixedAssetsDecision { accounts?: string[]; categories?: Record<string, string>; classes?: Record<string, MoveClass>; findings: { text: string; status: 'offen' | 'erledigt' }[]; note?: string; visum?: string }
 export interface FixedAssetsResult {
   available: boolean; reason?: string;
-  candidates: { accountNumber: string; accountName: string; balance: number; suggested: boolean; inLedger: boolean }[];
+  candidates: { accountNumber: string; accountName: string; balance: number; suggested: boolean; inLedger: boolean; wbFor?: string | null }[];
   rows: {
     accountNumber: string; accountName: string; opening: number; additions: number; disposals: number; depreciation: number; transfers: number; closing: number;
+    /** indirekte Methode: Wertberichtigungskonto; Anschaffungswerte (aw…) und kumulierte Abschreibungen (kum…) */
+    wbAccount: string | null; awOpening: number; awAdditions: number; awDisposals: number; awTransfers: number; awClosing: number;
+    kumOpening: number; kumDisposals: number; kumOther: number; kumClosing: number; linearRate: number | null;
     tbBalance: number | null; tbDiff: number | null; category: string | null; categoryLabel: string | null; estvRate: number | null; effectiveRate: number | null;
     flags: string[]; consistent: boolean;
     postings: { key: string; date: string; text: string; contra: string | null; amount: number; cls: MoveClass; auto: MoveClass; why: string; page: number; lineNo: number }[];
@@ -113,6 +118,8 @@ export interface FixedAssetsResult {
   totals: { opening: number; additions: number; disposals: number; depreciation: number; transfers: number; closing: number; tbBalance: number };
   categories: { key: string; label: string; rate: number }[];
   suggestions: string[];
+  /** Abstimmung Abschreibungen ↔ Aufwand laut Saldobilanz */
+  expense: { accounts: { accountNumber: string; accountName: string; balance: number }[]; total: number; diff: number } | null;
 }
 export interface ReceivablesDecision { docId: string | null; docIds?: string[]; accounts?: string[]; assigned?: Record<string, string[]>; termDays: number; rates: Record<string, number>; findings: { text: string; status: 'offen' | 'erledigt' }[]; visum?: string; note?: string }
 export interface AgingItem {

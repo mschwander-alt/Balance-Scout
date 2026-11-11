@@ -252,6 +252,30 @@ assert.deepEqual(fa.rows.map(x => [x.accountNumber, x.additions, x.disposals, x.
 assert.match(fa.rows.find(x => x.accountNumber === '1530').flags.join(' '), /über dem ESTV-Normalsatz von 40 %/);
 step('Anlagespiegel: 4 Konten, Abschreibung Fahrzeuge über ESTV-Satz erkannt');
 
+// Business Central Kontoblätter (Excel, ein Blatt je Konto) mit indirekter Abschreibung (Wertberichtigungskonten)
+const BCD = path.resolve(root, '..', 'engine', 'test', 'fixtures', 'bc');
+const bc = await page.evaluate(F => window.bsb.engine.run({
+  mandate: 'Muster Maschinen AG', closingDate: '2025-12-31', trialBalancePath: F + '/Saldobilanz_2025.xlsx', signConvention: 'signed', evidencePaths: [F + '/Saldobilanz_2025.xlsx'],
+  targetDir: null, fileMode: 'none', absoluteToleranceCents: 100, ledgerPaths: [F + '/Fibu-Kontoblaetter_2025.xlsx'],
+}), BCD);
+const fb = await page.evaluate(id => window.bsb.review.fixedAssets(id, {}), bc.historyId);
+assert.deepEqual(fb.rows.map(x => [x.accountNumber, x.wbAccount, x.closing, x.tbDiff]), [['1500', '1501', 21490000, 0], ['1510', null, 3900000, 0], ['1530', '1531', 2400000, 0]]);
+assert.equal(fb.expense.diff, 0);
+// Oberfläche: Prüfgebiet Mobile Sachanlagen
+await page.getByRole('button', { name: 'Übersicht' }).click();
+await page.locator('.hist > div', { hasText: 'Muster Maschinen AG' }).first().getByRole('button', { name: /Durchsicht fortsetzen|Ergebnis/ }).click();
+await page.getByRole('tab', { name: 'Prüfgebiete' }).click();
+await page.locator('.area-item', { hasText: 'Mobile Sachanlagen' }).click();
+await page.locator('.pick-line', { hasText: 'Wertberichtigung zu 1500' }).waitFor();
+await page.getByRole('button', { name: 'Anlagespiegel erstellen' }).click();
+await page.locator('tr[data-anlage="1500"]', { hasText: '+ 1501 WB' }).waitFor();
+assert.match(await page.locator('.expense-check').innerText(), /✓ stimmt überein/);
+await page.locator('tr[data-anlage="1500"]').click();
+await page.locator('table.brutto').waitFor();
+assert.match(await page.locator('table.brutto').innerText(), /Kum\. Abschreibungen \(1501\)[\s\S]*-323'500\.00/);
+await page.screenshot({ path: `${shots}-9-anlagen-bc.png` });
+step('Business Central: Wertberichtigungen zugeordnet, Brutto-Anlagespiegel, Abschreibungen = Aufwand');
+
 // Bilanz und Erfolgsrechnung getrennt, mit Zwischensummen: Vorschau über die Schnittstelle
 const SPLIT = path.resolve(root, '..', 'engine', 'test', 'fixtures', 'tb_split');
 const sp = await page.evaluate(p => window.bsb.engine.previewTrialBalance(p, 'signed', { accountDigits: { min: 4, max: 4 } }), [path.join(SPLIT, 'Bilanz_2025.xlsx'), path.join(SPLIT, 'Erfolgsrechnung_2025.pdf')]);

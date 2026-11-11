@@ -45,12 +45,12 @@ export function FixedAssets({ historyId, decisions, update }: { historyId: strin
           {r.candidates.map(c => (
             <label key={c.accountNumber} className={`pick-line ${c.inLedger ? '' : 'muted'}`} title={c.inLedger ? '' : 'Kein Kontoblatt zu diesem Konto'}>
               <input type="checkbox" disabled={!c.inLedger} checked={selected.includes(c.accountNumber)} onChange={e => setParams(p => ({ ...p, accounts: e.target.checked ? [...selected, c.accountNumber] : selected.filter(x => x !== c.accountNumber) }))} />
-              <span>{c.accountNumber} {c.accountName}</span><span className="small muted">CHF {chf(c.balance)}</span>
+              <span>{c.accountNumber} {c.accountName}{c.wbFor && <span className="small muted"> · Wertberichtigung zu {c.wbFor}</span>}</span><span className="small muted">CHF {chf(c.balance)}</span>
             </label>
           ))}
         </div>
         <div className="row" style={{ marginTop: 8 }}>
-          <span className="small muted">Zugänge, Abgänge und Abschreibungen werden aus Gegenkonto bzw. Buchungstext abgeleitet und sind je Buchung korrigierbar.</span>
+          <span className="small muted">Zugänge, Abgänge und Abschreibungen werden aus Gegenkonto bzw. Buchungstext abgeleitet und sind je Buchung korrigierbar. Wertberichtigungskonten (indirekte Abschreibung) werden mit dem Anlagekonto zusammengefasst.</span>
           <span className="ml-auto" />
           {busy && <Spinner />}
           {!started ? <button className="btn btn-primary" disabled={!selected.length} onClick={start}>Anlagespiegel erstellen</button> : (
@@ -69,11 +69,11 @@ export function FixedAssets({ historyId, decisions, update }: { historyId: strin
               <thead><tr><th>Konto</th><th>Bezeichnung</th><th className="num">Anfangsbestand</th><th className="num">Zugänge</th><th className="num">Abgänge</th><th className="num">Abschreibungen</th><th className="num">Endbestand</th><th>Kategorie (ESTV)</th><th className="num">ESTV</th><th className="num">effektiv</th></tr></thead>
               <tbody>
                 {r.rows.map(x => {
-                  const over = x.estvRate !== null && x.effectiveRate !== null && x.effectiveRate * 100 > x.estvRate + 0.5;
+                  const over = x.flags.some(f => /über dem ESTV-Normalsatz/.test(f));
                   return (
                     <Fragment key={x.accountNumber}>
                       <tr data-anlage={x.accountNumber} className={open === x.accountNumber ? 'selected' : ''} onClick={() => setOpen(open === x.accountNumber ? null : x.accountNumber)}>
-                        <td>{x.accountNumber}</td>
+                        <td>{x.accountNumber}{x.wbAccount && <div className="fx-sub" title="Wertberichtigungskonto (indirekte Abschreibung)">+ {x.wbAccount} WB</div>}</td>
                         <td title={x.accountName}>{x.accountName}{x.flags.length > 0 && <WarnIcon text={x.flags.join('\n')} />}</td>
                         <td className="num">{chf(x.opening)}</td>
                         <td className="num">{x.additions ? chf(x.additions) : '–'}</td>
@@ -87,16 +87,27 @@ export function FixedAssets({ historyId, decisions, update }: { historyId: strin
                           </select>
                         </td>
                         <td className="num">{x.estvRate === null ? '–' : `${x.estvRate} %`}</td>
-                        <td className={`num ${over ? 'delta-big' : ''}`}>{pct(x.effectiveRate)}</td>
+                        <td className={`num ${over ? 'delta-big' : ''}`} title={x.linearRate !== null ? 'Satz vom Buchwert (degressiv) bzw. vom Anschaffungswert (linear, ESTV halber Satz)' : 'Satz vom Buchwert (degressiv)'}>{pct(x.effectiveRate)}{x.linearRate !== null && <div className="fx-sub">AW {pct(x.linearRate)}</div>}</td>
                       </tr>
                       {open === x.accountNumber && (
                         <tr className="sub-row"><td colSpan={10}>
                           {x.flags.length > 0 && <div className="problem" style={{ marginBottom: 6 }}><ul>{x.flags.map((f, i) => <li key={i}>{f}</li>)}</ul></div>}
+                          {x.wbAccount && (
+                            <table className="grid small brutto" style={{ marginBottom: 8 }}>
+                              <thead><tr><th /><th className="num">Anfang</th><th className="num">Zugänge</th><th className="num">Abgänge</th><th className="num">Abschreibungen</th><th className="num">Übrige</th><th className="num">Ende</th></tr></thead>
+                              <tbody>
+                                <tr><td>Anschaffungswerte ({x.accountNumber})</td><td className="num">{chf(x.awOpening)}</td><td className="num">{chf(x.awAdditions)}</td><td className="num">{chf(-x.awDisposals)}</td><td className="num">–</td><td className="num">{chf(x.awTransfers)}</td><td className="num">{chf(x.awClosing)}</td></tr>
+                                <tr><td>Kum. Abschreibungen ({x.wbAccount})</td><td className="num">{chf(x.kumOpening)}</td><td className="num">–</td><td className="num">{chf(x.kumDisposals)}</td><td className="num">{chf(-x.depreciation)}</td><td className="num">{chf(x.kumOther)}</td><td className="num">{chf(x.kumClosing)}</td></tr>
+                                <tr className="total-row"><td>Buchwert</td><td className="num">{chf(x.opening)}</td><td className="num">{chf(x.additions)}</td><td className="num">{chf(-x.disposals)}</td><td className="num">{chf(-x.depreciation)}</td><td className="num">{chf(x.transfers)}</td><td className="num">{chf(x.closing)}</td></tr>
+                              </tbody>
+                            </table>
+                          )}
                           <table className="grid small">
-                            <thead><tr><th>Datum</th><th>Text</th><th>Gegenkonto</th><th className="num">Betrag</th><th>Klassierung</th></tr></thead>
+                            <thead><tr>{x.wbAccount && <th>Konto</th>}<th>Datum</th><th>Text</th><th>Gegenkonto</th><th className="num">Betrag</th><th>Klassierung</th></tr></thead>
                             <tbody>
                               {x.postings.map(pz => (
                                 <tr key={pz.key}>
+                                  {x.wbAccount && <td>{pz.key.split('|')[0]}</td>}
                                   <td>{pz.date.split('-').reverse().join('.')}</td><td title={pz.why}>{pz.text}</td><td>{pz.contra ?? ''}</td>
                                   <td className="num">{chf(pz.amount)}</td>
                                   <td>
@@ -107,7 +118,7 @@ export function FixedAssets({ historyId, decisions, update }: { historyId: strin
                                   </td>
                                 </tr>
                               ))}
-                              {!x.postings.length && <tr><td colSpan={5} className="muted">Keine Buchungen im Geschäftsjahr.</td></tr>}
+                              {!x.postings.length && <tr><td colSpan={6} className="muted">Keine Buchungen im Geschäftsjahr.</td></tr>}
                             </tbody>
                           </table>
                         </td></tr>
@@ -123,7 +134,12 @@ export function FixedAssets({ historyId, decisions, update }: { historyId: strin
               </tbody>
             </table>
           </div>
-          <p className="small muted">ESTV-Normalsätze gemäss Merkblatt A 1995 (degressiv vom Buchwert; linear vom Anschaffungswert = halber Satz). Effektiver Satz = Abschreibung / (Anfangsbestand + Zugänge − Abgänge).</p>
+          {r.expense && (
+            <div className="card small expense-check" data-expense-diff={r.expense.diff}>
+              <strong>Abstimmung Abschreibungen ↔ Aufwand:</strong> Anlagespiegel CHF {chf(r.totals.depreciation)} · Saldobilanz CHF {chf(r.expense.total)} ({r.expense.accounts.map(a => a.accountNumber).join(', ')}) · {Math.abs(r.expense.diff) > 100 ? <span className="delta-big">Differenz CHF {chf(r.expense.diff)}</span> : <span className="ok-text">✓ stimmt überein</span>}
+            </div>
+          )}
+          <p className="small muted">ESTV-Normalsätze gemäss Merkblatt A 1995 (degressiv vom Buchwert; linear vom Anschaffungswert = halber Satz). Effektiver Satz = Abschreibung / (Anfangsbestand + Zugänge − Abgänge); bei indirekter Abschreibung zusätzlich der Satz vom Anschaffungswert (AW).</p>
 
           <div className="card stack" style={{ gap: 6 }}>
             <h3>Feststellungen und Notiz</h3>

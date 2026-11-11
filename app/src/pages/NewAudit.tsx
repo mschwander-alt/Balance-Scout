@@ -414,6 +414,11 @@ function MappingDialog({ part, current, onClose, onApply }: { part: TbPart; curr
         {sel('balanceCredit', 'Haben', true)}
         <span className="small muted">→ Saldo = Soll − Haben</span>
       </div>
+      <div className="row" style={{ marginTop: 8 }}>
+        <span className="small muted">Vorjahr ohne Saldo-Spalte:</span>
+        {sel('balancePrevDebit', 'Soll VJ', true)}
+        {sel('balancePrevCredit', 'Haben VJ', true)}
+      </div>
     </Modal>
   );
 }

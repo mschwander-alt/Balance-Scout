@@ -351,5 +351,6 @@ table.kunden td { white-space: nowrap; } table.kunden td:first-child { max-width
 .page { overflow-x: hidden; }
 .acc-chips { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 0 18px; }
 table.anlagen td { white-space: nowrap; } table.anlagen td:nth-child(2) { max-width: 220px; overflow: hidden; text-overflow: ellipsis; }
+table.anlagen select.assign { max-width: 190px; } table.anlagen table.grid td { white-space: normal; } .expense-check { padding: 8px 12px; }
 tr.sub-row > td { background: #fafbfc; padding: 8px 12px; }
 .row > code { max-width: 100%; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: inline-block; vertical-align: middle; }
