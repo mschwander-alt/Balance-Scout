@@ -7,7 +7,7 @@ import { readFile, writeFile } from 'node:fs/promises';
 import { runAudit, writeExcelReport, uniqueReportPath, diagnosticsPathFor, diagnosticReport, loadTrialBalanceFor, type RunInput, type RunResult } from './index.js';
 import { classifyRows, validateTrialBalance, type SignConvention } from './domain/trialBalance/validate.js';
 import type { ExplicitMapping } from './domain/trialBalance/load.js';
-import { KMU_GROUPS, defaultGroupLetters } from './domain/trialBalance/accountGroups.js';
+import { KMU_GROUPS, defaultGroupLetters, applyGroupOverrides, type GroupOverrides } from './domain/trialBalance/accountGroups.js';
 import { finalizeAudit, type ReviewDecisions } from './finalize.js';
 import { loadSnapshot, saveSnapshot } from './snapshot.js';
 import type { FileMode } from './organize/placeFiles.js';
@@ -25,11 +25,11 @@ export type Request =
   | { id: string; type: 'finalize'; snapshotPath: string; decisions: ReviewDecisions; targetDir: string | null; fileMode: FileMode; reportDir: string }
   | { id: string; type: 'groups' }
   /** Vertiefte Prüfung Sachanlagen: Anlagespiegel (optional als Excel speichern) */
-  | { id: string; type: 'fixedAssets'; snapshotPath: string; accounts?: string[]; categories?: Record<string, string>; classes?: Record<string, 'zugang' | 'abgang' | 'abschreibung' | 'umbuchung'>; exportPath?: string; findings?: { text: string; status: 'offen' | 'erledigt' }[]; note?: string; visum?: string }
+  | { id: string; type: 'fixedAssets'; snapshotPath: string; groupOverrides?: GroupOverrides; accounts?: string[]; categories?: Record<string, string>; classes?: Record<string, 'zugang' | 'abgang' | 'abschreibung' | 'umbuchung'>; exportPath?: string; findings?: { text: string; status: 'offen' | 'erledigt' }[]; note?: string; visum?: string }
   /** ESTV-Kursliste (PDF) lesen */
   | { id: string; type: 'rates'; path: string }
   /** Vertiefte Prüfung Forderungen: Fälligkeitsanalyse (optional als Excel speichern) */
-  | { id: string; type: 'receivables'; snapshotPath: string; docId?: string | null; docIds?: string[]; accounts?: string[]; assigned?: Record<string, string[]>; termDays?: number; rates?: Record<string, number>; dueMode?: 'auto' | 'term' | 'lastDate'; customerTerms?: Record<string, number>; corrections?: Record<string, { due?: string | null; date?: string | null; amount?: number; exclude?: boolean; customerName?: string; comment?: string }>; listDate?: string | null; exportPath?: string; exportFormat?: 'xlsx' | 'pptx'; findings?: { text: string; status: 'offen' | 'erledigt' }[]; visum?: string; note?: string };
+  | { id: string; type: 'receivables'; snapshotPath: string; groupOverrides?: GroupOverrides; docId?: string | null; docIds?: string[]; accounts?: string[]; assigned?: Record<string, string[]>; termDays?: number; rates?: Record<string, number>; dueMode?: 'auto' | 'term' | 'lastDate'; customerTerms?: Record<string, number>; corrections?: Record<string, { due?: string | null; date?: string | null; amount?: number; exclude?: boolean; customerName?: string; comment?: string }>; listDate?: string | null; exportPath?: string; exportFormat?: 'xlsx' | 'pptx'; findings?: { text: string; status: 'offen' | 'erledigt' }[]; visum?: string; note?: string };
 
 type Port = { postMessage(m: unknown): void; on(ev: 'message', cb: (m: unknown) => void): void };
 const parentPort: Port | undefined = (process as unknown as { parentPort?: Port }).parentPort;
@@ -85,7 +85,7 @@ export function serializeResult(res: RunResult, excelPath: string, diagnostics: 
       const m = res.byAccount.get(`${a.accountNumber}#${a.rowIndex}`)!;
       return {
         accountNumber: a.accountNumber, accountName: a.accountName, groupName: a.groupName, groupCode: a.groupCode, groupSource: a.groupSource,
-        source: a.source ?? null, category: a.category, manual: res.review?.manual.get(a.accountNumber) ?? null,
+        autoGroup: a.autoGroup ?? null, source: a.source ?? null, category: a.category, manual: res.review?.manual.get(a.accountNumber) ?? null,
         fx: res.accountLedger?.[a.accountNumber] ?? null,
         balance: a.balanceCurrentYear, balancePreviousYear: a.balancePreviousYear, status: m.status, reasons: m.reasons,
         best: m.best ? withDoc(m.best) : null,
@@ -117,7 +117,9 @@ async function handle(req: Request): Promise<unknown> {
   if (req.type === 'preview') return renderPreview(req.absPath, req.page);
   if (req.type === 'groups') return { groups: KMU_GROUPS.map(g => ({ code: g.code, name: g.name, category: g.category, subcategory: g.subcategory })), letters: defaultGroupLetters(), general: { code: 'ALLG', name: 'Allgemeine Prüfungen (Belege ohne Konto)', account: '@allgemein' } };
   if (req.type === 'fixedAssets') {
-    const res = await loadSnapshot(req.snapshotPath);
+    // vom Prüfer verschobene Konten (Gruppe) gelten auch für die Prüfgebiete
+    const snap = await loadSnapshot(req.snapshotPath);
+    const res = { ...snap, accounts: applyGroupOverrides(snap.accounts, req.groupOverrides) };
     const { fixedAssetsFor } = await import('./analysis/fixedAssets.js');
     const r = fixedAssetsFor(res, req);
     if (req.exportPath && r.available) {
@@ -142,7 +144,9 @@ async function handle(req: Request): Promise<unknown> {
     }
   }
   if (req.type === 'receivables') {
-    const res = await loadSnapshot(req.snapshotPath);
+    // vom Prüfer verschobene Konten (Gruppe) gelten auch für die Prüfgebiete
+    const snap = await loadSnapshot(req.snapshotPath);
+    const res = { ...snap, accounts: applyGroupOverrides(snap.accounts, req.groupOverrides) };
     const { receivablesFor } = await import('./analysis/receivables.js');
     // Zuordnung aus der Durchsicht (inkl. manueller Änderungen) kommt von der App
     const r = receivablesFor(res, req, req.assigned);

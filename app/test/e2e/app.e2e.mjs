@@ -148,6 +148,27 @@ await page.locator('.note-field textarea').fill('Saldo mit Bankbestätigung abge
 await page.locator('.preview-panel h3').click(); // Feld verlassen = speichern
 await page.locator('[data-konto="1020"] .flag.note').waitFor();
 step('Notiz erfasst');
+// Konto per Drag & Drop in eine andere Gruppe verschieben: Beleg wird mitgenommen (Register der neuen Gruppe), danach zurücksetzen
+await page.getByRole('tab', { name: 'Bilanz', exact: true }).click();
+const rowOrder = () => page.locator('table.konten tbody tr').evaluateAll(rs => rs.map(r => (r.dataset.gruppe ? `G:${r.dataset.gruppe}` : r.dataset.konto ?? '')));
+const groupOfRow = (order, num) => order.slice(0, order.indexOf(num)).filter(x => x.startsWith('G:')).pop();
+const movNum = await page.locator('tr.group-row[data-gruppe="A10"] ~ tr[data-konto]:has(.reg-link)').first().getAttribute('data-konto');
+const movRow = page.locator(`tr[data-konto="${movNum}"]`);
+const regBefore = await movRow.locator('.reg-link').innerText();
+assert.equal(groupOfRow(await rowOrder(), movNum), 'G:A10');
+await movRow.dragTo(page.locator('tr.group-row[data-gruppe="A12"]'));
+await movRow.locator('.flag.moved').waitFor();
+assert.equal(groupOfRow(await rowOrder(), movNum), 'G:A12', 'Konto steht in der neuen Gruppe');
+const regMoved = await movRow.locator('.reg-link').innerText();
+assert.notEqual(regMoved[0], regBefore[0], `Register folgt der Gruppe (${regBefore} → ${regMoved})`);
+await page.screenshot({ path: `${shots}-5b-verschoben.png` });
+// Zurücksetzen im Konto rechts
+await movRow.click();
+await page.locator('.group-line').getByRole('button', { name: 'zurücksetzen' }).click();
+await movRow.locator('.flag.moved').waitFor({ state: 'detached' });
+assert.equal(groupOfRow(await rowOrder(), movNum), 'G:A10');
+assert.equal(await movRow.locator('.reg-link').innerText(), regBefore);
+step(`Konto ${movNum} per Drag & Drop verschoben (${regBefore} → ${regMoved}) und zurückgesetzt`);
 // Belege ohne Zuordnung: einen Beleg einem Konto ohne Nachweis zuordnen, übrige als nicht relevant
 await page.getByRole('tab', { name: 'Belegverzeichnis' }).click();
 await page.getByRole('button', { name: /Ohne Zuordnung/ }).click();

@@ -12,7 +12,7 @@ import type { RunResult, DocumentSummary } from './run.js';
 import type { AccountResult, AccountStatus, MatchSummary } from './domain/matching/engine.js';
 import { placeFiles, type FileMode, type PlacementPlan } from './organize/placeFiles.js';
 import { notePdf, prependNote, type NoteEntry } from './report/notePdf.js';
-import { KMU_GROUPS, GENERAL_ACCOUNT, GENERAL_GROUP } from './domain/trialBalance/accountGroups.js';
+import { KMU_GROUPS, GENERAL_ACCOUNT, GENERAL_GROUP, applyGroupOverrides, type GroupOverrides } from './domain/trialBalance/accountGroups.js';
 
 export const IRRELEVANT_DIR = '03_Nicht_relevant';
 
@@ -25,6 +25,8 @@ export interface ReviewDecisions {
   notes?: Record<string, { text: string; at: string; visum: string }>;
   /** Gruppe (Code, z. B. "A10") -> Registerbuchstabe (z. B. "B"); leer = ohne Präfix */
   groupLetters?: Record<string, string>;
+  /** Konto (Nummer) -> vom Prüfer gewählte Gruppe (Code); Belege und Register folgen dem Konto */
+  groupOverrides?: GroupOverrides;
   /** Vertiefte Prüfungen (Prüfgebiete) */
   analyses?: {
     fixedAssets?: { accounts?: string[]; categories?: Record<string, string>; classes?: Record<string, 'zugang' | 'abgang' | 'abschreibung' | 'umbuchung'>; findings: { text: string; status: 'offen' | 'erledigt' }[]; note?: string; visum?: string };
@@ -50,6 +52,8 @@ const fmt = (iso: string) => iso.slice(0, 10).split('-').reverse().join('.');
 
 /** Wendet die Entscheide auf eine Kopie des Ergebnisses an (Status, Zuordnung, Kennzahlen). */
 export function applyReview(res: RunResult, d: ReviewDecisions): RunResult & { review: Review } {
+  // Vom Prüfer verschobene Konten: neue Gruppe für Register, Excel und Prüfgebiete
+  res = { ...res, accounts: applyGroupOverrides(res.accounts, d.groupOverrides) };
   const results: AccountResult[] = res.match.results.map(r => ({ ...r, reasons: [...r.reasons], candidates: [...r.candidates] }));
   const byNumber = new Map(results.map(r => [r.accountNumber, r]));
   const manual = new Map<string, 'akzeptiert' | 'zugeordnet'>();

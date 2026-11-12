@@ -149,6 +149,31 @@ describe('Durchsicht und Abschluss: akzeptieren, manuell zuordnen, Notizen, Regi
     expect(r.aging!.totalChf).toBe(r.balanceChf);
   });
 
+  it('Konto in eine andere Gruppe verschieben: Belege und Register folgen, Prüfgebiete sehen die neue Gruppe, zurücksetzen', async () => {
+    const letters = defaultGroupLetters();
+    const base = applyReview(res, { groupLetters: letters });
+    // ein Konto mit Beleg und Register (z. B. Bank) in die Forderungen L+L verschieben
+    const doc = base.documents.find(d => d.assigned && base.review.registers.get(d.doc.id)?.startsWith(`${letters.A10}.`))!;
+    const num = doc.assignedAccounts[0]!;
+    const before = base.accounts.find(a => a.accountNumber === num)!;
+    expect(before.groupCode).toBe('A10');
+    const moved = applyReview(res, { groupLetters: letters, groupOverrides: { [num]: { groupCode: 'A12', at: now, visum: 'MS' } } });
+    const acc = moved.accounts.find(a => a.accountNumber === num)!;
+    expect([acc.groupCode, acc.groupSource, acc.autoGroup?.code]).toEqual(['A12', 'manuell', 'A10']);
+    expect(acc.category).toBe('aktiven');
+    // Beleg bleibt dem Konto zugeordnet, Register wechselt auf den Buchstaben der neuen Gruppe
+    expect(moved.documents.find(d => d.doc.id === doc.doc.id)!.assignedAccounts).toContain(num);
+    expect(moved.review.registers.get(doc.doc.id)).toMatch(new RegExp(`^${letters.A12}\\.\\d+$`));
+    expect(moved.match.results.find(r => r.accountNumber === num)!.status).toBe(base.match.results.find(r => r.accountNumber === num)!.status);
+    // Forderungen L+L: das verschobene Konto ist jetzt ein vorgeschlagenes Abstimmungskonto
+    const { receivablesFor } = await import('../src/analysis/receivables.js');
+    expect(receivablesFor(moved, {}).accountOptions.find(o => o.accountNumber === num)).toMatchObject({ suggested: true, groupCode: 'A12' });
+    // ohne Verschiebung (aufgehoben): wieder die automatische Gruppe, auch ausgehend vom verschobenen Ergebnis
+    const reset = applyReview(moved, { groupLetters: letters, groupOverrides: {} });
+    const back = reset.accounts.find(a => a.accountNumber === num)!;
+    expect([back.groupCode, back.groupSource, back.autoGroup]).toEqual(['A10', before.groupSource, undefined]);
+  });
+
   it('Register je Gruppe: B.1, B.2 … in Reihenfolge der Kontonummer', () => {
     const r = applyReview(res, { groupLetters: defaultGroupLetters() });
     const regs = [...r.review.registers.entries()].map(([id, reg]) => [r.documents.find(d => d.doc.id === id)!.assignedAccounts[0], reg]);

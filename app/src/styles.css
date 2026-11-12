@@ -364,3 +364,11 @@ tr.sub-row > td { background: #fafbfc; padding: 8px 12px; }
 .grid th.sortable:hover { color: var(--text); }
 .add-account { margin-top: 4px; max-width: 100%; font-size: 12px; }
 .w-md { width: 200px; }
+/* Konten per Drag & Drop in eine andere Gruppe verschieben */
+table.konten tr[draggable] { cursor: grab; }
+table.konten tr.dragging td { opacity: 0.45; }
+table.konten tr.drop-target td { background: #e8f1fb !important; }
+table.konten tr.group-row.drop-target td { box-shadow: inset 0 2px 0 #1f5f9e; }
+.flag.moved { background: #e8f1fb; color: #1f5f9e; }
+.group-line { display: flex; align-items: center; gap: 8px; padding: 2px 0 6px; }
+.group-line select { flex: 1; min-width: 0; font-size: 12px; }

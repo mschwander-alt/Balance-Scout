@@ -28,6 +28,9 @@ export function Result({ result: initial, onRepeat }: { result: AuditResult; onR
   const [busy, setBusy] = useState(false);
   const [search, setSearch] = useState('');
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  // Drag & Drop: Konto in eine andere Gruppe verschieben
+  const [dragAcc, setDragAcc] = useState<string | null>(null);
+  const [dropGroup, setDropGroup] = useState<string | null>(null);
   const id = result.historyId;
 
   useEffect(() => {
@@ -49,7 +52,7 @@ export function Result({ result: initial, onRepeat }: { result: AuditResult; onR
     });
   }, [id]);
 
-  const view = useMemo(() => deriveView(result, decisions), [result, decisions]);
+  const view = useMemo(() => deriveView(result, decisions, groups?.groups ?? []), [result, decisions, groups]);
   const matchesSearch = (a: ViewAccount) => {
     const t = search.trim().toLowerCase();
     return !t || a.accountNumber.includes(t) || a.accountName.toLowerCase().includes(t) || (a.groupName ?? '').toLowerCase().includes(t);
@@ -127,6 +130,33 @@ export function Result({ result: initial, onRepeat }: { result: AuditResult; onR
     const cur = decisions.assignments?.[docId];
     const next = cur ? targetsOf(cur).filter(n => n !== num) : [];
     assign(docId, next.length ? next : undefined);
+  };
+  /** Konto in eine Gruppe verschieben (Code) oder auf die automatische Gruppe zurücksetzen (null); Belege folgen dem Konto */
+  const moveAccount = (num: string, code: string | null) => {
+    const a = view.accounts.find(x => x.accountNumber === num);
+    if (!a) return;
+    const auto = a.autoGroup ? a.autoGroup.code : a.groupCode ?? null;
+    // „Ohne Gruppe“ ('~') ist keine Gruppe des Kontenrahmens: nur als Rückkehr zur automatischen Gruppe möglich
+    if (code === '~') {
+      if (auto !== null) { toast('error', '„Ohne Gruppe“ ist keine Gruppe des KMU-Kontenrahmens – bitte eine Gruppe wählen.'); return; }
+      code = null;
+    }
+    const target = code ?? auto;
+    if (target === (a.groupCode ?? null)) return;
+    const g = groups?.groups.find(x => x.code === target);
+    update(d => {
+      const { [num]: _old, ...rest } = d.groupOverrides ?? {};
+      const next = code === null || code === auto ? rest : { ...rest, [num]: { groupCode: code, at: now(), visum: needVisum() } };
+      return { ...d, groupOverrides: next };
+    });
+    const nDocs = view.docs.filter(x => x.accounts.includes(num)).length;
+    toast('ok', `Konto ${num} → ${g?.name ?? 'Ohne Gruppe'}${code === null || code === auto ? ' (automatische Gruppe)' : ''}${nDocs ? ` · ${nDocs} Beleg${nDocs > 1 ? 'e' : ''} mitgenommen` : ''}`);
+  };
+  const dnd: Dnd = {
+    enabled: grouped && !!groups, dragging: dragAcc, over: dropGroup,
+    start: num => setDragAcc(num), end: () => { setDragAcc(null); setDropGroup(null); },
+    overGroup: code => setDropGroup(code),
+    drop: code => { if (dragAcc) moveAccount(dragAcc, code); setDragAcc(null); setDropGroup(null); },
   };
   const setNote = (num: string, text: string) => update(d => {
     const { [num]: _x, ...rest } = d.notes ?? {};
@@ -211,6 +241,7 @@ export function Result({ result: initial, onRepeat }: { result: AuditResult; onR
             <div className="row small" style={{ justifyContent: 'space-between' }}>
               <span className="muted">{er ? `${accounts.length} Konten der Erfolgsrechnung – Analyse von Vorjahr und Veränderung (keine Saldennachweise nötig)` : filter !== 'ALLE' || search ? `${accounts.length} von ${view.accounts.filter(a => !isER(a)).length} Konten` : ''}{!er && filter !== 'ALLE' && <> · <button className="link" onClick={() => setFilter('ALLE')}>Filter aufheben</button></>}</span>
               <span className="row" style={{ gap: 12 }}>
+                {grouped && !er && <span className="muted small" title="Konto mit der Maus auf eine andere Gruppe ziehen – zugeordnete Belege werden mitgenommen. Im Konto rechts auch über „Gruppe“ wählbar.">Konto per Drag &amp; Drop in eine andere Gruppe ziehen</span>}
                 {grouped && <button className="link small" onClick={() => setCollapsed(c => (c.size ? new Set() : new Set(groupAccounts(accounts, order).map(g => g.code))))}>{collapsed.size ? 'Alle aufklappen' : 'Alle zuklappen'}</button>}
                 <label className="muted"><input type="checkbox" checked={grouped} onChange={e => setGrouped(e.target.checked)} /> nach KMU-Kontenrahmen gruppieren</label>
               </span>
@@ -230,7 +261,7 @@ export function Result({ result: initial, onRepeat }: { result: AuditResult; onR
                     ) : (
                       <GroupRows key={g.code || 'alle'} g={g} grouped={grouped} collapsed={collapsed.has(g.code)}
                         onToggle={() => setCollapsed(c => { const n = new Set(c); if (n.has(g.code)) n.delete(g.code); else n.add(g.code); return n; })}
-                        letter={decisions.groupLetters?.[g.code]} open={open} setOpen={setOpen} docs={view.docs} notes={decisions.notes ?? {}} />
+                        letter={decisions.groupLetters?.[g.code]} open={open} setOpen={setOpen} docs={view.docs} notes={decisions.notes ?? {}} dnd={dnd} />
                     ),
                   )}
                 </tbody>
@@ -244,6 +275,7 @@ export function Result({ result: initial, onRepeat }: { result: AuditResult; onR
               nav={navInfo(sel.accountNumber)}
               onAccept={() => accept(sel)} onUnaccept={() => unaccept(sel)} onNote={t => setNote(sel.accountNumber, t)}
               onAssign={docId => assignAlso(docId, sel.accountNumber)} onUnassign={docId => unassignFrom(docId, sel.accountNumber)} onClose={() => setOpen(null)}
+              groupOptions={groups?.groups ?? []} onGroup={code => moveAccount(sel.accountNumber, code)}
             />
           )}
         </div>
@@ -354,12 +386,23 @@ function fxProblem(a: { fx?: AccountRow['fx'] }): string | null {
   return null;
 }
 
+const GROUP_CATS: [string, string][] = [['aktiven', 'Aktiven'], ['passiven', 'Passiven'], ['aufwand', 'Aufwand'], ['ertrag', 'Ertrag'], ['abschluss', 'Abschluss']];
+
 const PROBLEM_FLAGS = new Set(['SIGN_CONFLICT', 'AMBIGUOUS', 'CURRENCY_MISMATCH', 'DATE_MISMATCH']);
 
-function GroupRows({ g, grouped, collapsed, onToggle, letter, open, setOpen, docs, notes }: {
+/** Drag & Drop der Konten zwischen Gruppen */
+type Dnd = { enabled: boolean; dragging: string | null; over: string | null; start: (num: string) => void; end: () => void; overGroup: (code: string) => void; drop: (code: string) => void };
+
+function GroupRows({ g, grouped, collapsed, onToggle, letter, open, setOpen, docs, notes, dnd }: {
   g: Group; grouped: boolean; collapsed: boolean; onToggle: () => void; letter?: string; open: string | null;
-  setOpen: (n: string) => void; docs: ViewDoc[]; notes: Record<string, unknown>;
+  setOpen: (n: string) => void; docs: ViewDoc[]; notes: Record<string, unknown>; dnd?: Dnd;
 }) {
+  // Ziel: Gruppenzeile und alle Konten der Gruppe
+  const target = dnd?.enabled && dnd.dragging ? {
+    onDragOver: (e: React.DragEvent) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; if (dnd.over !== g.code) dnd.overGroup(g.code); },
+    onDrop: (e: React.DragEvent) => { e.preventDefault(); dnd.drop(g.code); },
+  } : {};
+  const isOver = !!dnd?.dragging && dnd.over === g.code;
   const docBy = new Map(docs.map(d => [d.id, d]));
   const vj = g.items.reduce((a, x) => a + (x.balancePreviousYear ?? 0), 0);
   const hasVj = g.items.some(x => x.balancePreviousYear !== null);
@@ -367,7 +410,7 @@ function GroupRows({ g, grouped, collapsed, onToggle, letter, open, setOpen, doc
   return (
     <>
       {grouped && (
-        <tr className="group-row" onClick={onToggle} aria-expanded={!collapsed}>
+        <tr className={`group-row ${isOver ? 'drop-target' : ''}`} onClick={onToggle} aria-expanded={!collapsed} data-gruppe={g.code} {...target}>
           <td colSpan={2} title={g.name}><span className="caret">{collapsed ? '›' : '⌄'}</span>{letter ? <span className="register">{letter}</span> : null} {g.name}</td>
           <td className="num">{hasVj ? chf(vj) : ''}</td>
           <td className="num">{chf(g.total)}</td>
@@ -382,9 +425,12 @@ function GroupRows({ g, grouped, collapsed, onToggle, letter, open, setOpen, doc
         const problems = (a.best?.flags ?? []).filter(f => PROBLEM_FLAGS.has(f)).map(f => FLAG_LABEL[f] ?? f);
         const quiet = a.status === 'NULLSALDO' || a.status === 'NICHT_IM_UMFANG';
         return (
-          <tr key={a.accountNumber} data-konto={a.accountNumber} className={`${open === a.accountNumber ? 'selected' : ''} ${quiet ? 'muted-row' : ''}`} onClick={() => setOpen(a.accountNumber)}>
+          <tr key={a.accountNumber} data-konto={a.accountNumber} className={`${open === a.accountNumber ? 'selected' : ''} ${quiet ? 'muted-row' : ''} ${isOver ? 'drop-target' : ''} ${dnd?.dragging === a.accountNumber ? 'dragging' : ''}`} onClick={() => setOpen(a.accountNumber)}
+            draggable={dnd?.enabled || undefined} {...target}
+            onDragStart={dnd?.enabled ? e => { e.dataTransfer.setData('text/plain', a.accountNumber); e.dataTransfer.effectAllowed = 'move'; dnd.start(a.accountNumber); } : undefined}
+            onDragEnd={dnd?.enabled ? () => dnd.end() : undefined}>
             <td>{a.accountNumber}</td>
-            <td title={a.accountName}>{a.accountName}{notes[a.accountNumber] ? <span className="flag note" title="Notiz vorhanden">Notiz</span> : null}{a.groupSource === 'bezeichnung' && <WarnIcon text={`Gruppe „${a.groupName}“ aus der Bezeichnung abgeleitet – bitte prüfen`} />}</td>
+            <td title={a.accountName}>{a.accountName}{notes[a.accountNumber] ? <span className="flag note" title="Notiz vorhanden">Notiz</span> : null}{a.groupSource === 'bezeichnung' && <WarnIcon text={`Gruppe „${a.groupName}“ aus der Bezeichnung abgeleitet – bitte prüfen`} />}{a.groupSource === 'manuell' && <span className="flag moved" title={`vom Prüfer verschoben (automatisch: ${a.autoGroup?.name ?? 'Ohne Gruppe'})`}>verschoben</span>}</td>
             <td className="num">{a.balancePreviousYear === null ? '' : chf(a.balancePreviousYear)}</td>
             <td className="num">{chf(a.balance)}{a.fx && a.fx.currency !== 'CHF' && a.fx.closing !== null && <div className="fx-sub">{a.fx.currency} {chf(a.fx.closing)}</div>}</td>
             <Delta cy={a.balance} vj={a.balancePreviousYear} />
@@ -443,10 +489,12 @@ function DocLine({ d, accounts, filedInfo, onAssign }: { d: ViewDoc; accounts: V
   );
 }
 
-function AccountPanel({ a, docs, filedPath, note, accepted, nav, onAccept, onUnaccept, onNote, onAssign, onUnassign, onClose }: {
+function AccountPanel({ a, docs, filedPath, note, accepted, nav, onAccept, onUnaccept, onNote, onAssign, onUnassign, onClose, groupOptions = [], onGroup }: {
   a: ViewAccount; docs: ViewDoc[]; filedPath: string | null; note?: { text: string; at: string; visum: string }; accepted?: { visum: string; at: string; comment?: string };
   nav: { pos: number; count: number; prev: () => void; next: () => void };
   onAccept: () => void; onUnaccept: () => void; onNote: (t: string) => void; onAssign: (docId: string) => void; onUnassign: (docId: string) => void; onClose: () => void;
+  /** Gruppe ändern (Code) bzw. zurücksetzen (null) */
+  groupOptions?: { code: string; name: string; category: string }[]; onGroup?: (code: string | null) => void;
 }) {
   const found = a.autoStatus === 'BELEGT' || a.autoStatus === 'PRUEFEN';
   const all: Best[] = found && a.best ? [a.best, ...a.candidates] : a.candidates;
@@ -483,6 +531,20 @@ function AccountPanel({ a, docs, filedPath, note, accepted, nav, onAccept, onUna
           <button aria-label="Schliessen (Esc)" onClick={onClose}>✕</button>
         </span>
       </div>
+      {onGroup && groupOptions.length > 0 && (
+        <div className="group-line small">
+          <span className="muted">Gruppe</span>
+          <select value={a.groupCode ?? ''} aria-label="Gruppe des Kontos" onChange={e => onGroup(e.target.value || null)}>
+            {!a.groupCode && <option value="">Ohne Gruppe (nicht im KMU-Kontenrahmen)</option>}
+            {GROUP_CATS.map(([cat, label]) => (
+              <optgroup key={cat} label={label}>
+                {groupOptions.filter(g => g.category === cat).map(g => <option key={g.code} value={g.code}>{g.name}</option>)}
+              </optgroup>
+            ))}
+          </select>
+          {a.groupSource === 'manuell' && <button className="link" onClick={() => onGroup(null)} title={`Automatisch: ${a.autoGroup?.name ?? 'Ohne Gruppe'}`}>zurücksetzen</button>}
+        </div>
+      )}
       <div className="doc-line small">
         {doc ? <>{doc.register && <span className="register">{doc.register}</span>}<span>{doc.filename}</span></> : <span>Kein Beleg</span>}
         <Info label="Details zur Fundstelle">

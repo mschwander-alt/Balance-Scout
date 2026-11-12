@@ -8,8 +8,12 @@ export interface Best {
   evidenceCents: number; differenceCents: number; kind: string; score: number; flags: string[]; reasons: string[];
   relPath: string | null; absPath: string | null; newPath: string | null; pageLabel: string | null; ext: string | null; bbox?: BBox;
 }
+/** Gruppe vor dem Verschieben durch den Prüfer */
+export interface AutoGroup { code: string | null; name: string | null; category: string; source: 'nummer' | 'bezeichnung' | null }
 export interface AccountRow {
-  accountNumber: string; accountName: string; groupName: string | null; groupCode?: string | null; groupSource?: 'nummer' | 'bezeichnung' | null;
+  accountNumber: string; accountName: string; groupName: string | null; groupCode?: string | null; groupSource?: 'nummer' | 'bezeichnung' | 'manuell' | null;
+  /** Automatisch erkannte Gruppe, falls der Prüfer das Konto verschoben hat */
+  autoGroup?: AutoGroup | null;
   source?: string | null; category: string;
   balance: number; balancePreviousYear: number | null; status: Status; reasons: string[];
   best: Best | null; candidates: Best[];

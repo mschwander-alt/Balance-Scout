@@ -266,7 +266,7 @@ export async function writeExcelReport(res: RunResult, filePath: string): Promis
       ws.getCell(row, 18).value = isoToDate(who.at.slice(0, 10));
     }
     ws.getCell(row, 19).value = b ? rv?.registers.get(b.documentId) ?? null : null;
-    ws.getCell(row, 20).value = a.groupName ? `${a.groupName}${a.groupSource === 'bezeichnung' ? ' (aus Bezeichnung)' : ''}` : null;
+    ws.getCell(row, 20).value = a.groupName ? `${a.groupName}${a.groupSource === 'bezeichnung' ? ' (aus Bezeichnung)' : a.groupSource === 'manuell' ? ` (vom Prüfer verschoben, automatisch: ${a.autoGroup?.name ?? 'ohne Gruppe'})` : ''}` : null;
     // Fremdwährung (aus dem Kontoblatt): Abgleich in Fremdwährung, Bewertung zum Stichtagskurs
     const fx = res.accountLedger?.[a.accountNumber];
     const isFx = !!fx && fx.currency !== 'CHF';

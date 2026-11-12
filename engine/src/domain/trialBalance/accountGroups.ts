@@ -160,3 +160,26 @@ export function defaultGroupLetters(): Record<string, string> {
     P22: 'W', // Rückstellungen
   };
 }
+
+// ---------------------------------------------------------------- Gruppe vom Prüfer ändern
+/** Automatisch erkannte Gruppe eines Kontos (vor dem Verschieben durch den Prüfer) */
+export interface AutoGroup { code: string | null; name: string | null; category: Category; source: 'nummer' | 'bezeichnung' | null }
+/** Konto (Nummer) → Zielgruppe (Code, z. B. "P13"), vom Prüfer verschoben */
+export type GroupOverrides = Record<string, { groupCode: string; at?: string; visum?: string }>;
+
+type Groupable = { accountNumber: string; groupCode: string | null; groupName: string | null; category: Category; groupSource: AutoGroup['source'] | 'manuell'; autoGroup?: AutoGroup };
+
+/**
+ * Wendet die vom Prüfer verschobenen Gruppen an (Kopie). Die automatische Gruppe bleibt in `autoGroup` erhalten;
+ * Konten ohne (oder mit aufgehobener) Verschiebung erhalten wieder die automatische Gruppe. Unbekannte Gruppen werden ignoriert.
+ */
+export function applyGroupOverrides<T extends Groupable>(accounts: T[], overrides: GroupOverrides | undefined): T[] {
+  return accounts.map(a => {
+    const auto: AutoGroup = a.autoGroup ?? { code: a.groupCode, name: a.groupName, category: a.category, source: a.groupSource === 'manuell' ? null : a.groupSource };
+    const g = overrides?.[a.accountNumber] ? KMU_GROUPS.find(x => x.code === overrides[a.accountNumber]!.groupCode) : undefined;
+    if (g && g.code !== auto.code) return { ...a, groupCode: g.code, groupName: g.name, category: g.category, groupSource: 'manuell', autoGroup: auto };
+    if (!a.autoGroup) return a;
+    const { autoGroup: _a, ...rest } = a;
+    return { ...rest, groupCode: auto.code, groupName: auto.name, category: auto.category, groupSource: auto.source } as T;
+  });
+}

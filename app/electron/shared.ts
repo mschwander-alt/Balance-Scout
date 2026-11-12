@@ -99,6 +99,8 @@ export interface ReviewDecisions {
   assignments?: Record<string, { accountNumber: string | null; accountNumbers?: string[]; at: string; visum: string }>;
   notes?: Record<string, { text: string; at: string; visum: string }>;
   groupLetters?: Record<string, string>;
+  /** Konto (Nummer) -> vom Prüfer gewählte Gruppe (Code); zugeordnete Belege und Register folgen dem Konto */
+  groupOverrides?: Record<string, { groupCode: string; at: string; visum: string }>;
   analyses?: { receivables?: ReceivablesDecision; fixedAssets?: FixedAssetsDecision };
 }
 export type MoveClass = 'zugang' | 'abgang' | 'abschreibung' | 'umbuchung';
@@ -208,12 +210,12 @@ export interface BsbBridge {
     save(id: string, d: ReviewDecisions): Promise<boolean>;
     finalize(id: string, d: ReviewDecisions): Promise<unknown>;
     groups(): Promise<GroupsInfo>;
-    fixedAssets(id: string, p: Partial<FixedAssetsDecision>): Promise<FixedAssetsResult>;
-    exportFixedAssets(id: string, p: Partial<FixedAssetsDecision>, suggestedName: string): Promise<string | null>;
+    fixedAssets(id: string, p: Partial<FixedAssetsDecision> & { groupOverrides?: ReviewDecisions['groupOverrides'] }): Promise<FixedAssetsResult>;
+    exportFixedAssets(id: string, p: Partial<FixedAssetsDecision> & { groupOverrides?: ReviewDecisions['groupOverrides'] }, suggestedName: string): Promise<string | null>;
     /** ESTV-Kursliste (PDF) wählen, lesen und speichern; liefert alle gespeicherten Listen */
     importRates(): Promise<Record<string, FxRateList> | null>;
-    receivables(id: string, p: Partial<ReceivablesDecision>): Promise<ReceivablesResult>;
-    exportReceivables(id: string, p: Partial<ReceivablesDecision>, suggestedName: string, format: 'xlsx' | 'pptx'): Promise<string | null>;
+    receivables(id: string, p: Partial<ReceivablesDecision> & { groupOverrides?: ReviewDecisions['groupOverrides'] }): Promise<ReceivablesResult>;
+    exportReceivables(id: string, p: Partial<ReceivablesDecision> & { groupOverrides?: ReviewDecisions['groupOverrides'] }, suggestedName: string, format: 'xlsx' | 'pptx'): Promise<string | null>;
   };
   app: {
     openPath(p: string): Promise<string>;

@@ -90,20 +90,23 @@ function Receivables({ historyId, docs, decisions, update, letter, defaultRates 
   // Zuordnung aus der Durchsicht (inkl. manueller Änderungen und Mehrfachzuordnung)
   const assigned = useMemo(() => Object.fromEntries(docs.map(d => [d.id, d.accounts])), [docs]);
   const assignedKey = JSON.stringify(assigned);
+  // Vom Prüfer verschobene Konten (Gruppe) – Forderungskonten können neu dazukommen oder wegfallen
+  const groupOverrides = decisions.groupOverrides;
+  const overridesKey = JSON.stringify(groupOverrides ?? {});
 
   // Kandidaten laden: Belege, die Konten der Forderungen L+L zugeordnet sind (noch keine Analyse)
   useEffect(() => {
-    void bsb().review.receivables(historyId, { docIds: ['__keine__'], assigned }).then(res => {
+    void bsb().review.receivables(historyId, { docIds: ['__keine__'], assigned, groupOverrides }).then(res => {
       setInfo(res);
       setParams(p => (p.docIds?.length ? p : { ...p, docIds: res.candidates.filter(c => c.looksLikeOpList).map(c => c.docId) }));
     }, e => toast('error', (e as Error).message));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [historyId, assignedKey, toast]);
+  }, [historyId, assignedKey, overridesKey, toast]);
 
   const run = async (p: ReceivablesDecision) => {
     setBusy(true);
     try {
-      const res = await bsb().review.receivables(historyId, { ...p, assigned });
+      const res = await bsb().review.receivables(historyId, { ...p, assigned, groupOverrides });
       setR(res);
       return res;
     } catch (e) {
@@ -119,7 +122,7 @@ function Receivables({ historyId, docs, decisions, update, letter, defaultRates 
     const t = setTimeout(() => void run(params), 300);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [started, params.termDays, params.rates, params.docIds, params.accounts, assignedKey]);
+  }, [started, params.termDays, params.rates, params.docIds, params.accounts, assignedKey, overridesKey]);
   // Gestartete Analyse in den Entscheiden speichern (Abschluss legt sie als Nachweis ab)
   useEffect(() => {
     if (started) update(d => ({ ...d, analyses: { ...d.analyses, receivables: { ...params, assigned } } }));
@@ -163,7 +166,7 @@ function Receivables({ historyId, docs, decisions, update, letter, defaultRates 
   const diff = a && r?.balanceChf !== null && r?.balanceChf !== undefined ? a.totalChf - r.balanceChf : null;
   const custItems = a && cust !== null ? a.items.filter(i => `${i.customerNo}|${i.customerName}` === cust) : [];
   const fileName = `${letter ? `${letter}.x_` : ''}Analyse_Fälligkeit`;
-  const exportParams = { ...params, assigned };
+  const exportParams = { ...params, assigned, groupOverrides };
 
   return (
     <div className="stack" style={{ gap: 10 }}>

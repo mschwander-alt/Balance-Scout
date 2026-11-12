@@ -21,11 +21,11 @@ export function FixedAssets({ historyId, decisions, update }: { historyId: strin
   useEffect(() => {
     setBusy(true);
     const t = setTimeout(() => {
-      bsb().review.fixedAssets(historyId, { accounts: params.accounts, categories: params.categories, classes: params.classes }).then(setR, e => toast('error', (e as Error).message)).finally(() => setBusy(false));
+      bsb().review.fixedAssets(historyId, { accounts: params.accounts, categories: params.categories, classes: params.classes, groupOverrides: decisions.groupOverrides }).then(setR, e => toast('error', (e as Error).message)).finally(() => setBusy(false));
     }, r ? 250 : 0);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [historyId, params.accounts, params.categories, params.classes]);
+  }, [historyId, params.accounts, params.categories, params.classes, decisions.groupOverrides]);
   useEffect(() => {
     if (started) update(d => ({ ...d, analyses: { ...d.analyses, fixedAssets: params } }));
   }, [started, params, update]);
@@ -56,7 +56,7 @@ export function FixedAssets({ historyId, decisions, update }: { historyId: strin
           {!started ? <button className="btn btn-primary" disabled={!selected.length} onClick={start}>Anlagespiegel erstellen</button> : (
             <>
               <button className="link small" onClick={() => { setStarted(false); update(d => { const { fixedAssets: _x, ...rest } = d.analyses ?? {}; return { ...d, analyses: rest }; }); }}>Analyse verwerfen</button>
-              <button className="btn" onClick={async () => { const f = await bsb().review.exportFixedAssets(historyId, params, 'Analyse_Anlagespiegel.xlsx'); if (f) toast('ok', 'Anlagespiegel gespeichert.'); }}>Excel herunterladen</button>
+              <button className="btn" onClick={async () => { const f = await bsb().review.exportFixedAssets(historyId, { ...params, groupOverrides: decisions.groupOverrides }, 'Analyse_Anlagespiegel.xlsx'); if (f) toast('ok', 'Anlagespiegel gespeichert.'); }}>Excel herunterladen</button>
             </>
           )}
         </div>
