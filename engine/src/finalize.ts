@@ -219,7 +219,8 @@ export async function placeReviewed(
   if (rcv) {
     const { receivablesFor } = await import('./analysis/receivables.js');
     const { agingWorkbook } = await import('./report/agingExcel.js');
-    const r = receivablesFor(res, rcv);
+    // dieselbe Zuordnung wie in der Durchsicht (App), damit Nachweis und Anzeige übereinstimmen
+    const r = receivablesFor(res, rcv, rcv.assigned);
     if (r.aging) {
       const { agingPptx } = await import('./report/agingPptx.js');
       const letter = decisions.groupLetters?.A12?.trim() ?? '';
