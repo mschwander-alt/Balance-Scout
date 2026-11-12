@@ -538,7 +538,8 @@ export interface ReceivablesResult {
   aging: Aging | null;
   balanceChf: Cents | null;
   balanceAccounts: string;
-  accountOptions: { accountNumber: string; accountName: string; balance: Cents }[];
+  /** Alle Konten für die Abstimmung; `suggested` = Forderungen L+L (ohne Delkredere) */
+  accountOptions: { accountNumber: string; accountName: string; balance: Cents; groupCode: string | null; suggested: boolean }[];
   suggestions: string[];
 }
 
@@ -562,13 +563,19 @@ export function receivablesFor(res: ResLike, p: ReceivablesParams, assignedOverr
   const isWb = (name: string) => /delkredere|wertberichtigung|\bwb\b/i.test(name);
   // Abstimmung: gewählte Konten, sonst die Konten, denen die Listen zugeordnet sind, sonst alle Konten der Gruppe
   const fromDocs = [...new Set(docs.flatMap(d => assignedOf(d).filter(n => groupNums.has(n))))];
-  const accNums = p.accounts?.length ? p.accounts : fromDocs.length ? fromDocs : group.map(a => a.accountNumber);
-  const accs = group.filter(a => accNums.includes(a.accountNumber) && !isWb(a.accountName));
+  // Vom Prüfer gewählte Konten gelten unverändert – aus allen Konten, auch ausserhalb der Gruppe (z. B. falsch gegliedert)
+  const chosen = p.accounts?.length ? res.accounts.filter(a => p.accounts!.includes(a.accountNumber)) : null;
+  const accNums = fromDocs.length ? fromDocs : group.map(a => a.accountNumber);
+  const accs = chosen ?? group.filter(a => accNums.includes(a.accountNumber) && !isWb(a.accountName));
   const balanceChf = accs.length ? accs.reduce((s, a) => s + a.balanceCurrentYear, 0) : null;
+  const byNo = (a: { accountNumber: string }, b: { accountNumber: string }) => a.accountNumber.localeCompare(b.accountNumber, 'de', { numeric: true });
   const base = {
     candidates, docIds: docs.map(d => d.doc.id), docId: docs[0]?.doc.id ?? null, filename: docs.map(d => d.doc.filename).join(', ') || null,
     balanceChf, balanceAccounts: accs.map(a => a.accountNumber).join(', '),
-    accountOptions: group.filter(a => !isWb(a.accountName)).map(a => ({ accountNumber: a.accountNumber, accountName: a.accountName, balance: a.balanceCurrentYear })),
+    // alle Konten; vorgeschlagen = Forderungen L+L ohne Delkredere (zuerst)
+    accountOptions: res.accounts
+      .map(a => ({ accountNumber: a.accountNumber, accountName: a.accountName, balance: a.balanceCurrentYear, groupCode: a.groupCode, suggested: a.groupCode === 'A12' && !isWb(a.accountName) }))
+      .sort((a, b) => Number(b.suggested) - Number(a.suggested) || byNo(a, b)),
   };
   if (!docs.length || !res.input.closingDate) return { ...base, lists: [], listDate: null, currencies: [], aging: null, suggestions: [] };
   // Mehrere Listen (z. B. Inland/Ausland) werden zusammengeführt; Kontrollen je Liste bleiben erhalten

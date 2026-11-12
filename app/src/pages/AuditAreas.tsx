@@ -12,6 +12,8 @@ const FIXED = ['A21', 'A22', 'A23'];
 const BUCKETS = ['Nicht fällig', '1–30 Tage', '31–60 Tage', '61–90 Tage', '> 90 Tage'];
 const SHADES = ['#1f5f9e', '#3b82c4', '#6ea6d9', '#a4c8ea', '#d4e5f6'];
 type Sub = 'faelligkeit' | 'posten' | 'feststellungen';
+/** Sortierung Kundentabelle: Name, Total oder Index der Altersklasse */
+type CustSortKey = 'name' | 'total' | number;
 
 /** Prüfgebiete: Bilanzpositionen links, vertiefte Prüfung rechts (zuerst Forderungen aus L+L). */
 export function AuditAreas({ historyId, accounts, docs, groups, decisions, update, closingDate, rates }: {
@@ -83,6 +85,8 @@ function Receivables({ historyId, docs, decisions, update, letter, defaultRates 
   const [cust, setCust] = useState<string | null>(null);
   const [item, setItem] = useState<AgingItem | null>(null);
   const [newFinding, setNewFinding] = useState('');
+  const [custFilter, setCustFilter] = useState('');
+  const [custSort, setCustSort] = useState<{ key: CustSortKey; dir: 1 | -1 }>({ key: 'total', dir: -1 });
   // Zuordnung aus der Durchsicht (inkl. manueller Änderungen und Mehrfachzuordnung)
   const assigned = useMemo(() => Object.fromEntries(docs.map(d => [d.id, d.accounts])), [docs]);
   const assignedKey = JSON.stringify(assigned);
@@ -138,11 +142,24 @@ function Receivables({ historyId, docs, decisions, update, letter, defaultRates 
   const selDocs = params.docIds ?? [];
   const accFromDocs = [...new Set(cands.filter(c => selDocs.includes(c.docId)).flatMap(c => c.accounts))];
   const selAccounts = params.accounts?.length ? params.accounts : accFromDocs;
+  const setAccounts = (accounts: string[]) => setParams(p => ({ ...p, accounts: [...new Set(accounts)] }));
+  // Abstimmung: Forderungskonten und gewählte Konten als Häkchen, alle übrigen Konten über die Auswahlliste
+  const accOpts = info?.accountOptions ?? [];
+  const shownAccounts = accOpts.filter(o => o.suggested || selAccounts.includes(o.accountNumber));
+  const otherAccounts = accOpts.filter(o => !o.suggested && !selAccounts.includes(o.accountNumber));
   const a = started ? r?.aging : null;
   const opDocOf = (i: AgingItem) => docs.find(d => d.id === ((i as AgingItem & { sourceDocId?: string }).sourceDocId ?? r?.docId));
-  const customers = a?.customers ?? [];
-  const top = customers.slice(0, 8);
-  const rest = customers.slice(8);
+  // Forderungen nach Kunden: alle Kunden, durchsuchbar und sortierbar
+  const customers = useMemo(() => {
+    const q = custFilter.trim().toLowerCase();
+    const list = (a?.customers ?? []).filter(c => !q || `${c.customerNo} ${c.customerName}`.toLowerCase().includes(q));
+    const val = (c: (typeof list)[number]) => (custSort.key === 'name' ? 0 : custSort.key === 'total' ? c.totalChf : c.buckets[custSort.key]!);
+    return [...list].sort((x, y) => custSort.key === 'name'
+      ? (x.customerName || x.customerNo).localeCompare(y.customerName || y.customerNo, 'de') * custSort.dir
+      : (val(x) - val(y)) * custSort.dir || (x.customerName || '').localeCompare(y.customerName || '', 'de'));
+  }, [a, custFilter, custSort]);
+  const sortBy = (key: CustSortKey) => setCustSort(s => (s.key === key ? { key, dir: s.dir === 1 ? -1 : 1 } : { key, dir: key === 'name' ? 1 : -1 }));
+  const sortMark = (key: CustSortKey) => (custSort.key === key ? (custSort.dir === 1 ? ' ▲' : ' ▼') : '');
   const diff = a && r?.balanceChf !== null && r?.balanceChf !== undefined ? a.totalChf - r.balanceChf : null;
   const custItems = a && cust !== null ? a.items.filter(i => `${i.customerNo}|${i.customerName}` === cust) : [];
   const fileName = `${letter ? `${letter}.x_` : ''}Analyse_Fälligkeit`;
@@ -168,12 +185,20 @@ function Receivables({ historyId, docs, decisions, update, letter, defaultRates 
           </div>
           <div>
             <div className="small muted">Abstimmung mit Konto</div>
-            {(info?.accountOptions ?? []).map(o => (
+            {shownAccounts.map(o => (
               <label key={o.accountNumber} className="pick-line">
-                <input type="checkbox" checked={selAccounts.includes(o.accountNumber)} onChange={e => setParams(p => ({ ...p, accounts: e.target.checked ? [...selAccounts, o.accountNumber] : selAccounts.filter(x => x !== o.accountNumber) }))} />
+                <input type="checkbox" checked={selAccounts.includes(o.accountNumber)} onChange={e => setAccounts(e.target.checked ? [...selAccounts, o.accountNumber] : selAccounts.filter(x => x !== o.accountNumber))} />
                 <span>{o.accountNumber} {o.accountName}</span><span className="small muted">CHF {chf(o.balance)}</span>
+                {!o.suggested && <span className="flag" title="Konto gehört nicht zu den Forderungen aus L+L">andere Gruppe</span>}
               </label>
             ))}
+            {otherAccounts.length > 0 && (
+              <select className="add-account" value="" aria-label="Weiteres Konto für die Abstimmung"
+                onChange={e => { if (e.target.value) setAccounts([...selAccounts, e.target.value]); }}>
+                <option value="">+ Weiteres Konto hinzufügen …</option>
+                {otherAccounts.map(o => <option key={o.accountNumber} value={o.accountNumber}>{o.accountNumber} {o.accountName} · CHF {chf(o.balance)}</option>)}
+              </select>
+            )}
           </div>
         </div>
         <div className="row" style={{ marginTop: 8 }}>
@@ -243,12 +268,22 @@ function Receivables({ historyId, docs, decisions, update, letter, defaultRates 
                 <div className="card kpi2"><span className="small muted">Ø Überfälligkeit</span><strong>{a.kpis.avgDaysOverdue} Tage</strong><span className="small muted">gewichtet, überfällige Posten</span></div>
               </div>
               <div className={`result-layout cust-layout ${cust ? 'withpreview' : 'nopanel'}`}>
-                <div className="card" style={{ padding: 0, overflowX: 'auto' }}>
-                  <h3 style={{ padding: '10px 12px 0' }}>Forderungen nach Kunden</h3>
+                <div className="card" style={{ padding: 0 }}>
+                  <div className="row cust-head">
+                    <h3>Forderungen nach Kunden</h3>
+                    <span className="small muted">{custFilter ? `${customers.length} von ${a.customers.length}` : a.customers.length} Kunden</span>
+                    <input className="ml-auto w-md" type="search" placeholder="Kunde suchen …" value={custFilter} onChange={e => setCustFilter(e.target.value)} aria-label="Kunde suchen" />
+                  </div>
+                  <div className="cust-scroll">
                   <table className="grid clickable kunden">
-                    <thead><tr><th>Kunde</th><th className="num">Total CHF</th>{BUCKETS.map(b => <th key={b} className="num">{b.replace(' Tage', ' T')}</th>)}</tr></thead>
+                    <thead><tr>
+                      <th className="sortable" onClick={() => sortBy('name')} aria-sort={custSort.key === 'name' ? (custSort.dir === 1 ? 'ascending' : 'descending') : undefined}>Kunde{sortMark('name')}</th>
+                      <th className="num sortable" onClick={() => sortBy('total')}>Total CHF{sortMark('total')}</th>
+                      {BUCKETS.map((b, i) => <th key={b} className="num sortable" onClick={() => sortBy(i)}>{b.replace(' Tage', ' T')}{sortMark(i)}</th>)}
+                    </tr></thead>
                     <tbody>
-                      {top.map(c => {
+                      {customers.length === 0 && <tr className="muted-row"><td colSpan={2 + BUCKETS.length}>Kein Kunde gefunden.</td></tr>}
+                      {customers.map(c => {
                         const k = `${c.customerNo}|${c.customerName}`;
                         return (
                           <tr key={k} data-kunde={c.customerName} className={cust === k ? 'selected' : ''} onClick={() => { setCust(k); setItem(null); }}>
@@ -258,11 +293,13 @@ function Receivables({ historyId, docs, decisions, update, letter, defaultRates 
                           </tr>
                         );
                       })}
-                      {rest.length > 0 && (
+                    </tbody>
+                    <tfoot>
+                      {custFilter && customers.length > 0 && (
                         <tr className="muted-row">
-                          <td>Andere ({rest.length})</td>
-                          <td className="num">{chf(rest.reduce((s, c) => s + c.totalChf, 0))}</td>
-                          {BUCKETS.map((_, i) => <td key={i} className="num">{chf(rest.reduce((s, c) => s + c.buckets[i]!, 0))}</td>)}
+                          <td>Summe Auswahl ({customers.length})</td>
+                          <td className="num">{chf(customers.reduce((s, c) => s + c.totalChf, 0))}</td>
+                          {BUCKETS.map((_, i) => <td key={i} className="num">{chf(customers.reduce((s, c) => s + c.buckets[i]!, 0))}</td>)}
                         </tr>
                       )}
                       <tr className="total-row">
@@ -270,8 +307,9 @@ function Receivables({ historyId, docs, decisions, update, letter, defaultRates 
                         <td className="num">{chf(a.totalChf)}</td>
                         {a.buckets.map((b, i) => <td key={i} className="num">{chf(b)}</td>)}
                       </tr>
-                    </tbody>
+                    </tfoot>
                   </table>
+                  </div>
                 </div>
                 {cust && <CustomerPanel items={custItems} name={cust.split('|')[1] || cust.split('|')[0]!} fileOf={i => opDocOf(i)?.absPath ?? null} item={item} setItem={setItem} onClose={() => setCust(null)} />}
               </div>

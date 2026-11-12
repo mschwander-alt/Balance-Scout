@@ -354,3 +354,13 @@ table.anlagen td { white-space: nowrap; } table.anlagen td:nth-child(2) { max-wi
 table.anlagen select.assign { max-width: 190px; } table.anlagen table.grid td { white-space: normal; } .expense-check { padding: 8px 12px; }
 tr.sub-row > td { background: #fafbfc; padding: 8px 12px; }
 .row > code { max-width: 100%; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: inline-block; vertical-align: middle; }
+/* Forderungen nach Kunden: alle Kunden, Kopf- und Totalzeile bleiben beim Scrollen sichtbar */
+.cust-head { padding: 10px 12px 6px; gap: 10px; align-items: center; }
+.cust-head h3 { margin: 0; }
+.cust-scroll { max-height: 560px; overflow: auto; }
+.cust-scroll table.kunden tfoot td { position: sticky; bottom: 0; background: #fff; }
+.cust-scroll table.kunden tfoot tr.muted-row td { bottom: 33px; background: #fafbfc; }
+.grid th.sortable { cursor: pointer; user-select: none; }
+.grid th.sortable:hover { color: var(--text); }
+.add-account { margin-top: 4px; max-width: 100%; font-size: 12px; }
+.w-md { width: 200px; }

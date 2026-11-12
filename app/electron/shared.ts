@@ -131,7 +131,8 @@ export interface ReceivablesResult {
   candidates: { docId: string; filename: string; relPath: string; accounts: string[]; looksLikeOpList: boolean }[];
   docIds: string[]; docId: string | null; filename: string | null; listDate: string | null; currencies: string[];
   lists: { docId: string; filename: string; items: number; listDate: string | null }[];
-  accountOptions: { accountNumber: string; accountName: string; balance: number }[];
+  /** Alle Konten für die Abstimmung; `suggested` = Forderungen L+L (ohne Delkredere) */
+  accountOptions: { accountNumber: string; accountName: string; balance: number; groupCode: string | null; suggested: boolean }[];
   balanceChf: number | null; balanceAccounts: string; suggestions: string[];
   aging: {
     items: AgingItem[];

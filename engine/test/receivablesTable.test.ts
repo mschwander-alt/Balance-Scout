@@ -235,3 +235,42 @@ describe('Mehrere Listen mit demselben Kunden', () => {
     expect(r.suggestions.join(' ')).not.toMatch(/Differenz OP-Liste/);
   });
 });
+
+describe('Abstimmung mit frei gewählten Konten', () => {
+  const lines = [['OP-Liste per 31.12.2025'], ['Kunde', 'Datum', 'Betrag'], ['Alpha AG', '01.12.2025', '1000'], ['Total', '', '1000']]
+    .map((c, i) => ({ page: 1, lineNo: i + 1, text: c.filter(Boolean).join(' | '), cells: c }));
+  const res = {
+    documents: [{ doc: { id: 'op', filename: 'op.xlsx', relPath: 'op.xlsx', lines }, assignedAccounts: ['1100'] }],
+    accounts: [
+      { accountNumber: '1100', accountName: 'Forderungen L+L', groupCode: 'A12', balanceCurrentYear: 70000 },
+      { accountNumber: '1109', accountName: 'Delkredere', groupCode: 'A12', balanceCurrentYear: -5000 },
+      { accountNumber: '1101', accountName: 'Forderungen L+L (manuell)', groupCode: 'A12', balanceCurrentYear: 0 },
+      { accountNumber: '1140', accountName: 'Kontokorrent Kunde (falsch gegliedert)', groupCode: 'A13', balanceCurrentYear: 30000 },
+      { accountNumber: '3200', accountName: 'Handelserlöse', groupCode: 'E30', balanceCurrentYear: -900000 },
+    ],
+    input: { closingDate: '2025-12-31' },
+  };
+
+  it('ohne Wahl: Konto der Liste; Optionen enthalten alle Konten, Forderungen L+L (ohne Delkredere) zuerst', () => {
+    const r = receivablesFor(res, {});
+    expect(r.balanceAccounts).toBe('1100');
+    expect(r.balanceChf).toBe(70000);
+    expect(r.accountOptions.map(o => [o.accountNumber, o.suggested])).toEqual([
+      ['1100', true], ['1101', true], ['1109', false], ['1140', false], ['3200', false],
+    ]);
+  });
+
+  it('gewählte Konten aus anderen Gruppen werden summiert; Differenz verschwindet', () => {
+    const r = receivablesFor(res, { accounts: ['1100', '1140'] });
+    expect(r.balanceAccounts).toBe('1100, 1140');
+    expect(r.balanceChf).toBe(100000);
+    expect(r.aging!.totalChf).toBe(100000);
+    expect(r.suggestions.join(' ')).not.toMatch(/Differenz OP-Liste/);
+  });
+
+  it('ausdrücklich gewähltes Delkredere zählt mit; unbekannte Kontonummer wird ignoriert', () => {
+    const r = receivablesFor(res, { accounts: ['1100', '1109', '9999'] });
+    expect(r.balanceAccounts).toBe('1100, 1109');
+    expect(r.balanceChf).toBe(65000);
+  });
+});

@@ -193,6 +193,25 @@ await page.getByRole('button', { name: 'Analyse starten' }).click();
 await page.locator('.recon').waitFor();
 assert.match(await page.locator('.recon').innerText(), /87'640\.20[\s\S]*✓ abgestimmt/);
 assert.equal(await page.locator('table.kunden tr[data-kunde]').count(), 4);
+// Alle Kunden: Suche und Sortierung (keine Zusammenfassung „Andere“)
+assert.equal(await page.locator('table.kunden', { hasText: 'Andere (' }).count(), 0);
+await page.getByLabel('Kunde suchen').fill('meier');
+assert.equal(await page.locator('table.kunden tr[data-kunde]').count(), 1);
+await page.locator('table.kunden', { hasText: 'Summe Auswahl (1)' }).waitFor();
+await page.getByLabel('Kunde suchen').fill('');
+await page.locator('table.kunden th', { hasText: 'Kunde' }).click();
+assert.deepEqual(await page.locator('table.kunden tr[data-kunde]').evaluateAll(r => r.map(x => x.dataset.kunde)), ['Brunner', 'Keller & Co', 'Meier AG', 'Steiner GmbH']);
+await page.locator('table.kunden th', { hasText: 'Total CHF' }).click();
+// Abstimmung: weiteres Konto aus allen Konten hinzufügen und wieder entfernen
+const addAcc = page.getByLabel('Weiteres Konto für die Abstimmung');
+const extra = await addAcc.locator('option').nth(1).getAttribute('value');
+await addAcc.selectOption(extra);
+await page.locator('.pick-line', { hasText: 'andere Gruppe' }).waitFor();
+await page.locator('.recon', { hasText: new RegExp(`Saldo Konto (1100, ${extra}|${extra}, 1100) `) }).waitFor();
+await page.locator('.pick-line', { hasText: 'andere Gruppe' }).locator('input').click(); // abgewählt → zurück in die Auswahlliste
+assert.equal(await page.locator('.pick-line', { hasText: 'andere Gruppe' }).count(), 0);
+await page.locator('.recon', { hasText: /87'640\.20[\s\S]*✓ abgestimmt/ }).waitFor();
+step('Kunden durchsuchbar und sortierbar, Abstimmungskonto aus allen Konten');
 await page.locator('table.kunden tr[data-kunde="Meier AG"]').click();
 await page.locator('.preview-panel .viewer').waitFor();
 await page.locator('.preview-panel tr.hl-row').first().waitFor({ timeout: 20_000 });
