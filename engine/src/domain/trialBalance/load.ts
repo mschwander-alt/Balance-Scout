@@ -44,6 +44,18 @@ export interface LoadOptions {
   /** Vom Prüfer: Teile (Datei/Blatt-IDs), die nicht bzw. trotz Doppel verwendet werden sollen */
   skipParts?: string[];
   forceParts?: string[];
+  /**
+   * Konten mit Saldo null nicht importieren: Saldo null im laufenden Jahr und im Vorjahr –
+   * ohne Vorjahresspalte genügt Saldo null im laufenden Jahr. Sie erscheinen unter den ausgeblendeten Zeilen.
+   */
+  skipZeroBalances?: boolean;
+}
+
+/** Konto ohne Saldo (laufendes Jahr null und Vorjahr null bzw. nicht vorhanden)? Grund für die ausgeblendeten Zeilen, sonst null */
+export function zeroBalanceReason(r: Pick<TrialBalanceRow, 'balanceCurrentYear' | 'balancePreviousYear'>): string | null {
+  if (r.balanceCurrentYear !== 0) return null;
+  if (r.balancePreviousYear === null || r.balancePreviousYear === undefined) return 'Saldo null (ohne Vorjahr) – nicht importiert';
+  return r.balancePreviousYear === 0 ? 'Saldo null in beiden Jahren – nicht importiert' : null;
 }
 
 /**
@@ -136,6 +148,12 @@ export async function loadTrialBalance(paths: string[], opts: LoadOptions = {}):
         continue;
       }
       seen.set(r.accountNumber, { label: src ?? '', rowIndex: r.rowIndex, balance: r.balanceCurrentYear });
+      const zero = opts.skipZeroBalances ? zeroBalanceReason(r) : null;
+      if (zero) {
+        excluded.push({ rowIndex: r.rowIndex, source: src, accountNumber: r.accountNumber, accountName: r.accountName, balance: r.balanceCurrentYear, reason: zero });
+        info.accountCount--;
+        continue;
+      }
       rows.push({ ...r, source: src });
     }
     excluded.push(...parsed.excluded.map(e => ({ ...e, source: src })));

@@ -161,7 +161,7 @@ function allowPreviewFor(result: unknown): void {
 function createWindow(): void {
   win = new BrowserWindow({
     width: 1400, height: 900, minWidth: 1050, minHeight: 680, show: false, title: 'Balance Scout',
-    icon: res('build', 'icon.png'), backgroundColor: '#f6f7f9',
+    icon: res('build', 'icon.png'), backgroundColor: '#0b1015',
     webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false, sandbox: true, spellcheck: true },
   });
   win.setMenuBarVisibility(false);
@@ -248,7 +248,7 @@ function registerIpc(): void {
     const o: TbPreviewOptions = opts && 'mapping' in opts && typeof (opts as { headerRowIndex?: number }).headerRowIndex === 'number' ? { mapping: opts as TbPreview['detected'] } : ((opts ?? {}) as TbPreviewOptions);
     return call<TbPreview>({
       type: 'previewTrialBalance', paths: Array.isArray(p) ? p : [p], signConvention: sign, mapping: o.mapping ?? undefined,
-      mappings: o.mappings ?? undefined, accountDigits: o.accountDigits ?? undefined, ocr: { langPath: tessdata() },
+      mappings: o.mappings ?? undefined, accountDigits: o.accountDigits ?? undefined, skipZeroBalances: o.skipZeroBalances || undefined, ocr: { langPath: tessdata() },
     });
   });
   ipcMain.handle('engine:run', async (_e, input: JobInput) => {

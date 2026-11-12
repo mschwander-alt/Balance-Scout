@@ -24,7 +24,7 @@ export function App() {
   return (
     <ToastProvider>
       <div className="topbar">
-        <span className="brand"><span className="logo sm">BS</span> Balance Scout</span>
+        <span className="brand"><span className="logo sm">BS</span> <span className="brand-name">Balance Scout</span></span>
         <span className="muted small">lokal · ohne Cloud {version && `· ${version}`}</span>
         <span className="spacer" />
         {view.k !== 'running' && view.k !== 'start' && <button className="btn btn-sm" onClick={() => setView({ k: 'start' })}>Übersicht</button>}

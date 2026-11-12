@@ -41,6 +41,8 @@ export interface JobInput {
   trialBalanceMappings?: Record<string, { headerRowIndex: number; mapping: ColumnMapping }>;
   /** Kontonummern haben von–bis Ziffern; Gruppen und Zwischensummen werden ausgeblendet */
   accountDigits?: { min: number; max: number };
+  /** Konten mit Saldo null nicht importieren (beide Jahre null bzw. laufendes Jahr null ohne Vorjahr) */
+  skipZeroBalances?: boolean;
   signConvention: SignConvention;
   evidencePaths: string[];
   targetDir: string | null;
@@ -66,6 +68,7 @@ export interface TbPreviewOptions {
   mapping?: ExplicitMapping | null;
   mappings?: Record<string, ExplicitMapping>;
   accountDigits?: { min: number; max: number } | null;
+  skipZeroBalances?: boolean;
 }
 export interface TbPart {
   id: string; path: string; sheet: string | null; label: string; detected: ExplicitMapping | null; used: ExplicitMapping | null;

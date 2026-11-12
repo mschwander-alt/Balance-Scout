@@ -2,7 +2,7 @@ import { Fragment, useEffect, useState, type DragEvent } from 'react';
 import { bsb } from '../bridge';
 import type { AppSettings, CloudLocation, ColumnMapping, ExplicitMapping, FileMode, FxRateList, GroupsInfo, JobInput, PickedPath, SignConvention, TbPart, TbPreview } from '../../electron/shared';
 import { chf } from '../format';
-import { Modal, Spinner, useToast } from '../components/ui';
+import { Info, Modal, Spinner, useToast } from '../components/ui';
 import { groupAccounts } from '../review';
 import { ExcludedTable } from './Result';
 
@@ -20,6 +20,7 @@ export function NewAudit({ prefill, onStart }: { prefill?: Partial<JobInput>; on
   const [mappings, setMappings] = useState<Record<string, ExplicitMapping>>(prefill?.trialBalanceMappings ?? (prefill?.trialBalanceMapping && prefill.trialBalancePath ? { [prefill.trialBalancePath]: prefill.trialBalanceMapping } : {}));
   const [digits, setDigits] = useState<{ min: number; max: number } | null>(prefill?.accountDigits ?? null);
   const [digitsTouched, setDigitsTouched] = useState(!!prefill?.accountDigits);
+  const [skipZero, setSkipZero] = useState(!!prefill?.skipZeroBalances);
   const [mapPart, setMapPart] = useState<TbPart | null>(null);
   const [showAccounts, setShowAccounts] = useState(false);
   const [groups, setGroups] = useState<GroupsInfo | null>(null);
@@ -54,7 +55,7 @@ export function NewAudit({ prefill, onStart }: { prefill?: Partial<JobInput>; on
   useEffect(() => {
     if (!tbs.length) return setPreview(null);
     setPreviewBusy(true);
-    bsb().engine.previewTrialBalance(tbs.map(t => t.path), sign, { mappings, accountDigits: digits }).then(
+    bsb().engine.previewTrialBalance(tbs.map(t => t.path), sign, { mappings, accountDigits: digits, skipZeroBalances: skipZero }).then(
       p => {
         setPreview(p);
         // Ziffernbereich: Vorschlag übernehmen, solange der Benutzer nichts gewählt hat
@@ -64,7 +65,7 @@ export function NewAudit({ prefill, onStart }: { prefill?: Partial<JobInput>; on
       },
       e => toast('error', `Saldobilanz: ${(e as Error).message}`),
     ).finally(() => setPreviewBusy(false));
-  }, [tbs, sign, mappings, digits, digitsTouched, toast]);
+  }, [tbs, sign, mappings, digits, digitsTouched, skipZero, toast]);
   // Neue Datei(en): Ziffernbereich neu aus den Kontonummern vorschlagen (nie aus einer früheren Prüfung übernehmen)
   const addTb = (items: PickedPath[]) => {
     setTbs(cur => [...cur, ...items.filter(i => !cur.some(c => c.path === i.path))]);
@@ -73,6 +74,7 @@ export function NewAudit({ prefill, onStart }: { prefill?: Partial<JobInput>; on
   };
   // Ausgeblendete Zeilen mit MEHR Ziffern als eingestellt sind vermutlich echte Konten
   const longer = preview?.excluded?.filter(e => digits && e.accountNumber.replace(/\D/g, '').length > digits.max && e.balance !== null && e.balance !== 0) ?? [];
+  const zeroSkipped = preview?.excluded?.filter(e => /^Saldo null/.test(e.reason)).length ?? 0;
   const longerDigits = longer.length ? Math.max(...longer.map(e => e.accountNumber.replace(/\D/g, '').length)) : 0;
 
   const addEvidence = (items: PickedPath[]) => setEvidence(ev => [...ev, ...items.filter(i => !ev.some(e => e.path === i.path))]);
@@ -117,7 +119,7 @@ export function NewAudit({ prefill, onStart }: { prefill?: Partial<JobInput>; on
     onStart({
       mandate: mandate.trim(), client: client.trim() || undefined, closingDate: closing || null, trialBalancePath: tbs[0]!.path,
       trialBalancePaths: tbs.map(t => t.path), trialBalanceMappings: Object.keys(mappings).length ? mappings : undefined,
-      accountDigits: digits ?? undefined, signConvention: sign, evidencePaths: evidence.map(e => e.path),
+      accountDigits: digits ?? undefined, skipZeroBalances: skipZero || undefined, signConvention: sign, evidencePaths: evidence.map(e => e.path),
       targetDir: mode === 'none' ? null : target, fileMode: mode, absoluteToleranceCents: tolCents,
       ledgerPaths: ledgers.length ? ledgers.map(l => l.path) : undefined, fxRates,
     });
@@ -176,7 +178,13 @@ export function NewAudit({ prefill, onStart }: { prefill?: Partial<JobInput>; on
                 <option value="unsigned">Alle Salden positiv</option>
               </select>
             </label>
+            <label className="field inline check">
+              <input type="checkbox" checked={skipZero} onChange={e => setSkipZero(e.target.checked)} />
+              <span>Konten mit Saldo null nicht importieren</span>
+              <Info label="Zu Konten mit Saldo null">Nicht importiert werden Konten mit Saldo null im laufenden Jahr <em>und</em> im Vorjahr. Enthält die Saldobilanz kein Vorjahr, genügt Saldo null im laufenden Jahr. Die Konten bleiben unter „Ausgeblendete Zeilen“ nachvollziehbar.</Info>
+            </label>
           </div>
+          {skipZero && preview && !previewBusy && zeroSkipped > 0 && <p className="small muted">{zeroSkipped} Konten mit Saldo null werden nicht importiert.</p>}
           {digits && !digitsTouched && preview?.suggestedDigits && <p className="small muted">Ziffernbereich aus den Kontonummern der Datei vorgeschlagen – Gruppen und Zwischensummen mit kürzeren Nummern werden ausgeblendet.</p>}
           {longer.length > 0 && (
             <div className="warn-box small" style={{ marginTop: 6 }}>

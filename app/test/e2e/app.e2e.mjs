@@ -46,6 +46,15 @@ await page.locator('input[type=date]').fill('2025-12-31');
 await page.getByRole('button', { name: 'Datei wählen …' }).click();
 await page.getByText(/27 Konten erkannt/).waitFor();
 step('Saldobilanz-Vorschau: 27 Konten');
+// Option „Konten mit Saldo null nicht importieren“: umschaltbar, Vorschau bleibt stabil (die Testdaten enthalten keine Nullsalden)
+const zeroBox = page.getByLabel('Konten mit Saldo null nicht importieren');
+await zeroBox.check();
+await page.getByText(/\d+ Konten erkannt/).waitFor();
+const withZeroSkip = Number((await page.getByText(/\d+ Konten erkannt/).innerText()).match(/(\d+) Konten erkannt/)[1]);
+assert.ok(withZeroSkip <= 27 && withZeroSkip >= 20, `Konten ohne Nullsalden: ${withZeroSkip}`);
+await zeroBox.uncheck();
+await page.getByText(/27 Konten erkannt/).waitFor();
+step(`Option Nullsalden umschaltbar (Testdaten ohne Nullsalden: ${withZeroSkip} Konten; Regel siehe engine/test/trialBalanceZero.test.ts)`);
 // Cloud-Schnellzugriff wird angezeigt (synchronisierter Ordner)
 await page.locator('.cloud .chip', { hasText: 'Kunde_Upload' }).waitFor();
 step('Cloud-Ordner erkannt');

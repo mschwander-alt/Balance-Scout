@@ -10,7 +10,8 @@ import { FixedAssets } from './FixedAssets';
 /** Prüfgebiete mit Anlagespiegel: mobile/immobile Sachanlagen, immaterielle Werte */
 const FIXED = ['A21', 'A22', 'A23'];
 const BUCKETS = ['Nicht fällig', '1–30 Tage', '31–60 Tage', '61–90 Tage', '> 90 Tage'];
-const SHADES = ['#1f5f9e', '#3b82c4', '#6ea6d9', '#a4c8ea', '#d4e5f6'];
+/** Altersklassen als Ampel: nicht fällig (grün) bis > 90 Tage (rot) – lesbar auf dunklem Grund */
+const SHADES = ['#4fc767', '#b7d84f', '#e3b341', '#f0883e', '#f85149'];
 type Sub = 'faelligkeit' | 'posten' | 'feststellungen';
 /** Sortierung Kundentabelle: Name, Total oder Index der Altersklasse */
 type CustSortKey = 'name' | 'total' | number;
@@ -411,15 +412,15 @@ function Donut({ values, total }: { values: number[]; total: number }) {
   return (
     <div className="donut">
       <svg viewBox="0 0 140 140" width="150" height="150" aria-label="Verteilung">
-        <circle cx="70" cy="70" r={R} fill="none" stroke="#eef1f5" strokeWidth="22" />
+        <circle cx="70" cy="70" r={R} fill="none" style={{ stroke: 'var(--grey-bg)' }} strokeWidth="22" />
         {values.map((v, i) => {
           const len = total > 0 ? (Math.max(0, v) / total) * C : 0;
           const el = <circle key={i} cx="70" cy="70" r={R} fill="none" stroke={SHADES[i]} strokeWidth="22" strokeDasharray={`${len} ${C - len}`} strokeDashoffset={-off} transform="rotate(-90 70 70)" />;
           off += len;
           return el;
         })}
-        <text x="70" y="66" textAnchor="middle" fontSize="10" fill="#737b8c">CHF</text>
-        <text x="70" y="82" textAnchor="middle" fontSize="13" fontWeight="600" fill="#222936">{chf(total).replace(/\.\d\d$/, '')}</text>
+        <text x="70" y="66" textAnchor="middle" fontSize="10" style={{ fill: 'var(--muted)' }}>CHF</text>
+        <text x="70" y="82" textAnchor="middle" fontSize="13" fontWeight="600" style={{ fill: 'var(--text)' }}>{chf(total).replace(/\.\d\d$/, '')}</text>
       </svg>
       <ul className="legend">
         {values.map((v, i) => <li key={i}><span className="dot" style={{ background: SHADES[i] }} /> {BUCKETS[i]} <strong>{total ? ((v / total) * 100).toFixed(1) : '0.0'} %</strong></li>)}
