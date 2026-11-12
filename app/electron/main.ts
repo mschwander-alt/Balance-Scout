@@ -248,7 +248,7 @@ function registerIpc(): void {
     const o: TbPreviewOptions = opts && 'mapping' in opts && typeof (opts as { headerRowIndex?: number }).headerRowIndex === 'number' ? { mapping: opts as TbPreview['detected'] } : ((opts ?? {}) as TbPreviewOptions);
     return call<TbPreview>({
       type: 'previewTrialBalance', paths: Array.isArray(p) ? p : [p], signConvention: sign, mapping: o.mapping ?? undefined,
-      mappings: o.mappings ?? undefined, accountDigits: o.accountDigits ?? undefined, skipZeroBalances: o.skipZeroBalances || undefined, ocr: { langPath: tessdata() },
+      mappings: o.mappings ?? undefined, accountDigits: o.accountDigits ?? undefined, skipZeroBalances: o.skipZeroBalances || undefined, partRoles: o.partRoles ?? undefined, ocr: { langPath: tessdata() },
     });
   });
   ipcMain.handle('engine:run', async (_e, input: JobInput) => {

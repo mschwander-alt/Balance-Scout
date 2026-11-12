@@ -3,6 +3,7 @@ import { readFile, readdir, stat } from 'node:fs/promises';
 import path from 'node:path';
 import Papa from 'papaparse';
 import type { LocalOcr } from './ocr.js';
+import { pdfjsOptions } from './pdfjsAssets.js';
 
 /** Position auf der Seite, relativ zur Seitengrösse (0–1), Ursprung oben links */
 export interface BBox {
@@ -164,7 +165,7 @@ async function readPdf(buf: Buffer, doc: EvidenceDocument, ctx: ReadContext): Pr
   // Zeichenfläche ausdrücklich aus Node (@napi-rs/canvas): pdf.js hält sich im Electron-Hintergrundprozess
   // sonst für einen Browser und scheitert beim Rendern von Scan-Seiten.
   const CanvasFactory = await createIsomorphicCanvasFactory(() => import('@napi-rs/canvas'));
-  const pdf = await getDocumentProxy(new Uint8Array(buf), { CanvasFactory } as never);
+  const pdf = await getDocumentProxy(new Uint8Array(buf), { CanvasFactory, ...pdfjsOptions() } as never);
   doc.pageCount = pdf.numPages;
   const minChars = ctx.minCharsPerPage ?? 40;
   const maxOcr = ctx.maxOcrPages ?? 30;

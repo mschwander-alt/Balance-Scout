@@ -248,13 +248,13 @@ export function Result({ result: initial, onRepeat }: { result: AuditResult; onR
             </div>
             <div className="table-wrap">
               <table className={`grid clickable konten ${er ? 'er' : ''}`}>
-                <thead><tr><th>Konto</th><th>Bezeichnung</th><th className="num">Vorjahr</th><th className="num">Aktuell</th><th className="num dchf" title="Veränderung des Betrags (bei Passiven und Ertrag: Zunahme = +)">Δ CHF</th><th className="num">Δ %</th><th>Status</th><th>Beleg</th></tr></thead>
+                <thead><tr><th>Konto</th><th>Bezeichnung</th><th className="num">Aktuell</th><th className="num">Vorjahr</th><th className="num dchf" title="Veränderung des Betrags (bei Passiven und Ertrag: Zunahme = +)">Δ CHF</th><th className="num">Δ %</th><th>Status</th><th>Beleg</th></tr></thead>
                 <tbody>
                   {(grouped ? withTotals(groupAccounts(accounts, order)) : [{ code: '', name: '', items: accounts, total: 0 }]).map(g =>
                     'totalOf' in g ? (
                       <tr key={`t-${g.totalOf}`} className="total-row">
                         <td colSpan={2}>{g.name}</td>
-                        <td className="num">{chf(g.vj)}</td><td className="num">{chf(g.cy)}</td>
+                        <td className="num">{chf(g.cy)}</td><td className="num">{chf(g.vj)}</td>
                         <Delta cy={g.cy} vj={g.vj} />
                         <td colSpan={2} />
                       </tr>
@@ -412,8 +412,8 @@ function GroupRows({ g, grouped, collapsed, onToggle, letter, open, setOpen, doc
       {grouped && (
         <tr className={`group-row ${isOver ? 'drop-target' : ''}`} onClick={onToggle} aria-expanded={!collapsed} data-gruppe={g.code} {...target}>
           <td colSpan={2} title={g.name}><span className="caret">{collapsed ? '›' : '⌄'}</span>{letter ? <span className="register">{letter}</span> : null} {g.name}</td>
-          <td className="num">{hasVj ? chf(vj) : ''}</td>
           <td className="num">{chf(g.total)}</td>
+          <td className="num">{hasVj ? chf(vj) : ''}</td>
           <Delta cy={g.total} vj={hasVj ? vj : null} />
           <td className="small muted" title={`${g.items.length} Konten, ${nDocs} Belege`}>{g.items.length}</td>
           <td className="small muted">{nDocs || ''}</td>
@@ -431,8 +431,8 @@ function GroupRows({ g, grouped, collapsed, onToggle, letter, open, setOpen, doc
             onDragEnd={dnd?.enabled ? () => dnd.end() : undefined}>
             <td>{a.accountNumber}</td>
             <td title={a.accountName}>{a.accountName}{notes[a.accountNumber] ? <span className="flag note" title="Notiz vorhanden">Notiz</span> : null}{a.groupSource === 'bezeichnung' && <WarnIcon text={`Gruppe „${a.groupName}“ aus der Bezeichnung abgeleitet – bitte prüfen`} />}{a.groupSource === 'manuell' && <span className="flag moved" title={`vom Prüfer verschoben (automatisch: ${a.autoGroup?.name ?? 'Ohne Gruppe'})`}>verschoben</span>}</td>
-            <td className="num">{a.balancePreviousYear === null ? '' : chf(a.balancePreviousYear)}</td>
             <td className="num">{chf(a.balance)}{a.fx && a.fx.currency !== 'CHF' && a.fx.closing !== null && <div className="fx-sub">{a.fx.currency} {chf(a.fx.closing)}</div>}</td>
+            <td className="num">{a.balancePreviousYear === null ? '' : chf(a.balancePreviousYear)}</td>
             <Delta cy={a.balance} vj={a.balancePreviousYear} />
             <td><StatusBadge status={a.status} />{fxProblem(a) && <WarnIcon text={fxProblem(a)!} />}{a.manual && <span className="manual" title={a.manual === 'akzeptiert' ? 'manuell akzeptiert' : 'Beleg manuell zugeordnet'}> ✓</span>}{problems.length > 0 && <WarnIcon text={problems.join(', ')} />}</td>
             <td>{hasDoc ? <span className="reg-link" title={doc!.filename}>{doc!.register ?? doc!.filename.slice(0, 18)}</span> : <span className="muted">–</span>}</td>

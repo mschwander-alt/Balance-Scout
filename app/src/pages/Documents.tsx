@@ -180,7 +180,7 @@ function DocPanel({ d, accounts, filed, pos, count, prev, next, onAssign }: {
         <input type="search" placeholder="Konto suchen (Nummer, Bezeichnung oder Gruppe)" value={q} onChange={e => setQ(e.target.value)} aria-label="Konto suchen" />
         <div className="acc-pick">
           <table className="grid clickable">
-            <thead><tr><th>Konto</th><th>Bezeichnung</th><th className="num">Vorjahr</th><th className="num">Aktuell</th><th className="num">Δ</th></tr></thead>
+            <thead><tr><th>Konto</th><th>Bezeichnung</th><th className="num">Aktuell</th><th className="num">Vorjahr</th><th className="num">Δ</th></tr></thead>
             <tbody>
               {rows.map(a => {
                 const match = amounts.has(Math.abs(a.balance)) && a.balance !== 0;
@@ -188,8 +188,8 @@ function DocPanel({ d, accounts, filed, pos, count, prev, next, onAssign }: {
                   <tr key={a.accountNumber} data-pick={a.accountNumber} className={pick.includes(a.accountNumber) ? 'selected' : ''} onClick={() => toggle(a.accountNumber)} onDoubleClick={() => onAssign([...new Set([...pick, a.accountNumber])])}>
                     <td><input type="checkbox" checked={pick.includes(a.accountNumber)} readOnly tabIndex={-1} aria-label={`Konto ${a.accountNumber}`} /> {a.accountNumber}</td>
                     <td title={a.accountName}><span className={`dot ${a.status === 'BELEGT' ? 'ok' : a.status === 'PRUEFEN' ? 'warn' : a.status === 'KEIN_NACHWEIS' ? 'bad' : 'grey'}`} /> {a.accountName}{match && <span className="flag match" title="Dieser Saldo kommt im Beleg vor">Betrag passt</span>}</td>
-                    <td className="num">{a.balancePreviousYear === null ? '' : chf(a.balancePreviousYear)}</td>
                     <td className="num">{chf(a.balance)}</td>
+                    <td className="num">{a.balancePreviousYear === null ? '' : chf(a.balancePreviousYear)}</td>
                     <td className="num">{a.balancePreviousYear === null ? '' : chf(a.balance - a.balancePreviousYear)}</td>
                   </tr>
                 );

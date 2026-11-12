@@ -18,7 +18,7 @@ export type Request =
   | { id: string; type: 'preview'; absPath: string; page: number }
   | {
       id: string; type: 'previewTrialBalance'; path?: string; paths?: string[]; mapping?: ExplicitMapping; mappings?: Record<string, ExplicitMapping>;
-      accountDigits?: { min: number; max: number }; signConvention?: SignConvention; ocr?: { langPath?: string }; skipParts?: string[]; forceParts?: string[]; skipZeroBalances?: boolean;
+      accountDigits?: { min: number; max: number }; signConvention?: SignConvention; ocr?: { langPath?: string }; skipParts?: string[]; forceParts?: string[]; skipZeroBalances?: boolean; partRoles?: Record<string, import('./domain/trialBalance/load.js').PartRole>;
     }
   /** Analyse (Lesen + Abgleich). Mit snapshotPath: ohne Ablage/Excel – Abschluss folgt nach der Durchsicht. */
   | { id: string; type: 'run'; input: Omit<RunInput, 'onProgress'>; reportDir: string; snapshotPath?: string }
@@ -42,7 +42,7 @@ async function previewTrialBalance(r: Extract<Request, { type: 'previewTrialBala
   let tb;
   try {
     tb = await (await import('./domain/trialBalance/load.js')).loadTrialBalance(paths, {
-      ocr, accountDigits: r.accountDigits, skipParts: r.skipParts, forceParts: r.forceParts, skipZeroBalances: r.skipZeroBalances,
+      ocr, accountDigits: r.accountDigits, skipParts: r.skipParts, forceParts: r.forceParts, skipZeroBalances: r.skipZeroBalances, partRoles: r.partRoles,
       mappings: r.mappings ?? (r.mapping ? { [paths[0]!]: r.mapping } : undefined),
     });
   } finally {

@@ -43,6 +43,8 @@ export interface JobInput {
   accountDigits?: { min: number; max: number };
   /** Konten mit Saldo null nicht importieren (beide Jahre null bzw. laufendes Jahr null ohne Vorjahr) */
   skipZeroBalances?: boolean;
+  /** Verwendung je Saldobilanz-Teil (Datei/Blatt-ID) */
+  partRoles?: Record<string, PartRole>;
   signConvention: SignConvention;
   evidencePaths: string[];
   targetDir: string | null;
@@ -69,10 +71,15 @@ export interface TbPreviewOptions {
   mappings?: Record<string, ExplicitMapping>;
   accountDigits?: { min: number; max: number } | null;
   skipZeroBalances?: boolean;
+  partRoles?: Record<string, PartRole>;
 }
+/** Verwendung eines Blatts: automatisch, nur Bilanz, nur Erfolgsrechnung, beides, nicht verwenden */
+export type PartRole = 'auto' | 'bilanz' | 'erfolg' | 'beide' | 'aus';
 export interface TbPart {
   id: string; path: string; sheet: string | null; label: string; detected: ExplicitMapping | null; used: ExplicitMapping | null;
   head: string[][]; accountCount: number; ocrPages: number; status: 'ok' | 'ignoriert' | 'zuordnen';
+  /** Grund, falls ignoriert; gewählte Verwendung */
+  reason?: string; role?: PartRole;
 }
 export interface TbAccount {
   accountNumber: string; accountName: string; balance: number; balancePreviousYear?: number | null; category: string;

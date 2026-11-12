@@ -2,6 +2,7 @@ import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import Papa from 'papaparse';
 import { numberText } from './ingest/readDocument.js';
+import { pdfjsOptions } from './ingest/pdfjsAssets.js';
 
 export type Preview =
   | { kind: 'image'; dataUrl: string; width: number; height: number; page: number; pageCount: number; pageLabel?: string }
@@ -45,7 +46,7 @@ function decode(buf: Buffer): string {
 async function pdfPage(buf: Buffer, page: number): Promise<Preview> {
   const { getDocumentProxy, renderPageAsImage, createIsomorphicCanvasFactory } = await import('unpdf');
   const CanvasFactory = await createIsomorphicCanvasFactory(() => import('@napi-rs/canvas'));
-  const pdf = await getDocumentProxy(new Uint8Array(buf), { CanvasFactory } as never);
+  const pdf = await getDocumentProxy(new Uint8Array(buf), { CanvasFactory, ...pdfjsOptions() } as never);
   const n = pdf.numPages;
   const p = Math.min(Math.max(1, page), n);
   const png = await renderPageAsImage(pdf, p, { canvasImport: () => import('@napi-rs/canvas'), width: IMAGE_WIDTH });

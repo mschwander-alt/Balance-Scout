@@ -4,6 +4,15 @@ import {
   detectMapping, inferMapping, digitCount, ocrTrialBalanceIssue, parseTrialBalance, readGridParts,
   type ColumnMapping, type ExcludedRow, type Grid, type RowIssue, type TrialBalanceRow,
 } from './parser.js';
+import { classify } from './accountGroups.js';
+
+/**
+ * Verwendung eines Blatts bzw. einer Datei, vom Prüfer gewählt: automatisch (Standard), nur Bilanz, nur Erfolgsrechnung,
+ * beides oder nicht verwenden. Wählt der Prüfer für ein Blatt einer Datei eine Verwendung, gelten die übrigen
+ * Blätter dieser Datei mit „automatisch“ als nicht gewählt.
+ */
+export type PartRole = 'auto' | 'bilanz' | 'erfolg' | 'beide' | 'aus';
+const EXPLICIT: PartRole[] = ['bilanz', 'erfolg', 'beide'];
 
 export type ExplicitMapping = { headerRowIndex: number; mapping: ColumnMapping };
 
@@ -24,6 +33,8 @@ export interface TbPartInfo {
   status: 'ok' | 'ignoriert' | 'zuordnen';
   /** Grund, falls ignoriert (z. B. gleiche Konten wie ein anderes Blatt) */
   reason?: string;
+  /** vom Prüfer gewählte Verwendung (ohne Angabe: automatisch) */
+  role?: PartRole;
 }
 
 export interface LoadedTrialBalance {
@@ -49,6 +60,8 @@ export interface LoadOptions {
    * ohne Vorjahresspalte genügt Saldo null im laufenden Jahr. Sie erscheinen unter den ausgeblendeten Zeilen.
    */
   skipZeroBalances?: boolean;
+  /** Verwendung je Teil (Datei/Blatt-ID): Bilanz, Erfolgsrechnung, beides, nicht verwenden */
+  partRoles?: Record<string, PartRole>;
 }
 
 /** Konto ohne Saldo (laufendes Jahr null und Vorjahr null bzw. nicht vorhanden)? Grund für die ausgeblendeten Zeilen, sonst null */
@@ -95,6 +108,12 @@ export async function loadTrialBalance(paths: string[], opts: LoadOptions = {}):
       p.info.guessed = true;
     }
   }
+  const roleOf = (info: TbPartInfo): PartRole => opts.partRoles?.[info.id] ?? 'auto';
+  const explicitFiles = new Set(parts.filter(p => EXPLICIT.includes(roleOf(p.info))).map(p => p.info.path));
+  for (const p of parts) if (roleOf(p.info) !== 'auto') p.info.role = roleOf(p.info);
+  /** Teil nicht verwenden? Grund oder null */
+  const notChosen = (info: TbPartInfo): string | null =>
+    roleOf(info) === 'aus' ? 'vom Prüfer abgewählt' : roleOf(info) === 'auto' && explicitFiles.has(info.path) ? 'nicht gewählt (andere Blätter dieser Datei gewählt)' : null;
   const multi = parts.length > 1;
   const rows: TrialBalanceRow[] = [];
   const excluded: ExcludedRow[] = [];
@@ -110,6 +129,10 @@ export async function loadTrialBalance(paths: string[], opts: LoadOptions = {}):
   for (const info of ordered) {
     const mine = numsOf.get(info)!;
     if (opts.skipParts?.includes(info.id)) { info.status = 'ignoriert'; info.reason = 'vom Prüfer abgewählt'; continue; }
+    const off = notChosen(info);
+    if (off) { info.status = 'ignoriert'; info.reason = off; continue; }
+    // ausdrücklich gewählte Blätter werden immer verwendet (auch bei gleichen Konten wie ein anderes Blatt)
+    if (EXPLICIT.includes(roleOf(info))) { kept.push(info); continue; }
     const dup = kept.find(k => { const o = numsOf.get(k)!; let n = 0; for (const x of mine) if (o.has(x)) n++; return mine.size > 0 && n / mine.size >= 0.5; });
     if (dup && !opts.forceParts?.includes(info.id)) {
       info.status = 'ignoriert';
@@ -122,6 +145,7 @@ export async function loadTrialBalance(paths: string[], opts: LoadOptions = {}):
   const seen = new Map<string, { label: string; rowIndex: number; balance: number }>();
   for (const { info, grid } of parts) {
     if (info.used && info.status === 'ignoriert') continue;
+    if (!info.used && notChosen(info)) { info.status = 'ignoriert'; info.reason = notChosen(info)!; continue; }
     if (!info.used) {
       // Ein Blatt ohne Kontenliste (Deckblatt, Notizen) neben anderen Teilen wird ignoriert;
       // ist es der einzige Teil einer Datei bzw. wurde gar nichts erkannt, muss zugeordnet werden.
@@ -138,7 +162,18 @@ export async function loadTrialBalance(paths: string[], opts: LoadOptions = {}):
     info.accountCount = parsed.rows.length;
     if (info.guessed) issues.push({ rowIndex: 0, source: info.label, severity: 'warning', code: 'PART_GUESSED', message: `${info.label}: Kopfzeile nicht erkannt – Spalten angenommen (erste Betragsspalte = aktuelles Jahr). Bitte mit „Konten anzeigen“ kontrollieren.` });
     // Gleiches Konto mehrfach (wiederholte Seiten, Teilblätter): nur einmal übernehmen und nachvollziehbar ausweisen
+    const role = roleOf(info);
     for (const r of parsed.rows) {
+      // Blatt nur für Bilanz bzw. Erfolgsrechnung gewählt: Konten der anderen Rechnung weglassen
+      if (role === 'bilanz' || role === 'erfolg') {
+        const cat = classify(r.accountNumber, r.accountName, { digits: opts.accountDigits?.min })?.group.category;
+        const wrong = role === 'bilanz' ? cat === 'aufwand' || cat === 'ertrag' || cat === 'abschluss' : cat === 'aktiven' || cat === 'passiven';
+        if (wrong) {
+          excluded.push({ rowIndex: r.rowIndex, source: src, accountNumber: r.accountNumber, accountName: r.accountName, balance: r.balanceCurrentYear, reason: role === 'bilanz' ? 'Konto der Erfolgsrechnung – Blatt ist für die Bilanz gewählt' : 'Konto der Bilanz – Blatt ist für die Erfolgsrechnung gewählt' });
+          info.accountCount--;
+          continue;
+        }
+      }
       const prev = seen.get(r.accountNumber);
       if (prev) {
         const same = prev.balance === r.balanceCurrentYear;
