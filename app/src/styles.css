@@ -526,3 +526,9 @@ table.income td.note-cell { min-width: 220px; width: 28%; padding: 2px 6px; }
 .seg.er-view { align-self: flex-start; width: fit-content; }
 .inline-note::placeholder { color: transparent; }
 table.income tr:hover .inline-note::placeholder, .inline-note:focus::placeholder { color: var(--muted); }
+/* Rechnungsabgrenzungen */
+table.accruals td { white-space: nowrap; } table.accruals td:first-child { white-space: normal; min-width: 260px; }
+table.accruals td.cur { background: rgba(79, 199, 103, .06); }
+table.accruals tr.acr-entfallen td { color: var(--muted); }
+table.accruals tr.acr-unexplained td { color: var(--bad); font-style: italic; }
+table.accruals tr:hover .inline-note::placeholder { color: var(--muted); }

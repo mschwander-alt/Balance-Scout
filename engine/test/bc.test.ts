@@ -67,7 +67,7 @@ describe('Business Central Kontoblatt und indirekte Abschreibung', () => {
     const r = fixedAssetsFor(res);
     const wb = new ExcelJS.Workbook();
     await wb.xlsx.load(await fixedAssetsWorkbook(r, { mandate: 'Muster Maschinen AG', closingDate: '2025-12-31', findings: [] }) as unknown as ArrayBuffer);
-    expect(wb.worksheets.map(w => w.name)).toEqual(['Anlagespiegel', 'Anschaffungswerte', 'Buchungen']);
+    expect(wb.worksheets.map(w => w.name)).toEqual(['Anlagespiegel', 'Anschaffungswerte', 'Zugänge', 'Buchungen']);
     const g = wb.getWorksheet('Anschaffungswerte')!;
     expect([g.getCell('A5').value, g.getCell('C5').value, g.getCell('D5').value, g.getCell('F5').value, g.getCell('K5').value]).toEqual(['1500', '1501', 500000, -40000, 36000]);
     const s = wb.getWorksheet('Anlagespiegel')!;

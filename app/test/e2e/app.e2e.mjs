@@ -347,6 +347,28 @@ await page.screenshot({ path: `${shots}-9b-zugangsliste.png` });
 await page.getByRole('dialog').getByRole('button', { name: 'Schliessen', exact: true }).click();
 step(`Zugangsliste: ${fb.additionsList.length} Buchungen, Summe = Zugänge`);
 
+// Rechnungsabgrenzungen: Vorjahresvergleich aus den Kontoblättern (Beispiel „Transitorische Aktiven“)
+const RAP = path.resolve(root, '..', 'engine', 'test', 'fixtures', 'rap');
+const rap = await page.evaluate(F => window.bsb.engine.run({
+  mandate: 'Muster Treuhand AG', closingDate: '2026-06-30', trialBalancePath: F + '/Saldobilanz_2026.xlsx', signConvention: 'signed', evidencePaths: [F + '/Saldobilanz_2026.xlsx'],
+  targetDir: null, fileMode: 'none', absoluteToleranceCents: 100, ledgerPaths: [F + '/Kontoblaetter_2026.xlsx'],
+}), RAP);
+await page.getByRole('button', { name: 'Übersicht' }).click();
+await page.locator('.hist > div', { hasText: 'Muster Treuhand AG' }).first().getByRole('button', { name: /Durchsicht fortsetzen|Ergebnis/ }).click();
+await page.getByRole('tab', { name: 'Prüfgebiete' }).click();
+await page.locator('.area-item', { hasText: 'Aktive Rechnungsabgrenzungen' }).click();
+await page.getByRole('button', { name: 'Vorjahresvergleich erstellen' }).click();
+const acr = page.locator('[data-abgrenzung="1300"]');
+await acr.waitFor();
+assert.match(await acr.locator('tfoot').innerText(), /139'514\.45[\s\S]*104'811\.00/);
+assert.equal(await acr.locator('tbody tr').count(), 14);
+await acr.getByLabel('Bemerkung Swiss Life, BVG Kader 07.-12.').fill('Prämienerhöhung lt. Police 2026');
+await acr.getByLabel('Bemerkung Swiss Life, BVG Kader 07.-12.').press('Enter');
+await page.screenshot({ path: `${shots}-9c-abgrenzungen.png` });
+const acrRes = await page.evaluate(id => window.bsb.review.analysis(id, 'accruals', {}), rap.historyId);
+assert.deepEqual(acrRes.accounts.map(a => [a.accountNumber, a.totals.cy, a.totals.py]), [['1300', 13951445, 10481100], ['2300', 3470000, 1850000]]);
+step('Rechnungsabgrenzungen: Vorjahresvergleich 139\'514.45 / 104\'811.00, 12 Positionen zugeordnet, 2 neu');
+
 // Bilanz und Erfolgsrechnung getrennt, mit Zwischensummen: Vorschau über die Schnittstelle
 const SPLIT = path.resolve(root, '..', 'engine', 'test', 'fixtures', 'tb_split');
 const sp = await page.evaluate(p => window.bsb.engine.previewTrialBalance(p, 'signed', { accountDigits: { min: 4, max: 4 } }), [path.join(SPLIT, 'Bilanz_2025.xlsx'), path.join(SPLIT, 'Erfolgsrechnung_2025.pdf')]);

@@ -113,7 +113,7 @@ export interface ReviewDecisions {
   incomeNotes?: Record<string, { text: string; at: string; visum: string }>;
   /** Konto (Nummer) -> vom Prüfer gewählte Gruppe (Code); zugeordnete Belege und Register folgen dem Konto */
   groupOverrides?: Record<string, { groupCode: string; at: string; visum: string }>;
-  analyses?: { receivables?: ReceivablesDecision; fixedAssets?: FixedAssetsDecision };
+  analyses?: { receivables?: ReceivablesDecision; fixedAssets?: FixedAssetsDecision; accruals?: AccrualsDecision };
 }
 export type MoveClass = 'zugang' | 'abgang' | 'abschreibung' | 'umbuchung';
 export interface FixedAssetsDecision { accounts?: string[]; categories?: Record<string, string>; classes?: Record<string, MoveClass>; findings: { text: string; status: 'offen' | 'erledigt' }[]; note?: string; visum?: string }
@@ -258,5 +258,17 @@ export interface IncomeSection extends IncomeAmounts { kind: 'section'; key: str
 export interface IncomeResultRow extends IncomeAmounts { kind: 'result'; key: string; id: string; label: string }
 export interface IncomeAnalysis { rows: (IncomeSection | IncomeResultRow)[]; hasPreviousYear: boolean; base: { cy: number; py: number | null }; check: { total: number; accounts: number } }
 export interface AnalysisResults { income: IncomeAnalysis; accruals: AccrualsResult }
-// Rechnungsabgrenzungen (Vorjahresvergleich) – Details siehe engine/src/analysis/accruals.ts
-export interface AccrualsResult { [k: string]: unknown }
+// ---------------------------------------------------------------- Rechnungsabgrenzungen (engine/src/analysis/accruals.ts)
+export type AccrualClass = 'vorjahr' | 'laufend' | 'unterjaehrig';
+export interface AccrualPosting { key: string; date: string; text: string; contra: string | null; docNo: string | null; amount: number; cls: AccrualClass; auto: AccrualClass; why: string }
+export interface AccrualPosition { key: string; label: string; contra: string | null; cy: number; py: number; diff: number; status: 'beide' | 'neu' | 'entfallen'; postings: string[] }
+export interface AccrualAccount {
+  accountNumber: string; accountName: string; side: 'aktiv' | 'passiv'; opening: number; closing: number; tbBalance: number | null;
+  positions: AccrualPosition[]; totals: { cy: number; py: number; diff: number }; unexplained: { cy: number; py: number }; intraYear: number; postings: AccrualPosting[]; flags: string[];
+}
+export interface AccrualsResult {
+  available: boolean; reason?: string;
+  candidates: { accountNumber: string; accountName: string; balance: number; side: 'aktiv' | 'passiv'; suggested: boolean; inLedger: boolean }[];
+  accounts: AccrualAccount[]; totals: { aktiv: { cy: number; py: number }; passiv: { cy: number; py: number } }; suggestions: string[];
+}
+export interface AccrualsDecision { accounts?: string[]; classes?: Record<string, AccrualClass>; notes?: Record<string, { text: string }>; note?: string; visum?: string }

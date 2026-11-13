@@ -97,7 +97,10 @@ function amounts(t: string, cells: boolean): Cents[] {
 }
 
 /** Buchungstext ohne Zahlenkolonnen und Datum */
-const postingText = (x: string) => stripContra(x.split(' | ').filter(c => !/^[-\d'’.±]+$/.test(c.trim()) && !/^\d{1,2}\.\d{1,2}\.\d{2,4}$/.test(c.trim())).join(' ').replace(/\s[\d'’.\-]+(\s[\d'’.\-]+)*\s*$/, '').replace(/\s+/g, ' ').trim()).slice(0, 120);
+/** Zelle mit Kontoart/Kürzel (Abacus „F“, „d+“; Business Central „F“/„A“/„B“/„D“/„K“) – kein Buchungstext */
+const CODE_CELL = /^(F|CF|[ABDGK]|d\+?|k\+?)$/;
+const postingText = (x: string) => stripContra(x.split(' | ').filter(c => !/^[-\d'’.±]+$/.test(c.trim()) && !/^\d{1,2}\.\d{1,2}\.\d{2,4}$/.test(c.trim()) && !(x.includes(' | ') && CODE_CELL.test(c.trim()))).join(' ').replace(x.includes(' | ') ? /$^/ : /\s[\d'’.\-]+(\s[\d'’.\-]+)*\s*$/, '').replace(/\s+/g, ' ').trim()).slice(0, 120);
+// Hinweis: Bei Excel-Zeilen (Zellen) stehen Beträge in eigenen Zellen – Zahlen am Textende (z. B. „07.-12.“) gehören zum Text.
 /** Gegenkonto + Code am Ende entfernen ("… 8510 F", "… 11000 d+") */
 const stripContra = (x: string) => x.replace(/\s+\d{4,6}\s+(?:F|CF|d\+?|k\+?|[A-Z]{1,2}\+?)(?:\s+\d{1,8})?\s*$/, '').trim();
 

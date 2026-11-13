@@ -25,6 +25,7 @@ export type Request =
   | { id: string; type: 'finalize'; snapshotPath: string; decisions: ReviewDecisions; targetDir: string | null; fileMode: FileMode; reportDir: string }
   | { id: string; type: 'groups' }
   /** Vertiefte Prüfung Sachanlagen: Anlagespiegel (optional als Excel speichern) */
+  | { id: string; type: 'accruals'; snapshotPath: string; groupOverrides?: GroupOverrides; accounts?: string[]; classes?: Record<string, 'vorjahr' | 'laufend' | 'unterjaehrig'>; notes?: Record<string, { text: string }>; note?: string; visum?: string; exportPath?: string }
   | { id: string; type: 'income'; snapshotPath: string; groupOverrides?: GroupOverrides; notes?: Record<string, { text: string; at?: string; visum?: string }>; exportPath?: string; visum?: string }
   | { id: string; type: 'fixedAssets'; snapshotPath: string; groupOverrides?: GroupOverrides; accounts?: string[]; categories?: Record<string, string>; classes?: Record<string, 'zugang' | 'abgang' | 'abschreibung' | 'umbuchung'>; exportPath?: string; findings?: { text: string; status: 'offen' | 'erledigt' }[]; note?: string; visum?: string }
   /** ESTV-Kursliste (PDF) lesen */
@@ -126,6 +127,18 @@ async function handle(req: Request): Promise<unknown> {
     if (req.exportPath && r.available) {
       const { fixedAssetsWorkbook } = await import('./report/fixedAssetsExcel.js');
       await writeFile(req.exportPath, await fixedAssetsWorkbook(r, { mandate: res.input.mandate, closingDate: res.input.closingDate ?? '', findings: req.findings ?? [], note: req.note, visum: req.visum, sources: res.ledger?.sources }));
+    }
+    return r;
+  }
+  if (req.type === 'accruals') {
+    // Rechnungsabgrenzungen: Vorjahresvergleich aus den Kontoblättern (vom Prüfer verschobene Konten berücksichtigt)
+    const snap = await loadSnapshot(req.snapshotPath);
+    const res = { ...snap, accounts: applyGroupOverrides(snap.accounts, req.groupOverrides) };
+    const { accrualsFor } = await import('./analysis/accruals.js');
+    const r = accrualsFor(res, req);
+    if (req.exportPath && r.available) {
+      const { accrualsWorkbook } = await import('./report/accrualsExcel.js');
+      await writeFile(req.exportPath, await accrualsWorkbook(r, { mandate: snap.input.mandate, closingDate: snap.input.closingDate ?? '', notes: req.notes, note: req.note, visum: req.visum }));
     }
     return r;
   }
