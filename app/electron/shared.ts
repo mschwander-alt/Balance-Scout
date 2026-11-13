@@ -132,6 +132,12 @@ export interface FixedAssetsResult {
   suggestions: string[];
   /** Abstimmung Abschreibungen ↔ Aufwand laut Saldobilanz */
   expense: { accounts: { accountNumber: string; accountName: string; balance: number }[]; total: number; diff: number } | null;
+  /** Zugangsliste (Summe = Zugänge im Anlagespiegel) */
+  additionsList: FixedAddition[];
+}
+export interface FixedAddition {
+  assetAccount: string; assetName: string; account: string; date: string; docNo: string | null; text: string; contra: string | null;
+  amount: number; manual: boolean; key: string; page: number; lineNo: number;
 }
 export interface ReceivablesDecision { docId: string | null; docIds?: string[]; accounts?: string[]; assigned?: Record<string, string[]>; termDays: number; rates: Record<string, number>; findings: { text: string; status: 'offen' | 'erledigt' }[]; visum?: string; note?: string }
 export interface AgingItem {

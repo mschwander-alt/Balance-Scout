@@ -61,6 +61,14 @@ export interface FixedAssetRow {
   postings: FixedPosting[];
   consistent: boolean;
 }
+/** Eine Zugangsbuchung (für die Zugangsliste) */
+export interface FixedAddition {
+  /** Zeile im Anlagespiegel (Anlagekonto) und gebuchtes Konto (bei indirekter Methode ggf. das WB-Konto) */
+  assetAccount: string; assetName: string; account: string;
+  date: string; docNo: string | null; text: string; contra: string | null; amount: Cents;
+  /** vom Prüfer als Zugang klassiert (statt Vorschlag) */
+  manual: boolean; key: string; page: number; lineNo: number;
+}
 export interface FixedAssetsResult {
   available: boolean;
   reason?: string;
@@ -69,6 +77,8 @@ export interface FixedAssetsResult {
   totals: { opening: Cents; additions: Cents; disposals: Cents; depreciation: Cents; transfers: Cents; closing: Cents; tbBalance: Cents };
   categories: { key: string; label: string; rate: number }[];
   suggestions: string[];
+  /** Zugangsliste: alle als Zugang klassierten Buchungen (Summe = Zugänge im Anlagespiegel) */
+  additionsList: FixedAddition[];
   /** Abstimmung mit dem Abschreibungsaufwand laut Saldobilanz (Konten 68xx bzw. „Abschreibungen …“) */
   expense: { accounts: { accountNumber: string; accountName: string; balance: Cents }[]; total: Cents; diff: Cents } | null;
 }
@@ -123,7 +133,7 @@ export function fixedAssetsFor(
     const reason = files.length
       ? `In den Kontoblättern (${files.join(', ')}) wurden keine Konten erkannt – Aufbau unbekannt oder PDF ohne Textebene (Hinweis unter „Saldobilanz“). Bitte als Excel bzw. PDF mit Textebene exportieren oder eine Beispielseite melden.`
       : 'Für den Anlagespiegel werden die Kontoblätter benötigt (bei „Neue Prüfung“, Schritt 4).';
-    return { ...base, available: false, reason, rows: [], totals: empty, suggestions: [], expense: null };
+    return { ...base, available: false, reason, rows: [], totals: empty, suggestions: [], expense: null, additionsList: [] };
   }
   const selected = p.accounts?.length ? p.accounts : candidates.filter(c => c.inLedger).map(c => c.accountNumber);
   const fixedNumbers = new Set(selected.map(norm));
@@ -238,5 +248,9 @@ export function fixedAssetsFor(
   const expense = expAccounts.length ? { accounts: expAccounts, total: expTotal, diff: totals.depreciation - expTotal } : null;
   if (expense && Math.abs(expense.diff) > 100)
     suggestions.push(`Abschreibungen laut Anlagespiegel CHF ${fmt(totals.depreciation)} ≠ Abschreibungsaufwand laut Saldobilanz CHF ${fmt(expTotal)} (${expAccounts.map(a => a.accountNumber).join(', ')}) – Differenz CHF ${fmt(expense.diff)} klären (z. B. nicht gewählte Konten, Abschreibungen auf Finanzanlagen/Beteiligungen).`);
-  return { ...base, available: true, rows, totals, suggestions, expense };
+  const additionsList: FixedAddition[] = rows.flatMap(r => r.postings.filter(x => x.cls === 'zugang').map(x => ({
+    assetAccount: r.accountNumber, assetName: r.accountName, account: x.key.split('|')[0] ?? r.accountNumber,
+    date: x.date, docNo: x.docNo, text: x.text, contra: x.contra, amount: x.amount, manual: x.cls !== x.auto, key: x.key, page: x.page, lineNo: x.lineNo,
+  }))).sort((a, b) => a.assetAccount.localeCompare(b.assetAccount, 'de', { numeric: true }) || a.date.localeCompare(b.date));
+  return { ...base, available: true, rows, totals, suggestions, expense, additionsList };
 }

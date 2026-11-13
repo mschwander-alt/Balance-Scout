@@ -109,6 +109,27 @@ export async function fixedAssetsWorkbook(r: FixedAssetsResult, m: { mandate: st
     gs.headerFooter.oddFooter = `&L${m.mandate}&C&A – Seite &P von &N&RBalance Scout`;
   }
 
+  // Zugangsliste: alle Zugänge mit Beleg, Gegenkonto und Text (Summe = Spalte „Zugänge“)
+  const zs = wb.addWorksheet('Zugänge', { pageSetup: ps });
+  zs.getCell('A1').value = 'Zugangsliste';
+  zs.getCell('A1').font = { bold: true, size: 15, color: { argb: BLUE } };
+  zs.getCell('A2').value = `${m.mandate} · Geschäftsjahr per ${m.closingDate.split('-').reverse().join('.')} · ${r.additionsList.length} Buchungen · Total CHF ${(r.totals.additions / 100).toLocaleString('de-CH', { minimumFractionDigits: 2 }).replace(/’/g, "'")}`;
+  zs.getCell('A2').font = { italic: true, color: { argb: 'FF6B7385' } };
+  const zRows = r.additionsList.map(x => [x.assetAccount, x.assetName, x.account !== x.assetAccount ? x.account : '', new Date(`${x.date}T00:00:00Z`), x.docNo ?? '', x.text, x.contra ?? '', x.amount / 100, x.manual ? 'vom Prüfer als Zugang klassiert' : '']);
+  zs.addTable({
+    name: 'tblZugaenge', ref: 'A4', headerRow: true, totalsRow: true, style: { theme: 'TableStyleLight9', showRowStripes: true },
+    columns: [
+      { name: 'Anlagekonto', totalsRowLabel: 'Total', filterButton: true }, { name: 'Bezeichnung', filterButton: true }, { name: 'Gebucht auf', filterButton: true },
+      { name: 'Datum', filterButton: true }, { name: 'Beleg', filterButton: true }, { name: 'Text', filterButton: true }, { name: 'Gegenkonto', filterButton: true },
+      { name: 'Betrag CHF', totalsRowFunction: 'sum', filterButton: true }, { name: 'Hinweis', filterButton: true },
+    ],
+    rows: zRows.length ? zRows : [['', 'Keine Zugänge im Geschäftsjahr', '', null, '', '', '', 0, '']],
+  });
+  [12, 32, 12, 12, 12, 50, 12, 15, 30].forEach((w, i) => (zs.getColumn(i + 1).width = w));
+  for (let i = 5; i <= Math.max(1, zRows.length) + 5; i++) { zs.getCell(i, 4).numFmt = 'dd.mm.yyyy'; zs.getCell(i, 8).numFmt = CHF; }
+  zs.views = [{ state: 'frozen', ySplit: 4 }];
+  zs.headerFooter.oddFooter = `&L${m.mandate}&C&A – Seite &P von &N&RBalance Scout`;
+
   const bw = wb.addWorksheet('Buchungen', { pageSetup: ps });
   const rows = r.rows.flatMap(x => x.postings.map(p => [p.key.split('|')[0] ?? x.accountNumber, new Date(`${p.date}T00:00:00Z`), p.text, p.contra ?? '', p.amount / 100, CLS[p.cls]! + (p.cls !== p.auto ? ' (manuell)' : ''), p.cls !== p.auto ? 'vom Prüfer geändert' : p.why, p.page]));
   bw.addTable({

@@ -1,8 +1,8 @@
 import { Fragment, useEffect, useState } from 'react';
 import { bsb } from '../bridge';
 import { chf } from '../format';
-import { Spinner, WarnIcon, useToast } from '../components/ui';
-import type { FixedAssetsDecision, FixedAssetsResult, MoveClass, ReviewDecisions } from '../../electron/shared';
+import { Modal, Spinner, WarnIcon, useToast } from '../components/ui';
+import type { FixedAddition, FixedAssetsDecision, FixedAssetsResult, MoveClass, ReviewDecisions } from '../../electron/shared';
 
 const CLS: [MoveClass, string][] = [['zugang', 'Zugang'], ['abgang', 'Abgang'], ['abschreibung', 'Abschreibung'], ['umbuchung', 'Umbuchung']];
 const pct = (x: number | null) => (x === null ? '–' : `${(x * 100).toFixed(1)} %`);
@@ -17,6 +17,8 @@ export function FixedAssets({ historyId, decisions, update }: { historyId: strin
   const [busy, setBusy] = useState(false);
   const [open, setOpen] = useState<string | null>(null);
   const [newFinding, setNewFinding] = useState('');
+  // Zugangsliste: null = geschlossen, '' = alle Konten, sonst Anlagekonto
+  const [additionsOf, setAdditionsOf] = useState<string | null>(null);
 
   useEffect(() => {
     setBusy(true);
@@ -33,6 +35,7 @@ export function FixedAssets({ historyId, decisions, update }: { historyId: strin
   if (!r) return <Spinner label="Kontoblätter werden ausgewertet …" />;
   if (!r.available) return <div className="card">{r.reason} Danach die Prüfung mit „Neu prüfen …“ bzw. als neue Prüfung starten.</div>;
   const selected = params.accounts ?? r.candidates.filter(c => c.inLedger).map(c => c.accountNumber);
+  const exportExcel = async () => { const f = await bsb().review.exportFixedAssets(historyId, { ...params, groupOverrides: decisions.groupOverrides }, 'Analyse_Anlagespiegel.xlsx'); if (f) toast('ok', 'Anlagespiegel gespeichert (inkl. Zugangsliste).'); };
   const start = () => {
     setStarted(true);
     if (!params.findings.length) setParams(p => ({ ...p, findings: r.suggestions.map(text => ({ text, status: 'offen' as const })) }));
@@ -53,15 +56,18 @@ export function FixedAssets({ historyId, decisions, update }: { historyId: strin
           <span className="small muted">Zugänge, Abgänge und Abschreibungen werden aus Gegenkonto bzw. Buchungstext abgeleitet und sind je Buchung korrigierbar. Wertberichtigungskonten (indirekte Abschreibung) werden mit dem Anlagekonto zusammengefasst.</span>
           <span className="ml-auto" />
           {busy && <Spinner />}
-          {!started ? <button className="btn btn-primary" disabled={!selected.length} onClick={start}>Anlagespiegel erstellen</button> : (
-            <>
-              <button className="link small" onClick={() => { setStarted(false); update(d => { const { fixedAssets: _x, ...rest } = d.analyses ?? {}; return { ...d, analyses: rest }; }); }}>Analyse verwerfen</button>
-              <button className="btn" onClick={async () => { const f = await bsb().review.exportFixedAssets(historyId, { ...params, groupOverrides: decisions.groupOverrides }, 'Analyse_Anlagespiegel.xlsx'); if (f) toast('ok', 'Anlagespiegel gespeichert.'); }}>Excel herunterladen</button>
-            </>
-          )}
+          {started && <button className="link small" onClick={() => { setStarted(false); update(d => { const { fixedAssets: _x, ...rest } = d.analyses ?? {}; return { ...d, analyses: rest }; }); }}>Analyse verwerfen</button>}
+          {started && <button className="btn" disabled={!r.additionsList.length} onClick={() => setAdditionsOf('')}>Zugangsliste ({r.additionsList.length})</button>}
+          <button className="btn" disabled={!selected.length} onClick={() => void exportExcel()} title="Anlagespiegel, Zugangsliste, Anschaffungswerte und alle Buchungen">Excel herunterladen</button>
+          {!started && <button className="btn btn-primary" disabled={!selected.length} onClick={start}>Anlagespiegel erstellen</button>}
         </div>
       </div>
 
+      {additionsOf !== null && (
+        <AdditionsDialog list={additionsOf ? r.additionsList.filter(a => a.assetAccount === additionsOf) : r.additionsList}
+          title={additionsOf ? `Zugänge ${additionsOf} ${r.rows.find(x => x.accountNumber === additionsOf)?.accountName ?? ''}` : 'Zugangsliste – alle Anlagekonten'}
+          onExport={() => void exportExcel()} onClose={() => setAdditionsOf(null)} />
+      )}
       {started && (
         <>
           <div className="card" style={{ padding: 0, overflowX: 'auto' }}>
@@ -76,7 +82,7 @@ export function FixedAssets({ historyId, decisions, update }: { historyId: strin
                         <td>{x.accountNumber}{x.wbAccount && <div className="fx-sub" title="Wertberichtigungskonto (indirekte Abschreibung)">+ {x.wbAccount} WB</div>}</td>
                         <td title={x.accountName}>{x.accountName}{x.flags.length > 0 && <WarnIcon text={x.flags.join('\n')} />}</td>
                         <td className="num">{chf(x.opening)}</td>
-                        <td className="num">{x.additions ? chf(x.additions) : '–'}</td>
+                        <td className="num" onClick={e => e.stopPropagation()}>{x.additions ? <button className="link num-link" title="Zugangsliste dieses Kontos" onClick={() => setAdditionsOf(x.accountNumber)}>{chf(x.additions)}</button> : '–'}</td>
                         <td className="num">{x.disposals ? chf(-x.disposals) : '–'}</td>
                         <td className="num">{x.depreciation ? chf(-x.depreciation) : '–'}</td>
                         <td className="num">{chf(x.closing)}{x.tbDiff ? <div className="fx-sub warn">SaBi Δ {chf(x.tbDiff)}</div> : null}</td>
@@ -128,7 +134,7 @@ export function FixedAssets({ historyId, decisions, update }: { historyId: strin
                 })}
                 <tr className="total-row">
                   <td colSpan={2}>Total</td>
-                  <td className="num">{chf(r.totals.opening)}</td><td className="num">{chf(r.totals.additions)}</td><td className="num">{chf(-r.totals.disposals)}</td>
+                  <td className="num">{chf(r.totals.opening)}</td><td className="num">{r.totals.additions ? <button className="link num-link" title="Zugangsliste aller Konten" onClick={() => setAdditionsOf('')}>{chf(r.totals.additions)}</button> : chf(0)}</td><td className="num">{chf(-r.totals.disposals)}</td>
                   <td className="num">{chf(-r.totals.depreciation)}</td><td className="num">{chf(r.totals.closing)}</td><td colSpan={3} />
                 </tr>
               </tbody>
@@ -162,5 +168,32 @@ export function FixedAssets({ historyId, decisions, update }: { historyId: strin
         </>
       )}
     </div>
+  );
+}
+
+/** Zugangsliste: alle Zugangsbuchungen (eines Kontos oder aller Konten) mit Beleg, Gegenkonto und Total */
+function AdditionsDialog({ list, title, onExport, onClose }: { list: FixedAddition[]; title: string; onExport: () => void; onClose: () => void }) {
+  const total = list.reduce((s, a) => s + a.amount, 0);
+  const multi = new Set(list.map(a => a.assetAccount)).size > 1;
+  return (
+    <Modal title={title} wide onClose={onClose} footer={<><button className="btn" onClick={onExport}>Excel herunterladen</button><button className="btn btn-primary" onClick={onClose}>Schliessen</button></>}>
+      <p className="small muted">{list.length} Buchungen · Total CHF {chf(total)} · Klassierung je Buchung im Anlagespiegel (Zeile aufklappen) änderbar.</p>
+      <div className="additions-scroll">
+        <table className="grid small additions">
+          <thead><tr>{multi && <th>Anlagekonto</th>}<th>Datum</th><th>Beleg</th><th>Text</th><th>Gegenkonto</th><th className="num">Betrag CHF</th></tr></thead>
+          <tbody>
+            {list.map(a => (
+              <tr key={a.key} data-zugang={a.key}>
+                {multi && <td title={a.assetName}>{a.assetAccount}</td>}
+                <td>{a.date.split('-').reverse().join('.')}</td><td>{a.docNo ?? ''}</td>
+                <td title={a.text}>{a.text}{a.account !== a.assetAccount && <span className="fx-sub"> (gebucht auf {a.account})</span>}{a.manual && <span className="manual"> ✓ manuell</span>}</td>
+                <td>{a.contra ?? ''}</td><td className="num">{chf(a.amount)}</td>
+              </tr>
+            ))}
+          </tbody>
+          <tfoot><tr className="total-row"><td colSpan={multi ? 5 : 4}>Total</td><td className="num">{chf(total)}</td></tr></tfoot>
+        </table>
+      </div>
+    </Modal>
   );
 }

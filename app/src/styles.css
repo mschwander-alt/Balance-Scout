@@ -499,3 +499,8 @@ table.konten tr.group-row.drop-target td { box-shadow: inset 0 2px 0 var(--brand
 /* Saldobilanz: Verwendung je Excel-Blatt */
 .parts li.part-line { display: flex; align-items: center; gap: 8px; padding: 2px 0; }
 .parts .part-role { font-size: 12px; padding: 2px 6px; min-width: 190px; }
+/* Anlagespiegel: Zugänge anklickbar, Zugangsliste */
+.link.num-link { font-variant-numeric: tabular-nums; text-decoration: underline dotted; }
+.additions-scroll { max-height: 60vh; overflow: auto; border: 1px solid var(--line); border-radius: 8px; }
+table.additions td { white-space: nowrap; } table.additions td:nth-child(3), table.additions td:nth-child(4) { white-space: normal; max-width: 420px; }
+.additions-scroll tfoot td { position: sticky; bottom: 0; background: var(--panel-2); }

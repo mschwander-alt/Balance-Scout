@@ -324,6 +324,15 @@ await page.locator('table.brutto').waitFor();
 assert.match(await page.locator('table.brutto').innerText(), /Kum\. Abschreibungen \(1501\)[\s\S]*-323'500\.00/);
 await page.screenshot({ path: `${shots}-9-anlagen-bc.png` });
 step('Business Central: Wertberichtigungen zugeordnet, Brutto-Anlagespiegel, Abschreibungen = Aufwand');
+// Zugänge anklicken → Zugangsliste (Summe = Total Zugänge)
+const totAdd = fb.additionsList.reduce((x, a) => x + a.amount, 0);
+assert.equal(totAdd, fb.totals.additions);
+await page.locator('table.anlagen .total-row .num-link').click();
+await page.locator('table.additions').waitFor();
+assert.equal(await page.locator('table.additions tbody tr').count(), fb.additionsList.length);
+await page.screenshot({ path: `${shots}-9b-zugangsliste.png` });
+await page.getByRole('dialog').getByRole('button', { name: 'Schliessen', exact: true }).click();
+step(`Zugangsliste: ${fb.additionsList.length} Buchungen, Summe = Zugänge`);
 
 // Bilanz und Erfolgsrechnung getrennt, mit Zwischensummen: Vorschau über die Schnittstelle
 const SPLIT = path.resolve(root, '..', 'engine', 'test', 'fixtures', 'tb_split');
