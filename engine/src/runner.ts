@@ -26,7 +26,7 @@ export type Request =
   | { id: string; type: 'groups' }
   /** Vertiefte Prüfung Sachanlagen: Anlagespiegel (optional als Excel speichern) */
   | { id: string; type: 'accruals'; snapshotPath: string; groupOverrides?: GroupOverrides; accounts?: string[]; classes?: Record<string, 'vorjahr' | 'laufend' | 'unterjaehrig'>; notes?: Record<string, { text: string }>; note?: string; visum?: string; exportPath?: string }
-  | { id: string; type: 'income'; snapshotPath: string; groupOverrides?: GroupOverrides; base?: import('./analysis/incomeStatement.js').IncomeBase | null; placements?: import('./analysis/incomeStatement.js').IncomePlacements; notes?: Record<string, { text: string; at?: string; visum?: string }>; exportPath?: string; visum?: string }
+  | { id: string; type: 'income'; snapshotPath: string; groupOverrides?: GroupOverrides; base?: import('./analysis/incomeStatement.js').IncomeBase | null; placements?: import('./analysis/incomeStatement.js').IncomePlacements; rowBases?: Record<string, import('./analysis/incomeStatement.js').IncomeBase>; notes?: Record<string, { text: string; at?: string; visum?: string }>; exportPath?: string; visum?: string }
   | { id: string; type: 'fixedAssets'; snapshotPath: string; groupOverrides?: GroupOverrides; accounts?: string[]; categories?: Record<string, string>; classes?: Record<string, 'zugang' | 'abgang' | 'abschreibung' | 'umbuchung'>; exportPath?: string; findings?: { text: string; status: 'offen' | 'erledigt' }[]; note?: string; visum?: string }
   /** ESTV-Kursliste (PDF) lesen */
   | { id: string; type: 'rates'; path: string }
@@ -147,7 +147,7 @@ async function handle(req: Request): Promise<unknown> {
     const snap = await loadSnapshot(req.snapshotPath);
     const accounts = applyGroupOverrides(snap.accounts, req.groupOverrides);
     const { analyzeIncomeStatement } = await import('./analysis/incomeStatement.js');
-    const r = analyzeIncomeStatement(accounts, { base: req.base, placements: req.placements });
+    const r = analyzeIncomeStatement(accounts, { base: req.base, placements: req.placements, rowBases: req.rowBases });
     if (req.exportPath) {
       const { incomeWorkbook } = await import('./report/incomeExcel.js');
       await writeFile(req.exportPath, await incomeWorkbook(r, req.notes ?? {}, { mandate: snap.input.mandate, closingDate: snap.input.closingDate ?? '', visum: req.visum }));

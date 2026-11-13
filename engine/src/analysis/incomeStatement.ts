@@ -67,7 +67,11 @@ export interface IncomeAccountInput {
   balanceCurrentYear: number; balancePreviousYear?: number | null;
 }
 /** Beträge einer Zeile: Ertrag positiv, Aufwand negativ */
-export interface Amounts { cy: Cents; py: Cents | null; diff: Cents | null; diffPct: number | null; pctCy: number | null; pctPy: number | null }
+export interface Amounts {
+  cy: Cents; py: Cents | null; diff: Cents | null; diffPct: number | null; pctCy: number | null; pctPy: number | null;
+  /** eigene Bezugsgrösse dieser Zeile (vom Prüfer gewählt), sonst die allgemeine */
+  pctBase?: { key: string; label: string };
+}
 export interface IncomeAccount extends Amounts { key: string; accountNumber: string; accountName: string; big: boolean }
 export interface IncomeSub extends Amounts { key: string; id: string; label: string; accounts: IncomeAccount[] }
 export interface IncomeSection extends Amounts { kind: 'section'; key: string; id: string; label: string; subs: IncomeSub[]; accounts: IncomeAccount[] }
@@ -107,7 +111,11 @@ const isBig = (cy: Cents, py: Cents | null) => py !== null && Math.abs(cy - py) 
 export type IncomeBase = { kind: 'line'; key: string } | { kind: 'accounts'; accounts: string[] };
 /** Platzierung eines Kontos in der Staffel (vom Prüfer per Drag & Drop): Abschnitt und optional Untergruppe */
 export type IncomePlacements = Record<string, { section: string; sub?: string }>;
-export interface IncomeOptions { base?: IncomeBase | null; placements?: IncomePlacements }
+export interface IncomeOptions {
+  base?: IncomeBase | null; placements?: IncomePlacements;
+  /** Bezugsgrösse je Zeile (Schlüssel: Kontonummer bzw. R:/S:/U:…), z. B. AHV-Aufwand in % des Lohnaufwands */
+  rowBases?: Record<string, IncomeBase>;
+}
 
 /** Abschnitte und Untergruppen der Staffel (für Auswahllisten und Drag & Drop) */
 export const INCOME_SECTIONS = STRUCTURE.filter((d): d is SectionDef => 'id' in d).map(d => ({ id: d.id, label: d.label, subs: d.subs.map(x => ({ id: x.id, label: x.label })) }));
@@ -167,21 +175,32 @@ export function analyzeIncomeStatement(accounts: IncomeAccountInput[], opts: Inc
     running.push(t);
     rows.push({ kind: 'section', key: `S:${d.id}`, id: d.id, label: d.label, ...blank(t), subs, accounts: s.accounts.sort(byNo).map(acc) });
   }
-  // 2. Bezugsgrösse: gewählte Zeile bzw. Konten, sonst Betriebsertrag
+  // 2. Bezugsgrösse: gewählte Zeile bzw. Konten, sonst Betriebsertrag; je Zeile optional eine eigene
   const lines: (Amounts & { key: string; label: string })[] = rows.flatMap(r => (r.kind === 'section' ? [r, ...r.subs] : [r]) as (Amounts & { key: string; label: string })[]);
   const allAccounts = rows.flatMap(r => (r.kind === 'section' ? [...r.subs.flatMap(x => x.accounts), ...r.accounts] : []));
-  let base: { cy: Cents; py: Cents | null; label: string; key: string } | null = null;
-  if (opts.base?.kind === 'accounts' && opts.base.accounts.length) {
-    const chosen = allAccounts.filter(x => opts.base!.kind === 'accounts' && opts.base!.accounts.includes(x.accountNumber));
-    if (chosen.length) base = { ...sum(chosen), label: chosen.length === 1 ? `${chosen[0]!.accountNumber} ${chosen[0]!.accountName}` : `${chosen.length} Konten (${chosen.map(x => x.accountNumber).join(', ')})`, key: `A:${chosen.map(x => x.accountNumber).join(',')}` };
-  } else if (opts.base?.kind === 'line') {
-    const l = lines.find(x => x.key === (opts.base as { key: string }).key);
-    if (l) base = { cy: l.cy, py: l.py, label: l.label, key: l.key };
-  }
-  if (!base) { const be = rows.find(r => r.key === 'R:betriebsertrag')!; base = { cy: be.cy, py: be.py, label: be.label, key: be.key }; }
-  const b = base;
+  type Base = { cy: Cents; py: Cents | null; label: string; key: string };
+  const resolve = (bs: IncomeBase | null | undefined): Base | null => {
+    if (bs?.kind === 'accounts' && bs.accounts.length) {
+      const chosen = allAccounts.filter(x => bs.accounts.includes(x.accountNumber));
+      if (!chosen.length) return null;
+      return { ...sum(chosen), label: chosen.length === 1 ? `${chosen[0]!.accountNumber} ${chosen[0]!.accountName}` : `${chosen.length} Konten (${chosen.map(x => x.accountNumber).join(', ')})`, key: `A:${chosen.map(x => x.accountNumber).join(',')}` };
+    }
+    if (bs?.kind === 'line') {
+      const l = lines.find(x => x.key === bs.key);
+      return l ? { cy: l.cy, py: l.py, label: l.label, key: l.key } : null;
+    }
+    return null;
+  };
+  const be = rows.find(r => r.key === 'R:betriebsertrag')!;
+  const b: Base = resolve(opts.base) ?? { cy: be.cy, py: be.py, label: be.label, key: be.key };
   // Anteil: gleiches Vorzeichen wie die Bezugsgrösse = positiv (z. B. Sozialversicherungen in % des Lohnaufwands)
-  const fill = (x: Amounts) => { x.pctCy = b.cy ? x.cy / b.cy : null; x.pctPy = x.py === null || !b.py ? null : x.py / b.py; };
+  const fill = (x: Amounts & { key: string }) => {
+    const own = opts.rowBases?.[x.key] ? resolve(opts.rowBases[x.key]) : null;
+    const k = own ?? b;
+    x.pctCy = k.cy ? x.cy / k.cy : null;
+    x.pctPy = x.py === null || !k.py ? null : x.py / k.py;
+    if (own) x.pctBase = { key: own.key, label: own.label };
+  };
   for (const r of rows) {
     fill(r);
     if (r.kind === 'section') { for (const sb of r.subs) { fill(sb); sb.accounts.forEach(fill); } r.accounts.forEach(fill); }

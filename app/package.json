@@ -1,7 +1,7 @@
 {
   "name": "balance-scout-lokal",
   "productName": "Balance Scout",
-  "version": "0.16.1",
+  "version": "0.16.2",
   "private": true,
   "description": "Balance Scout – lokale Saldennachweis-Prüfung (ohne Server, ohne Cloud)",
   "main": "dist-electron/main.js",

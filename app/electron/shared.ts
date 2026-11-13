@@ -114,6 +114,8 @@ export interface ReviewDecisions {
   /** Analyse Erfolgsrechnung: Bezugsgrösse der Relationszahlen (ohne Angabe: Betriebsertrag) und per Drag & Drop verschobene Konten */
   incomeBase?: IncomeBase | null;
   incomePlacements?: Record<string, { section: string; sub?: string }>;
+  /** Analyse Erfolgsrechnung: Bezugsgrösse je Zeile (Kontonummer bzw. R:/S:/U:…), z. B. AHV in % des Lohnaufwands */
+  incomeRowBases?: Record<string, IncomeBase>;
   /** Konto (Nummer) -> vom Prüfer gewählte Gruppe (Code); zugeordnete Belege und Register folgen dem Konto */
   groupOverrides?: Record<string, { groupCode: string; at: string; visum: string }>;
   analyses?: { receivables?: ReceivablesDecision; fixedAssets?: FixedAssetsDecision; accruals?: AccrualsDecision };
@@ -254,7 +256,7 @@ export interface BsbBridge {
 }
 
 // ---------------------------------------------------------------- Analyse der Erfolgsrechnung
-export interface IncomeAmounts { cy: number; py: number | null; diff: number | null; diffPct: number | null; pctCy: number | null; pctPy: number | null }
+export interface IncomeAmounts { cy: number; py: number | null; diff: number | null; diffPct: number | null; pctCy: number | null; pctPy: number | null; pctBase?: { key: string; label: string } }
 export interface IncomeAccount extends IncomeAmounts { key: string; accountNumber: string; accountName: string; big: boolean }
 export interface IncomeSub extends IncomeAmounts { key: string; id: string; label: string; accounts: IncomeAccount[] }
 export interface IncomeSection extends IncomeAmounts { kind: 'section'; key: string; id: string; label: string; subs: IncomeSub[]; accounts: IncomeAccount[] }

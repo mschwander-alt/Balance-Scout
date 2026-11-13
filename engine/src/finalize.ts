@@ -33,6 +33,7 @@ export interface ReviewDecisions {
   /** Analyse Erfolgsrechnung: Bezugsgrösse der Prozente und Platzierung verschobener Konten */
   incomeBase?: import('./analysis/incomeStatement.js').IncomeBase | null;
   incomePlacements?: import('./analysis/incomeStatement.js').IncomePlacements;
+  incomeRowBases?: Record<string, import('./analysis/incomeStatement.js').IncomeBase>;
   analyses?: {
     accruals?: { accounts?: string[]; classes?: Record<string, 'vorjahr' | 'laufend' | 'unterjaehrig'>; notes?: Record<string, { text: string }>; note?: string; visum?: string };
     fixedAssets?: { accounts?: string[]; categories?: Record<string, string>; classes?: Record<string, 'zugang' | 'abgang' | 'abschreibung' | 'umbuchung'>; findings: { text: string; status: 'offen' | 'erledigt' }[]; note?: string; visum?: string };
@@ -280,7 +281,7 @@ export async function placeReviewed(
     const { incomeWorkbook } = await import('./report/incomeExcel.js');
     const name = 'Analyse_Erfolgsrechnung.xlsx';
     plans.push({ docId: 'analyse:erfolgsrechnung', absPath: '', relPath: name, sha256: '', assigned: true, targetName: name, generated: true,
-      content: await incomeWorkbook(analyzeIncomeStatement(res.accounts, { base: decisions.incomeBase, placements: decisions.incomePlacements }), notes, { mandate: res.input.mandate, closingDate: res.input.closingDate ?? '' }) });
+      content: await incomeWorkbook(analyzeIncomeStatement(res.accounts, { base: decisions.incomeBase, placements: decisions.incomePlacements, rowBases: decisions.incomeRowBases }), notes, { mandate: res.input.mandate, closingDate: res.input.closingDate ?? '' }) });
   }
   const placed = await placeFiles(targetDir, plans, mode);
   const by = new Map(placed.map(p => [p.docId, p]));

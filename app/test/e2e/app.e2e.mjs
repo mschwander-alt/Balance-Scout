@@ -139,7 +139,7 @@ const histId = readdirSync(userData).find(f => f.startsWith('result-')).slice(7,
 const inc = await page.evaluate(id => window.bsb.review.analysis(id, 'income', {}), histId);
 assert.equal(inc.check.accounts, 5);
 assert.equal(inc.rows.find(r => r.key === 'R:gewinn').cy, inc.check.total);
-await page.locator('table.income tr[data-inc="S:personal"] ~ tr.inc-sub').first().click();
+await page.locator('table.income tr[data-inc="S:personal"] ~ tr.inc-sub').first().locator('td').nth(1).click();
 await page.getByLabel('Bemerkung Bruttoergebnis nach Material- und Warenaufwand').fill('Marge stabil');
 await page.getByLabel('Bemerkung Bruttoergebnis nach Material- und Warenaufwand').press('Enter');
 await page.getByText('1 Bemerkung erfasst').waitFor();
@@ -151,12 +151,12 @@ const h1 = await longNote.evaluate(e => e.getBoundingClientRect().height);
 assert.ok(h1 > h0 * 1.8, `Kommentarfeld wächst (${h0} → ${h1} px)`);
 await longNote.press('Enter');
 // Bezugsgrösse: Untergruppe Lohnaufwand = 100 %
-await page.getByLabel('Bezugsgrösse').selectOption('U:personal/lohn');
+await page.getByLabel('Bezugsgrösse', { exact: true }).selectOption('U:personal/lohn');
 await page.locator('table.income tr[data-inc="U:personal/lohn"].inc-base').waitFor();
 assert.equal((await page.locator('table.income tr[data-inc="U:personal/lohn"] td.pct').first().innerText()).trim(), '100.0 %');
 // Drag & Drop in der Analyse: Raumaufwand (6000) in den Personalaufwand ziehen, Jahresgewinn unverändert, dann zurücksetzen
 const gewinn0 = await page.locator('table.income tr[data-inc="R:gewinn"] td.cur').innerText();
-await page.locator('table.income tr[data-inc="U:betrieb/raum"]').click();
+await page.locator('table.income tr[data-inc="U:betrieb/raum"] td').nth(1).click();
 await page.locator('table.income tr[data-inc="6000"]').dragTo(page.locator('table.income tr[data-inc="S:personal"]'));
 await page.locator('table.income tr[data-inc="6000"] .flag.moved').waitFor();
 assert.equal(await page.locator('table.income tr[data-inc="R:gewinn"] td.cur').innerText(), gewinn0);
@@ -164,7 +164,24 @@ assert.match(await page.locator('table.income tr[data-inc="S:personal"]').innerT
 await page.screenshot({ path: `${shots}-5g-er-analyse.png` });
 await page.locator('table.income tr[data-inc="6000"] .flag.moved').click();
 await page.locator('table.income tr[data-inc="6000"] .flag.moved').waitFor({ state: 'detached' });
-await page.getByLabel('Bezugsgrösse').selectOption('R:betriebsertrag');
+await page.getByLabel('Bezugsgrösse', { exact: true }).selectOption('R:betriebsertrag');
+// Bezugsgrösse je Zeile: Klick auf die %-Zahl von 6800 → in % der Gruppe „Übriger betrieblicher Aufwand“
+await page.locator('table.income tr[data-inc="U:abschreibungen/x"], table.income tr[data-inc="6800"]').first().waitFor();
+await page.locator('table.income tr[data-inc="6800"] td.pct-click').first().click();
+await page.getByRole('dialog').getByLabel('Bezugszeile').selectOption('S:betrieb');
+await page.getByRole('dialog').getByRole('button', { name: 'Übernehmen' }).click();
+await page.locator('table.income tr[data-inc="6800"] td.pct-own').first().waitFor();
+const own = await page.locator('table.income tr[data-inc="6800"] td.pct-own').first().innerText();
+assert.match(own, /7\.8 %[\s\S]*v\. Übriger betriebl/, `eigene Bezugsgrösse: ${own}`);
+assert.equal((await page.locator('table.income tr[data-inc="S:abschreibungen"] td.pct').first().innerText()).trim(), '-0.4 %', 'übrige Zeilen beim Betriebsertrag');
+// Kopfzeile bleibt beim Scrollen stehen
+const iw = page.locator('.table-wrap:has(table.income)');
+await iw.evaluate(e => { e.scrollTop = 400; });
+const [wrapTop, headTop] = await Promise.all([iw.evaluate(e => e.getBoundingClientRect().top), page.locator('table.income thead th').first().evaluate(e => e.getBoundingClientRect().top)]);
+assert.ok(Math.abs(headTop - wrapTop) <= 2, `Kopfzeile eingefroren (${headTop} vs ${wrapTop})`);
+await page.screenshot({ path: `${shots}-5h-er-zeilenbezug.png` });
+await iw.evaluate(e => { e.scrollTop = 0; });
+step(`ER-Analyse: Bezugsgrösse je Zeile (6800 ${own.split('\n')[0]} v. Übriger betrieblicher Aufwand), Kopfzeile eingefroren`);
 step('ER-Analyse: Bezugsgrösse Lohnaufwand = 100 %, Konto per Drag & Drop verschoben und zurückgesetzt, Kommentar bricht um');
 step(`Erfolgsrechnung-Analyse: Staffel bis Jahresgewinn CHF ${inc.check.total / 100}, Bemerkung erfasst`);
 await page.getByRole('tab', { name: 'Konten', exact: true }).click();

@@ -25,6 +25,8 @@ export function IncomeAnalysisView({ historyId, decisions, update, visum, closin
   const [drag, setDrag] = useState<string | null>(null);
   const [over, setOver] = useState<string | null>(null);
   const [pickBase, setPickBase] = useState(false);
+  // Bezugsgrösse einer einzelnen Zeile wählen (Klick auf die %-Zahl)
+  const [rowBaseFor, setRowBaseFor] = useState<{ key: string; label: string } | null>(null);
   // nach dem Ablegen: Untergruppe mit dem verschobenen Konto aufklappen
   const [reveal, setReveal] = useState<{ num: string; section: string } | null>(null);
   const wrap = useRef<HTMLDivElement>(null);
@@ -32,7 +34,8 @@ export function IncomeAnalysisView({ historyId, decisions, update, visum, closin
   const notes = decisions.incomeNotes ?? {};
   const base = decisions.incomeBase ?? null;
   const placements = decisions.incomePlacements ?? {};
-  const params = { groupOverrides: decisions.groupOverrides, base, placements };
+  const rowBases = decisions.incomeRowBases ?? {};
+  const params = { groupOverrides: decisions.groupOverrides, base, placements, rowBases };
   const paramsKey = JSON.stringify(params);
 
   useEffect(() => {
@@ -93,10 +96,17 @@ export function IncomeAnalysisView({ historyId, decisions, update, visum, closin
       className: over === k ? 'drop-target' : '',
     } : { className: '' };
   };
-  const cells = (x: IncomeAmounts) => (
+  /** %-Zelle: Klick wählt die Bezugsgrösse dieser Zeile */
+  const pctCell = (x: IncomeAmounts, v: number | null, key: string, label: string) => (
+    <td className={`num pct pct-click ${x.pctBase ? 'pct-own' : ''}`} onClick={e => { e.stopPropagation(); setRowBaseFor({ key, label }); }}
+      title={`Anteil an: ${x.pctBase?.label ?? a.base.label} – klicken, um die Bezugsgrösse dieser Zeile zu wählen`} aria-label={`Relationszahl ${label}`} role="button">
+      {pct(v)}{x.pctBase && <div className="pct-of">v. {x.pctBase.label.length > 18 ? `${x.pctBase.label.slice(0, 17)}…` : x.pctBase.label}</div>}
+    </td>
+  );
+  const cells = (x: IncomeAmounts, key: string, label: string) => (
     <>
-      <td className="num cur">{chf(x.cy)}</td><td className="num pct">{pct(x.pctCy)}</td>
-      {a.hasPreviousYear && <><td className="num">{chf(x.py ?? 0)}</td><td className="num pct">{pct(x.pctPy)}</td><td className="num">{x.diff ? chf(x.diff) : '–'}</td><td className="num pct">{dpct(x.diffPct)}</td></>}
+      <td className="num cur">{chf(x.cy)}</td>{pctCell(x, x.pctCy, key, label)}
+      {a.hasPreviousYear && <><td className="num">{chf(x.py ?? 0)}</td>{pctCell(x, x.pctPy, key, label)}<td className="num">{x.diff ? chf(x.diff) : '–'}</td><td className="num pct">{dpct(x.diffPct)}</td></>}
     </>
   );
   const note = (key: string, label: string) => (
@@ -113,7 +123,7 @@ export function IncomeAnalysisView({ historyId, decisions, update, visum, closin
         onDragEnd={() => { setDrag(null); setOver(null); }} onDragOver={t.onDragOver} onDrop={t.onDrop}>
         <td className="mono">{ac.accountNumber}</td>
         <td title={ac.accountName}>{ac.accountName}{placements[ac.accountNumber] && <button className="flag moved" title="Verschiebung aufheben (automatische Gruppe)" onClick={() => resetPlacement(ac.accountNumber)}>verschoben ↺</button>}</td>
-        {cells(ac)}{note(ac.key, ac.accountName)}
+        {cells(ac, ac.key, `${ac.accountNumber} ${ac.accountName}`)}{note(ac.key, ac.accountName)}
       </tr>
     );
   };
@@ -147,17 +157,17 @@ export function IncomeAnalysisView({ historyId, decisions, update, visum, closin
           </tr></thead>
           <tbody>
             {a.rows.map(r => {
-              if (r.kind === 'result') return <tr key={r.key} className={`inc-result ${a.base.key === r.key ? 'inc-base' : ''}`} data-inc={r.key}><td colSpan={2}>{r.label}</td>{cells(r)}{note(r.key, r.label)}</tr>;
+              if (r.kind === 'result') return <tr key={r.key} className={`inc-result ${a.base.key === r.key ? 'inc-base' : ''}`} data-inc={r.key}><td colSpan={2}>{r.label}</td>{cells(r, r.key, r.label)}{note(r.key, r.label)}</tr>;
               const ts = target(r.id);
               return (
                 <Fragment key={r.key}>
-                  <tr className={`inc-section ${ts.className} ${a.base.key === r.key ? 'inc-base' : ''}`} data-inc={r.key} onDragOver={ts.onDragOver} onDrop={ts.onDrop}><td colSpan={2}>{r.label}</td>{cells(r)}{note(r.key, r.label)}</tr>
+                  <tr className={`inc-section ${ts.className} ${a.base.key === r.key ? 'inc-base' : ''}`} data-inc={r.key} onDragOver={ts.onDragOver} onDrop={ts.onDrop}><td colSpan={2}>{r.label}</td>{cells(r, r.key, r.label)}{note(r.key, r.label)}</tr>
                   {r.subs.map(s => {
                     const tu = target(r.id, s.id);
                     return (
                       <Fragment key={s.key}>
                         <tr className={`inc-sub clickable-row ${tu.className} ${a.base.key === s.key ? 'inc-base' : ''}`} data-inc={s.key} onClick={() => toggle(s.key)} aria-expanded={open.has(s.key)} onDragOver={tu.onDragOver} onDrop={tu.onDrop}>
-                          <td><span className="caret">{open.has(s.key) ? '⌄' : '›'}</span></td><td>{s.label} <span className="muted small">({s.accounts.length})</span></td>{cells(s)}{note(s.key, s.label)}
+                          <td><span className="caret">{open.has(s.key) ? '⌄' : '›'}</span></td><td>{s.label} <span className="muted small">({s.accounts.length})</span></td>{cells(s, s.key, s.label)}{note(s.key, s.label)}
                         </tr>
                         {open.has(s.key) && s.accounts.map(ac => accountRow(ac, r.id, s.id))}
                       </Fragment>
@@ -174,6 +184,10 @@ export function IncomeAnalysisView({ historyId, decisions, update, visum, closin
         Prozente: Anteil an „{a.base.label}“. Gliederung: Gruppe des Kontos, innerhalb der Gruppe nach den ersten zwei Ziffern der Kontonummer; per Drag &amp; Drop verschobene Konten erhalten die Gruppe des Ziels (auch in Bilanz/Kontenansicht).
         Auffällige Veränderungen (≥ 25 % und ≥ CHF 1'000) sind markiert. {nNotes ? `${nNotes} Bemerkung${nNotes > 1 ? 'en' : ''} erfasst – ` : ''}Beim Abschliessen wird die Analyse als „Analyse_Erfolgsrechnung.xlsx“ abgelegt, sobald Bemerkungen erfasst sind.
       </p>
+      {rowBaseFor && (
+        <RowBaseDialog row={rowBaseFor} current={rowBases[rowBaseFor.key] ?? null} analysis={a} accounts={accounts} onClose={() => setRowBaseFor(null)}
+          onApply={b => { update(d => { const { [rowBaseFor.key]: _x, ...rest } = d.incomeRowBases ?? {}; return { ...d, incomeRowBases: b ? { ...rest, [rowBaseFor.key]: b } : rest }; }); setRowBaseFor(null); }} />
+      )}
       {pickBase && <BasePicker accounts={accounts} initial={base?.kind === 'accounts' ? base.accounts : []} onClose={() => setPickBase(false)}
         onApply={list => { setBase(list.length ? { kind: 'accounts', accounts: list } : null); setPickBase(false); }} />}
     </div>
@@ -202,6 +216,55 @@ function BasePicker({ accounts, initial, onApply, onClose }: { accounts: IncomeA
             ))}
           </tbody>
         </table>
+      </div>
+    </Modal>
+  );
+}
+
+/** Bezugsgrösse einer Zeile: allgemein, eine Zeile der Staffel oder Einzelkonten */
+function RowBaseDialog({ row, current, analysis, accounts, onApply, onClose }: {
+  row: { key: string; label: string }; current: IncomeBase | null; analysis: IncomeAnalysis; accounts: IncomeAccount[];
+  onApply: (b: IncomeBase | null) => void; onClose: () => void;
+}) {
+  const [mode, setMode] = useState<'allgemein' | 'zeile' | 'konten'>(current?.kind === 'line' ? 'zeile' : current?.kind === 'accounts' ? 'konten' : 'allgemein');
+  const [line, setLine] = useState(current?.kind === 'line' ? current.key : '');
+  const [sel, setSel] = useState<string[]>(current?.kind === 'accounts' ? current.accounts : []);
+  const [q, setQ] = useState('');
+  const t = q.trim().toLowerCase();
+  const list = accounts.filter(x => !t || x.accountNumber.includes(t) || x.accountName.toLowerCase().includes(t)).sort((x, y) => x.accountNumber.localeCompare(y.accountNumber, 'de', { numeric: true }));
+  const ok = mode === 'allgemein' || (mode === 'zeile' && !!line) || (mode === 'konten' && sel.length > 0);
+  return (
+    <Modal title={`Bezugsgrösse für ${row.label}`} wide onClose={onClose}
+      footer={<><button className="btn" onClick={onClose}>Abbrechen</button><button className="btn btn-primary" disabled={!ok} onClick={() => onApply(mode === 'allgemein' ? null : mode === 'zeile' ? { kind: 'line', key: line } : { kind: 'accounts', accounts: sel })}>Übernehmen</button></>}>
+      <div className="stack" style={{ gap: 8 }}>
+        <label className="radio"><input type="radio" name="rb" checked={mode === 'allgemein'} onChange={() => setMode('allgemein')} /> Wie allgemein eingestellt ({analysis.base.label})</label>
+        <label className="radio"><input type="radio" name="rb" checked={mode === 'zeile'} onChange={() => setMode('zeile')} /> Gruppe, Untergruppe oder Ergebnis:
+          <select aria-label="Bezugszeile" value={line} onChange={e => { setLine(e.target.value); setMode('zeile'); }} style={{ marginLeft: 6, maxWidth: 460 }}>
+            <option value="">– wählen –</option>
+            {analysis.rows.map(r => r.kind === 'result' ? <option key={r.key} value={r.key}>{r.label}</option> : (
+              <Fragment key={r.key}>
+                <option value={r.key}>{r.label}</option>
+                {r.subs.map(s => <option key={s.key} value={s.key}>{'\u00a0\u00a0\u00a0'}› {s.label}</option>)}
+              </Fragment>
+            ))}
+          </select>
+        </label>
+        <label className="radio"><input type="radio" name="rb" checked={mode === 'konten'} onChange={() => setMode('konten')} /> Einzelkonten (Summe der gewählten Konten){sel.length ? `: ${sel.length} gewählt` : ''}</label>
+        {mode === 'konten' && (
+          <>
+            <input className="w-md" type="search" placeholder="Konto suchen …" value={q} onChange={e => setQ(e.target.value)} aria-label="Konto suchen" />
+            <div className="additions-scroll">
+              <table className="grid small"><tbody>
+                {list.map(x => (
+                  <tr key={x.accountNumber}>
+                    <td><input type="checkbox" aria-label={`Bezugskonto ${x.accountNumber}`} checked={sel.includes(x.accountNumber)} onChange={e => setSel(s => (e.target.checked ? [...s, x.accountNumber] : s.filter(y => y !== x.accountNumber)))} /></td>
+                    <td className="mono">{x.accountNumber}</td><td>{x.accountName}</td><td className="num">{chf(x.cy)}</td>
+                  </tr>
+                ))}
+              </tbody></table>
+            </div>
+          </>
+        )}
       </div>
     </Modal>
   );

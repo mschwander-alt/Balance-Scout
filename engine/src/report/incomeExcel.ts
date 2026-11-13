@@ -39,6 +39,8 @@ export async function incomeWorkbook(a: IncomeAnalysis, notes: IncomeNotes, m: {
     row.values = [no, label, x.cy / 100, x.pctCy ?? null, a.hasPreviousYear ? (x.py ?? 0) / 100 : null, a.hasPreviousYear ? x.pctPy ?? null : null, a.hasPreviousYear ? (x.diff ?? 0) / 100 : null, x.diffPct ?? null, notes[key]?.text ?? ''];
     for (const c of [3, 5, 7]) row.getCell(c).numFmt = CHF;
     for (const c of [4, 6, 8]) row.getCell(c).numFmt = PCT;
+    // eigene Bezugsgrösse der Zeile: kursiv mit Hinweis
+    if (x.pctBase) for (const c of [4, 6]) { row.getCell(c).note = `in % von: ${x.pctBase.label}`; row.getCell(c).font = { italic: true, color: { argb: 'FF2F6DB3' } }; }
     row.getCell(3).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: CUR_FILL } };
     row.getCell(9).alignment = { wrapText: true, vertical: 'top' };
     if (style === 'result') {

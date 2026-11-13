@@ -542,3 +542,12 @@ table.income tr.dragging td { opacity: .45; }
 table.income tr.drop-target td { background: var(--accent-bg) !important; box-shadow: inset 0 2px 0 var(--brand); }
 table.income tr.inc-base td.pct { color: var(--brand); font-weight: 700; }
 table.income button.flag.moved { border: 0; cursor: pointer; margin-left: 6px; }
+/* Bezugsgrösse je Zeile: Klick auf die %-Zahl */
+table.income td.pct-click { cursor: pointer; }
+table.income td.pct-click:hover { color: var(--brand); text-decoration: underline dotted; }
+table.income td.pct-own { color: #6aa9ff; font-style: italic; }
+table.income .pct-of { font-size: 10px; color: var(--muted); font-style: normal; line-height: 1.1; white-space: nowrap; }
+/* Kopfzeilen bleiben beim Scrollen stehen: overflow:hidden der Tabelle (runde Ecken) würde „sticky“ verhindern */
+.table-wrap .grid, .cust-scroll .grid, .additions-scroll .grid { overflow: visible; }
+.grid thead th { position: sticky; top: 0; z-index: 3; }
+table.income thead th { background: var(--panel-2); box-shadow: inset 0 -1px 0 var(--line-strong); }

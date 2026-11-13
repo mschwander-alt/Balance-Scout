@@ -118,3 +118,18 @@ describe('Vorzeichen, Bezugsgrösse, Platzierung', () => {
     expect(b.rows.find(r => r.key === 'R:brutto1')!.cy).toBe(res('brutto1').cy - 2_000_000);
   });
 });
+
+describe('Bezugsgrösse je Zeile', () => {
+  it('AHV in % des Lohnaufwands, BVG in % eines Einzelkontos; übrige Zeilen beim Betriebsertrag', () => {
+    const b = analyzeIncomeStatement(clean, { rowBases: { '5700': { kind: 'line', key: 'U:personal/lohn' }, '5720': { kind: 'accounts', accounts: ['5000'] }, 'U:personal/sozial': { kind: 'line', key: 'S:personal' } } });
+    const p = b.rows.find(r => r.key === 'S:personal') as IncomeSection;
+    const soz = p.subs.find(s => s.id === 'sozial')!;
+    expect(soz.accounts.map(x => [x.accountNumber, x.pctCy, x.pctBase?.label])).toEqual([['5700', 0.1, 'Lohnaufwand'], ['5720', 0.06, '5000 Lohnaufwand']]);
+    expect(soz.pctCy).toBeCloseTo(24_000 / 174_000, 6);
+    expect(soz.pctBase).toEqual({ key: 'S:personal', label: 'Personalaufwand' });
+    expect(p.pctBase).toBeUndefined();
+    expect(p.pctCy).toBeCloseTo(-174_000 / 980_000, 6);
+    // Vorjahr ebenfalls zur eigenen Bezugsgrösse
+    expect(soz.accounts[0]!.pctPy).toBe(0.1);
+  });
+});
