@@ -1,7 +1,7 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { bsb } from '../bridge';
 import { chf, date, pct } from '../format';
-import { Info, Spinner, useToast } from '../components/ui';
+import { AutoTextarea, Info, Spinner, useToast } from '../components/ui';
 import { DocumentPreview } from '../components/DocumentPreview';
 import type { AgingItem, GroupsInfo, ReceivablesDecision, ReceivablesResult, ReviewDecisions } from '../../electron/shared';
 import type { ViewAccount, ViewDoc } from '../review';
@@ -357,13 +357,13 @@ function Receivables({ historyId, docs, decisions, update, letter, defaultRates 
                 </label>
               ))}
               <div className="row">
-                <input className="grow" placeholder="Neue Feststellung, z. B. Saldenbestätigung Muster AG einholen" value={newFinding} onChange={e => setNewFinding(e.target.value)}
-                  onKeyDown={e => { if (e.key === 'Enter' && newFinding.trim()) { setParams(p => ({ ...p, findings: [...p.findings, { text: newFinding.trim(), status: 'offen' }] })); setNewFinding(''); } }} />
+                <AutoTextarea className="grow" placeholder="Neue Feststellung, z. B. Saldenbestätigung Muster AG einholen" value={newFinding} onChange={e => setNewFinding(e.target.value)}
+                  submitOnEnter onSubmit={() => { if (newFinding.trim()) { setParams(p => ({ ...p, findings: [...p.findings, { text: newFinding.trim(), status: 'offen' }] })); setNewFinding(''); } }} />
                 <button className="btn" disabled={!newFinding.trim()} onClick={() => { setParams(p => ({ ...p, findings: [...p.findings, { text: newFinding.trim(), status: 'offen' }] })); setNewFinding(''); }}>+ Feststellung erfassen</button>
               </div>
               <label className="field note-field" style={{ marginTop: 8 }}>
                 <span>Notiz zum Prüfgebiet (erscheint in Excel und PowerPoint)</span>
-                <textarea rows={4} maxLength={2000} value={params.note ?? ''} onChange={e => setParams(p => ({ ...p, note: e.target.value }))} placeholder="z. B. Delkredere pauschal 5 % auf Inland, 10 % auf Ausland; Einzelwertberichtigung Muster AG geprüft." />
+                <AutoTextarea minRows={3} maxLength={2000} value={params.note ?? ''} onChange={e => setParams(p => ({ ...p, note: e.target.value }))} placeholder="z. B. Delkredere pauschal 5 % auf Inland, 10 % auf Ausland; Einzelwertberichtigung Muster AG geprüft." />
               </label>
               <p className="small muted">Feststellungen und Notiz erscheinen in der Analyse ({fileName}.xlsx und .pptx), die beim Abschliessen als Nachweis abgelegt wird.</p>
             </div>

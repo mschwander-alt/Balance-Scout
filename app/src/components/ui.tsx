@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useRef, useState, type ReactNode, type TextareaHTMLAttributes } from 'react';
 import type { Status } from '../types';
 
 interface Toast { id: number; kind: 'ok' | 'error' | 'info'; text: string }
@@ -65,4 +65,32 @@ export function Info({ children, left, label = 'Details' }: { children: ReactNod
 /** Warnsymbol – nur bei Problemen */
 export function WarnIcon({ text }: { text: string }) {
   return <span className="warn-icon" title={text} aria-label={text}>⚠</span>;
+}
+
+/**
+ * Textfeld für Bemerkungen, Notizen und Feststellungen: bricht um und wächst mit dem Text (kein verschwundener Text).
+ * `submitOnEnter`: Enter löst `onSubmit` aus bzw. verlässt das Feld, Shift+Enter fügt eine neue Zeile ein.
+ */
+export function AutoTextarea({ submitOnEnter, onSubmit, minRows = 1, className, onKeyDown, onInput, ...rest }: TextareaHTMLAttributes<HTMLTextAreaElement> & { submitOnEnter?: boolean; onSubmit?: () => void; minRows?: number }) {
+  const ref = useRef<HTMLTextAreaElement>(null);
+  const fit = () => {
+    const el = ref.current;
+    if (!el) return;
+    el.style.height = 'auto';
+    el.style.height = `${el.scrollHeight + 2}px`;
+  };
+  useLayoutEffect(fit);
+  return (
+    <textarea
+      ref={ref} rows={minRows} className={`auto-text ${className ?? ''}`} {...rest}
+      onInput={e => { fit(); onInput?.(e); }}
+      onKeyDown={e => {
+        if (submitOnEnter && e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
+          e.preventDefault();
+          if (onSubmit) onSubmit(); else (e.target as HTMLTextAreaElement).blur();
+        }
+        onKeyDown?.(e);
+      }}
+    />
+  );
 }

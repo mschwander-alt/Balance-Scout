@@ -143,7 +143,29 @@ await page.locator('table.income tr[data-inc="S:personal"] ~ tr.inc-sub').first(
 await page.getByLabel('Bemerkung Bruttoergebnis nach Material- und Warenaufwand').fill('Marge stabil');
 await page.getByLabel('Bemerkung Bruttoergebnis nach Material- und Warenaufwand').press('Enter');
 await page.getByText('1 Bemerkung erfasst').waitFor();
+// Langer Kommentar bricht um (Feld wächst mit)
+const longNote = page.getByLabel('Bemerkung Betriebsertrag');
+const h0 = await longNote.evaluate(e => e.getBoundingClientRect().height);
+await longNote.fill('Umsatzwachstum vor allem im zweiten Halbjahr durch Neukunden im Bereich Sanitär; Preiserhöhung per 1. April um 3 % gemäss Preisliste; Abgleich mit Auftragsbestand erfolgt.');
+const h1 = await longNote.evaluate(e => e.getBoundingClientRect().height);
+assert.ok(h1 > h0 * 1.8, `Kommentarfeld wächst (${h0} → ${h1} px)`);
+await longNote.press('Enter');
+// Bezugsgrösse: Untergruppe Lohnaufwand = 100 %
+await page.getByLabel('Bezugsgrösse').selectOption('U:personal/lohn');
+await page.locator('table.income tr[data-inc="U:personal/lohn"].inc-base').waitFor();
+assert.equal((await page.locator('table.income tr[data-inc="U:personal/lohn"] td.pct').first().innerText()).trim(), '100.0 %');
+// Drag & Drop in der Analyse: Raumaufwand (6000) in den Personalaufwand ziehen, Jahresgewinn unverändert, dann zurücksetzen
+const gewinn0 = await page.locator('table.income tr[data-inc="R:gewinn"] td.cur').innerText();
+await page.locator('table.income tr[data-inc="U:betrieb/raum"]').click();
+await page.locator('table.income tr[data-inc="6000"]').dragTo(page.locator('table.income tr[data-inc="S:personal"]'));
+await page.locator('table.income tr[data-inc="6000"] .flag.moved').waitFor();
+assert.equal(await page.locator('table.income tr[data-inc="R:gewinn"] td.cur').innerText(), gewinn0);
+assert.match(await page.locator('table.income tr[data-inc="S:personal"]').innerText(), /-208'400\.00/);
 await page.screenshot({ path: `${shots}-5g-er-analyse.png` });
+await page.locator('table.income tr[data-inc="6000"] .flag.moved').click();
+await page.locator('table.income tr[data-inc="6000"] .flag.moved').waitFor({ state: 'detached' });
+await page.getByLabel('Bezugsgrösse').selectOption('R:betriebsertrag');
+step('ER-Analyse: Bezugsgrösse Lohnaufwand = 100 %, Konto per Drag & Drop verschoben und zurückgesetzt, Kommentar bricht um');
 step(`Erfolgsrechnung-Analyse: Staffel bis Jahresgewinn CHF ${inc.check.total / 100}, Bemerkung erfasst`);
 await page.getByRole('tab', { name: 'Konten', exact: true }).click();
 assert.equal(await page.locator('table.konten.er tr[data-konto]').count(), 5, 'Erfolgsrechnung: 5 Konten');
@@ -191,6 +213,21 @@ await movRow.locator('.flag.moved').waitFor({ state: 'detached' });
 assert.equal(groupOfRow(await rowOrder(), movNum), 'G:A10');
 assert.equal(await movRow.locator('.reg-link').innerText(), regBefore);
 step(`Konto ${movNum} per Drag & Drop verschoben (${regBefore} → ${regMoved}) und zurückgesetzt`);
+// Auto-Scroll beim Ziehen: Konto an den unteren Rand der Tabelle ziehen → Tabelle scrollt mit (Abbruch mit Esc, nichts verschoben)
+const tw = page.locator('.result-layout .table-wrap').first();
+await tw.evaluate(e => { e.scrollTop = 0; });
+const twBox = await tw.boundingBox();
+await page.locator('tr[data-konto="1000"]').hover();
+await page.mouse.down();
+await page.mouse.move(twBox.x + 200, twBox.y + 120, { steps: 4 });
+await page.mouse.move(twBox.x + 200, twBox.y + twBox.height - 8, { steps: 6 });
+await page.waitForTimeout(700);
+const scrolled = await tw.evaluate(e => e.scrollTop);
+await page.keyboard.press('Escape');
+await page.mouse.up();
+assert.ok(scrolled > 50, `Tabelle scrollt beim Ziehen (${scrolled} px)`);
+assert.equal(await page.locator('tr[data-konto="1000"] .flag.moved').count(), 0, 'abgebrochenes Ziehen verschiebt nichts');
+step(`Auto-Scroll beim Ziehen: ${scrolled} px`);
 // Belege ohne Zuordnung: einen Beleg einem Konto ohne Nachweis zuordnen, übrige als nicht relevant
 await page.getByRole('tab', { name: 'Belegverzeichnis' }).click();
 await page.getByRole('button', { name: /Ohne Zuordnung/ }).click();

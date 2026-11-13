@@ -22,10 +22,11 @@ export async function incomeWorkbook(a: IncomeAnalysis, notes: IncomeNotes, m: {
   const prevYear = String(Number(year) - 1);
   ws.getCell('A1').value = 'Analyse der Erfolgsrechnung – Vorjahresvergleich';
   ws.getCell('A1').font = { bold: true, size: 15, color: { argb: GREEN } };
-  ws.getCell('A2').value = `${m.mandate} · Bilanzstichtag ${m.closingDate.split('-').reverse().join('.')} · Anteile in % des Betriebsertrags · Ertrag positiv, Aufwand negativ${m.visum ? ` · Visum ${m.visum}` : ''}`;
+  ws.getCell('A2').value = `${m.mandate} · Bilanzstichtag ${m.closingDate.split('-').reverse().join('.')} · Anteile in % von: ${a.base.label} · Ertrag positiv, Aufwand negativ${a.signFlipped ? ' (Vorzeichen der Saldobilanz gedreht)' : ''}${m.visum ? ` · Visum ${m.visum}` : ''}`;
   ws.getCell('A2').font = { italic: true, color: { argb: GREY } };
-  const head = ['Konto', 'Bezeichnung', `${year}`, '%', `${prevYear}`, '%', 'Differenz', 'Differenz %', 'Bemerkungen'];
-  [10, 52, 15, 9, 15, 9, 14, 12, 60].forEach((w, i) => (ws.getColumn(i + 1).width = w));
+  const pctHead = a.base.key === 'R:betriebsertrag' ? '%' : `% von ${a.base.label.length > 22 ? `${a.base.label.slice(0, 21)}…` : a.base.label}`;
+  const head = ['Konto', 'Bezeichnung', `${year}`, pctHead, `${prevYear}`, pctHead, 'Differenz', 'Differenz %', 'Bemerkungen'];
+  [10, 52, 15, 12, 15, 12, 14, 12, 60].forEach((w, i) => (ws.getColumn(i + 1).width = w));
   head.forEach((h, i) => {
     const c = ws.getCell(4, i + 1);
     c.value = h; c.font = { bold: true, color: { argb: 'FFFFFFFF' } }; c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: GREEN } };
@@ -65,7 +66,7 @@ export async function incomeWorkbook(a: IncomeAnalysis, notes: IncomeNotes, m: {
     for (const ac of x.accounts) put(ac.accountNumber, ac.accountName, ac, ac.key, 'account');
   }
   r++;
-  ws.getCell(r, 1).value = `Gliederung nach KMU-Kontenrahmen (Gruppe des Kontos, innerhalb der Gruppe nach den ersten zwei Ziffern der Kontonummer). Prozente: Anteil am Betriebsertrag (${year}: ${(a.base.cy / 100).toLocaleString('de-CH')}). Konten je Untergruppe über die Gliederung (+/−) ein- und ausblenden.`;
+  ws.getCell(r, 1).value = `Gliederung nach KMU-Kontenrahmen (Gruppe des Kontos, innerhalb der Gruppe nach den ersten zwei Ziffern der Kontonummer). Prozente: Anteil an „${a.base.label}“ (${year}: ${(a.base.cy / 100).toLocaleString('de-CH')}). Konten je Untergruppe über die Gliederung (+/−) ein- und ausblenden.`;
   ws.getCell(r, 1).font = { italic: true, color: { argb: GREY } };
   ws.views = [{ state: 'frozen', ySplit: 4, xSplit: 2 }];
   ws.headerFooter.oddFooter = `&L${m.mandate}&C&A – Seite &P von &N&RBalance Scout`;

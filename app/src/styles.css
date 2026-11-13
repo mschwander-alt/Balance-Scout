@@ -532,3 +532,13 @@ table.accruals td.cur { background: rgba(79, 199, 103, .06); }
 table.accruals tr.acr-entfallen td { color: var(--muted); }
 table.accruals tr.acr-unexplained td { color: var(--bad); font-style: italic; }
 table.accruals tr:hover .inline-note::placeholder { color: var(--muted); }
+/* Bemerkungen/Notizen: umbrechen und mitwachsen */
+textarea.auto-text { resize: none; overflow: hidden; line-height: 1.4; white-space: pre-wrap; overflow-wrap: anywhere; min-height: 0; }
+textarea.inline-note { display: block; width: 100%; font: inherit; font-size: 12px; }
+/* Analyse Erfolgsrechnung: Bezugsgrösse, Drag & Drop */
+.base-select { max-width: 380px; font-size: 12px; }
+table.income tr[draggable] { cursor: grab; }
+table.income tr.dragging td { opacity: .45; }
+table.income tr.drop-target td { background: var(--accent-bg) !important; box-shadow: inset 0 2px 0 var(--brand); }
+table.income tr.inc-base td.pct { color: var(--brand); font-weight: 700; }
+table.income button.flag.moved { border: 0; cursor: pointer; margin-left: 6px; }

@@ -75,8 +75,10 @@ export interface IncomeResult extends Amounts { kind: 'result'; key: string; id:
 export interface IncomeAnalysis {
   rows: (IncomeSection | IncomeResult)[];
   hasPreviousYear: boolean;
-  /** Basis der Prozentangaben (Betriebsertrag) */
-  base: { cy: Cents; py: Cents | null };
+  /** Bezugsgrösse der Prozentangaben (Standard: Betriebsertrag) */
+  base: { cy: Cents; py: Cents | null; label: string; key: string };
+  /** Saldobilanz führt Erfolgskonten mit umgekehrtem Vorzeichen (Ertrag +) – für die Anzeige gedreht */
+  signFlipped: boolean;
   /** Abstimmung: Jahresgewinn laut Staffel = Summe aller Erfolgskonten */
   check: { total: Cents; accounts: number };
 }
@@ -101,56 +103,88 @@ function sectionOf(a: IncomeAccountInput): string {
 /** Veränderung auffällig? (mind. 25 % und mind. CHF 1'000 – wie in der Kontentabelle) */
 const isBig = (cy: Cents, py: Cents | null) => py !== null && Math.abs(cy - py) >= 1_000_00 && (py === 0 || Math.abs((cy - py) / py) >= 0.25);
 
-export function analyzeIncomeStatement(accounts: IncomeAccountInput[]): IncomeAnalysis {
+/** Bezugsgrösse der Prozentangaben: eine Zeile der Staffel (Ergebnis R:…, Gruppe S:…, Untergruppe U:…) oder Einzelkonten */
+export type IncomeBase = { kind: 'line'; key: string } | { kind: 'accounts'; accounts: string[] };
+/** Platzierung eines Kontos in der Staffel (vom Prüfer per Drag & Drop): Abschnitt und optional Untergruppe */
+export type IncomePlacements = Record<string, { section: string; sub?: string }>;
+export interface IncomeOptions { base?: IncomeBase | null; placements?: IncomePlacements }
+
+/** Abschnitte und Untergruppen der Staffel (für Auswahllisten und Drag & Drop) */
+export const INCOME_SECTIONS = STRUCTURE.filter((d): d is SectionDef => 'id' in d).map(d => ({ id: d.id, label: d.label, subs: d.subs.map(x => ({ id: x.id, label: x.label })) }));
+/** Gruppe des KMU-Kontenrahmens je Abschnitt (verschobene Konten erhalten diese Gruppe) */
+export const SECTION_GROUP: Record<string, string | null> = { ertrag: 'E30', material: 'E40', personal: 'E50', betrieb: 'E60', abschreibungen: 'E60', finanz: 'E60', neben: 'E70', ausserordentlich: 'E80', ohne: null, steuern: 'E89' };
+
+export function analyzeIncomeStatement(accounts: IncomeAccountInput[], opts: IncomeOptions = {}): IncomeAnalysis {
   const er = accounts.filter(a => a.category === 'aufwand' || a.category === 'ertrag' || (/^E\d\d$/.test(a.groupCode ?? '') && a.category !== 'abschluss'));
   const hasPreviousYear = er.some(a => a.balancePreviousYear !== null && a.balancePreviousYear !== undefined);
-  const val = (a: IncomeAccountInput) => ({ cy: -a.balanceCurrentYear, py: hasPreviousYear ? -(a.balancePreviousYear ?? 0) : null });
-  const sum = (xs: { cy: Cents; py: Cents | null }[]) => ({ cy: xs.reduce((s, x) => s + x.cy, 0), py: hasPreviousYear ? xs.reduce((s, x) => s + (x.py ?? 0), 0) : null });
-
-  // Rohstruktur ohne Prozente (Basis erst nach dem Betriebsertrag bekannt)
-  type Raw = { cy: Cents; py: Cents | null };
+  const secOf = (a: IncomeAccountInput) => {
+    const pl = opts.placements?.[a.accountNumber];
+    return pl && sections.has(pl.section) ? pl.section : sectionOf(a);
+  };
+  // Vorzeichen: Ertrag positiv, Aufwand negativ. Üblich ist Ertrag im Haben (−) – manche Saldobilanzen führen Erfolgskonten
+  // umgekehrt (Ertrag +, Aufwand −); das wird an den Ertrags- bzw. Aufwandskonten erkannt.
   const sections = new Map<string, { def: SectionDef; subs: Map<string, { def: SubDef; accounts: (IncomeAccountInput & Raw)[] }>; accounts: (IncomeAccountInput & Raw)[] }>();
   for (const d of STRUCTURE) if ('id' in d) sections.set(d.id, { def: d, subs: new Map(), accounts: [] });
+  const revenue = er.filter(a => secOf(a) === 'ertrag').reduce((x, a) => x + a.balanceCurrentYear, 0);
+  const expense = er.filter(a => ['material', 'personal', 'betrieb', 'abschreibungen'].includes(secOf(a))).reduce((x, a) => x + a.balanceCurrentYear, 0);
+  const signFlipped = revenue !== 0 ? revenue > 0 : expense < 0;
+  const f = signFlipped ? 1 : -1;
+  const val = (a: IncomeAccountInput) => ({ cy: f * a.balanceCurrentYear, py: hasPreviousYear ? f * (a.balancePreviousYear ?? 0) : null });
+  const sum = (xs: { cy: Cents; py: Cents | null }[]) => ({ cy: xs.reduce((s, x) => s + x.cy, 0), py: hasPreviousYear ? xs.reduce((s, x) => s + (x.py ?? 0), 0) : null });
+
+  type Raw = { cy: Cents; py: Cents | null };
   for (const a of er) {
-    const s = sections.get(sectionOf(a))!;
+    const sid = secOf(a);
+    const s = sections.get(sid)!;
     const p2 = digits(a.accountNumber).slice(0, 2);
-    const sub = s.def.subs.find(x => x.prefixes.includes(p2)) ?? (s.def.subs.length ? { id: 'uebrige', label: 'Übrige', prefixes: [] } : null);
+    const wanted = opts.placements?.[a.accountNumber]?.section === sid ? opts.placements[a.accountNumber]!.sub : undefined;
+    const sub = (wanted ? s.def.subs.find(x => x.id === wanted) : undefined) ?? s.def.subs.find(x => x.prefixes.includes(p2)) ?? (s.def.subs.length ? { id: 'uebrige', label: 'Übrige', prefixes: [] } : null);
     const item = { ...a, ...val(a) };
     if (!sub) { s.accounts.push(item); continue; }
     const cur = s.subs.get(sub.id) ?? { def: sub, accounts: [] };
     cur.accounts.push(item);
     s.subs.set(sub.id, cur);
   }
-  const ertrag = sections.get('ertrag')!;
-  const base = sum([...ertrag.subs.values()].flatMap(x => x.accounts).concat(ertrag.accounts));
-  const amounts = (r: Raw): Amounts => ({
-    cy: r.cy, py: r.py,
-    diff: r.py === null ? null : r.cy - r.py,
-    diffPct: r.py === null || r.py === 0 ? null : (r.cy - r.py) / Math.abs(r.py),
-    pctCy: base.cy ? r.cy / base.cy : null,
-    pctPy: r.py === null || !base.py ? null : r.py / base.py,
-  });
   const byNo = (x: { accountNumber: string }, y: { accountNumber: string }) => x.accountNumber.localeCompare(y.accountNumber, 'de', { numeric: true });
-  const acc = (a: IncomeAccountInput & Raw): IncomeAccount => ({ key: a.accountNumber, accountNumber: a.accountNumber, accountName: a.accountName, ...amounts(a), big: isBig(a.cy, a.py) });
-
+  // 1. Durchgang: Beträge; Prozente folgen, sobald die Bezugsgrösse bekannt ist
+  const blank = (r: Raw): Amounts => ({ cy: r.cy, py: r.py, diff: r.py === null ? null : r.cy - r.py, diffPct: r.py === null || r.py === 0 ? null : (r.cy - r.py) / Math.abs(r.py), pctCy: null, pctPy: null });
+  const acc = (a: IncomeAccountInput & Raw): IncomeAccount => ({ key: a.accountNumber, accountNumber: a.accountNumber, accountName: a.accountName, ...blank(a), big: isBig(a.cy, a.py) });
   const rows: (IncomeSection | IncomeResult)[] = [];
   const running: Raw[] = [];
   for (const d of STRUCTURE) {
     if ('result' in d) {
-      rows.push({ kind: 'result', key: `R:${d.result}`, id: d.result, label: d.label, ...amounts(sum(running)) });
+      rows.push({ kind: 'result', key: `R:${d.result}`, id: d.result, label: d.label, ...blank(sum(running)) });
       continue;
     }
     const s = sections.get(d.id)!;
     const subOrder = [...d.subs.map(x => x.id), 'uebrige'];
-    const subs = [...s.subs.values()].sort((x, y) => subOrder.indexOf(x.def.id) - subOrder.indexOf(y.def.id)).map(x => {
-      const t = sum(x.accounts);
-      return { key: `U:${d.id}/${x.def.id}`, id: x.def.id, label: x.def.label, ...amounts(t), accounts: x.accounts.sort(byNo).map(acc) };
-    });
+    const subs = [...s.subs.values()].sort((x, y) => subOrder.indexOf(x.def.id) - subOrder.indexOf(y.def.id)).map(x => ({
+      key: `U:${d.id}/${x.def.id}`, id: x.def.id, label: x.def.label, ...blank(sum(x.accounts)), accounts: x.accounts.sort(byNo).map(acc),
+    }));
     const all = [...s.subs.values()].flatMap(x => x.accounts).concat(s.accounts);
     if (!all.length && (d.id === 'ohne' || d.id === 'neben' || d.id === 'ausserordentlich')) continue; // leere Nebenabschnitte weglassen
     const t = sum(all);
     running.push(t);
-    rows.push({ kind: 'section', key: `S:${d.id}`, id: d.id, label: d.label, ...amounts(t), subs, accounts: s.accounts.sort(byNo).map(acc) });
+    rows.push({ kind: 'section', key: `S:${d.id}`, id: d.id, label: d.label, ...blank(t), subs, accounts: s.accounts.sort(byNo).map(acc) });
   }
-  return { rows, hasPreviousYear, base, check: { total: sum(er.map(val)).cy, accounts: er.length } };
+  // 2. Bezugsgrösse: gewählte Zeile bzw. Konten, sonst Betriebsertrag
+  const lines: (Amounts & { key: string; label: string })[] = rows.flatMap(r => (r.kind === 'section' ? [r, ...r.subs] : [r]) as (Amounts & { key: string; label: string })[]);
+  const allAccounts = rows.flatMap(r => (r.kind === 'section' ? [...r.subs.flatMap(x => x.accounts), ...r.accounts] : []));
+  let base: { cy: Cents; py: Cents | null; label: string; key: string } | null = null;
+  if (opts.base?.kind === 'accounts' && opts.base.accounts.length) {
+    const chosen = allAccounts.filter(x => opts.base!.kind === 'accounts' && opts.base!.accounts.includes(x.accountNumber));
+    if (chosen.length) base = { ...sum(chosen), label: chosen.length === 1 ? `${chosen[0]!.accountNumber} ${chosen[0]!.accountName}` : `${chosen.length} Konten (${chosen.map(x => x.accountNumber).join(', ')})`, key: `A:${chosen.map(x => x.accountNumber).join(',')}` };
+  } else if (opts.base?.kind === 'line') {
+    const l = lines.find(x => x.key === (opts.base as { key: string }).key);
+    if (l) base = { cy: l.cy, py: l.py, label: l.label, key: l.key };
+  }
+  if (!base) { const be = rows.find(r => r.key === 'R:betriebsertrag')!; base = { cy: be.cy, py: be.py, label: be.label, key: be.key }; }
+  const b = base;
+  // Anteil: gleiches Vorzeichen wie die Bezugsgrösse = positiv (z. B. Sozialversicherungen in % des Lohnaufwands)
+  const fill = (x: Amounts) => { x.pctCy = b.cy ? x.cy / b.cy : null; x.pctPy = x.py === null || !b.py ? null : x.py / b.py; };
+  for (const r of rows) {
+    fill(r);
+    if (r.kind === 'section') { for (const sb of r.subs) { fill(sb); sb.accounts.forEach(fill); } r.accounts.forEach(fill); }
+  }
+  return { rows, hasPreviousYear, base: b, signFlipped, check: { total: sum(er.map(val)).cy, accounts: er.length } };
 }

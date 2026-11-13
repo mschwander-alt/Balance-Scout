@@ -1,7 +1,7 @@
 import { Fragment, useEffect, useState } from 'react';
 import { bsb } from '../bridge';
 import { chf, date } from '../format';
-import { Spinner, useToast } from '../components/ui';
+import { AutoTextarea, Spinner, useToast } from '../components/ui';
 import type { AccrualClass, AccrualsDecision, AccrualsResult, ReviewDecisions } from '../../electron/shared';
 
 const CLS: [AccrualClass, string][] = [['vorjahr', 'Vorjahr (Auflösung)'], ['laufend', 'laufendes Jahr (Bildung)'], ['unterjaehrig', 'unterjährig']];
@@ -86,8 +86,8 @@ export function Accruals({ historyId, decisions, update, closingDate, visum }: {
                     <td className="num cur">{x.cy ? chf(x.cy) : '–'}</td><td className="num">{x.py ? chf(x.py) : '–'}</td>
                     <td className={`num ${x.py && Math.abs(x.diff) >= 100_000 && Math.abs(x.diff / x.py) >= 0.25 ? 'delta-big' : ''}`}>{x.diff ? chf(x.diff) : '–'}</td>
                     <td className="note-cell">
-                      <input className="inline-note" defaultValue={params.notes?.[nk]?.text ?? ''} placeholder="Bemerkung …" aria-label={`Bemerkung ${x.label}`}
-                        onBlur={e => { if (e.target.value !== (params.notes?.[nk]?.text ?? '')) setNote(nk, e.target.value); }} onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }} />
+                      <AutoTextarea className="inline-note" defaultValue={params.notes?.[nk]?.text ?? ''} placeholder="Bemerkung …" aria-label={`Bemerkung ${x.label}`} submitOnEnter
+                        onBlur={e => { if (e.target.value !== (params.notes?.[nk]?.text ?? '')) setNote(nk, e.target.value); }} />
                     </td>
                   </tr>
                 );
@@ -127,7 +127,7 @@ export function Accruals({ historyId, decisions, update, closingDate, visum }: {
           <h3>Feststellungen und nächste Schritte</h3>
           <ul className="small" style={{ margin: 0, paddingLeft: 18 }}>{r.suggestions.map((s, i) => <li key={i}>{s}</li>)}</ul>
           <label className="field note-field"><span>Notiz zum Prüfgebiet</span>
-            <textarea rows={3} value={params.note ?? ''} onChange={e => setParams(p => ({ ...p, note: e.target.value }))} placeholder="z. B. Abgrenzungen mit Verträgen und Rechnungen abgestimmt" />
+            <AutoTextarea minRows={3} value={params.note ?? ''} onChange={e => setParams(p => ({ ...p, note: e.target.value }))} placeholder="z. B. Abgrenzungen mit Verträgen und Rechnungen abgestimmt" />
           </label>
           <p className="small muted">Der Vergleich wird beim Abschliessen als „Analyse_Rechnungsabgrenzungen.xlsx“ abgelegt.</p>
         </div>

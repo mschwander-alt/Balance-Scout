@@ -111,6 +111,9 @@ export interface ReviewDecisions {
   groupLetters?: Record<string, string>;
   /** Analyse Erfolgsrechnung: Bemerkungen je Konto (Nummer), Untergruppe (U:…), Gruppe (S:…) oder Ergebnis (R:…) */
   incomeNotes?: Record<string, { text: string; at: string; visum: string }>;
+  /** Analyse Erfolgsrechnung: Bezugsgrösse der Relationszahlen (ohne Angabe: Betriebsertrag) und per Drag & Drop verschobene Konten */
+  incomeBase?: IncomeBase | null;
+  incomePlacements?: Record<string, { section: string; sub?: string }>;
   /** Konto (Nummer) -> vom Prüfer gewählte Gruppe (Code); zugeordnete Belege und Register folgen dem Konto */
   groupOverrides?: Record<string, { groupCode: string; at: string; visum: string }>;
   analyses?: { receivables?: ReceivablesDecision; fixedAssets?: FixedAssetsDecision; accruals?: AccrualsDecision };
@@ -256,7 +259,9 @@ export interface IncomeAccount extends IncomeAmounts { key: string; accountNumbe
 export interface IncomeSub extends IncomeAmounts { key: string; id: string; label: string; accounts: IncomeAccount[] }
 export interface IncomeSection extends IncomeAmounts { kind: 'section'; key: string; id: string; label: string; subs: IncomeSub[]; accounts: IncomeAccount[] }
 export interface IncomeResultRow extends IncomeAmounts { kind: 'result'; key: string; id: string; label: string }
-export interface IncomeAnalysis { rows: (IncomeSection | IncomeResultRow)[]; hasPreviousYear: boolean; base: { cy: number; py: number | null }; check: { total: number; accounts: number } }
+export interface IncomeAnalysis { rows: (IncomeSection | IncomeResultRow)[]; hasPreviousYear: boolean; base: { cy: number; py: number | null; label: string; key: string }; signFlipped: boolean; check: { total: number; accounts: number } }
+/** Bezugsgrösse der Relationszahlen: Zeile der Staffel (R:/S:/U:…) oder Einzelkonten */
+export type IncomeBase = { kind: 'line'; key: string } | { kind: 'accounts'; accounts: string[] };
 export interface AnalysisResults { income: IncomeAnalysis; accruals: AccrualsResult }
 // ---------------------------------------------------------------- Rechnungsabgrenzungen (engine/src/analysis/accruals.ts)
 export type AccrualClass = 'vorjahr' | 'laufend' | 'unterjaehrig';

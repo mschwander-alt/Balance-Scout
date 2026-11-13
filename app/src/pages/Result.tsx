@@ -1,13 +1,14 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { bsb } from '../bridge';
 import type { AccountRow, AuditResult, Best, DocRow, Status } from '../types';
 import type { GroupsInfo, ReviewDecisions } from '../../electron/shared';
 import { chf, date, pct } from '../format';
-import { FLAG_LABEL, Info, Modal, Spinner, StatusBadge, WarnIcon, useToast } from '../components/ui';
+import { AutoTextarea, FLAG_LABEL, Info, Modal, Spinner, StatusBadge, WarnIcon, useToast } from '../components/ui';
 import { DocumentPreview } from '../components/DocumentPreview';
 import { Documents } from './Documents';
 import { AuditAreas } from './AuditAreas';
 import { IncomeAnalysisView } from './IncomeAnalysis';
+import { useDragAutoScroll } from '../components/dragScroll';
 import { GENERAL_ACCOUNT, accountLabel, targetsOf, deriveView, groupAccounts, type ViewAccount, type ViewDoc } from '../review';
 
 type Tab = 'konten' | 'erfolg' | 'belege' | 'gebiete' | 'saldobilanz' | 'diagnose';
@@ -34,6 +35,9 @@ export function Result({ result: initial, onRepeat }: { result: AuditResult; onR
   // Drag & Drop: Konto in eine andere Gruppe verschieben
   const [dragAcc, setDragAcc] = useState<string | null>(null);
   const [dropGroup, setDropGroup] = useState<string | null>(null);
+  // Beim Ziehen am Rand der Kontentabelle automatisch scrollen (auch von ganz oben nach ganz unten)
+  const tableWrap = useRef<HTMLDivElement>(null);
+  useDragAutoScroll(tableWrap, !!dragAcc);
   const id = result.historyId;
 
   useEffect(() => {
@@ -135,7 +139,7 @@ export function Result({ result: initial, onRepeat }: { result: AuditResult; onR
     assign(docId, next.length ? next : undefined);
   };
   /** Konto in eine Gruppe verschieben (Code) oder auf die automatische Gruppe zurücksetzen (null); Belege folgen dem Konto */
-  const moveAccount = (num: string, code: string | null) => {
+  const moveAccount = (num: string, code: string | null, quiet = false) => {
     const a = view.accounts.find(x => x.accountNumber === num);
     if (!a) return;
     const auto = a.autoGroup ? a.autoGroup.code : a.groupCode ?? null;
@@ -153,7 +157,7 @@ export function Result({ result: initial, onRepeat }: { result: AuditResult; onR
       return { ...d, groupOverrides: next };
     });
     const nDocs = view.docs.filter(x => x.accounts.includes(num)).length;
-    toast('ok', `Konto ${num} → ${g?.name ?? 'Ohne Gruppe'}${code === null || code === auto ? ' (automatische Gruppe)' : ''}${nDocs ? ` · ${nDocs} Beleg${nDocs > 1 ? 'e' : ''} mitgenommen` : ''}`);
+    if (!quiet) toast('ok', `Konto ${num} → ${g?.name ?? 'Ohne Gruppe'}${code === null || code === auto ? ' (automatische Gruppe)' : ''}${nDocs ? ` · ${nDocs} Beleg${nDocs > 1 ? 'e' : ''} mitgenommen` : ''}`);
   };
   const dnd: Dnd = {
     enabled: grouped && !!groups, dragging: dragAcc, over: dropGroup,
@@ -245,7 +249,7 @@ export function Result({ result: initial, onRepeat }: { result: AuditResult; onR
         </div>
       )}
       {tab === 'erfolg' && erView === 'analyse' && id && (
-        <IncomeAnalysisView historyId={id} decisions={decisions} update={update} visum={visum} closingDate={result.input?.closingDate ?? null} />
+        <IncomeAnalysisView historyId={id} decisions={decisions} update={update} visum={visum} closingDate={result.input?.closingDate ?? null} onMoveGroup={moveAccount} />
       )}
       {(tab === 'konten' || (tab === 'erfolg' && erView === 'konten')) && (
         <div className={`result-layout ${sel ? 'withpreview' : 'nopanel'}`}>
@@ -258,7 +262,7 @@ export function Result({ result: initial, onRepeat }: { result: AuditResult; onR
                 <label className="muted"><input type="checkbox" checked={grouped} onChange={e => setGrouped(e.target.checked)} /> nach KMU-Kontenrahmen gruppieren</label>
               </span>
             </div>
-            <div className="table-wrap">
+            <div className="table-wrap" ref={tableWrap}>
               <table className={`grid clickable konten ${er ? 'er' : ''}`}>
                 <thead><tr><th>Konto</th><th>Bezeichnung</th><th className="num">Aktuell</th><th className="num">Vorjahr</th><th className="num dchf" title="Veränderung des Betrags (bei Passiven und Ertrag: Zunahme = +)">Δ CHF</th><th className="num">Δ %</th><th>Status</th><th>Beleg</th></tr></thead>
                 <tbody>
@@ -603,7 +607,7 @@ function AccountPanel({ a, docs, filedPath, note, accepted, nav, onAccept, onUna
       )}
       {showNote && (
         <div className="note-field">
-          <textarea rows={2} maxLength={500} value={noteText} onChange={e => setNoteText(e.target.value)} onBlur={() => noteText !== (note?.text ?? '') && onNote(noteText)} placeholder="z. B. Saldo mit Bankbestätigung abgestimmt." autoFocus={!note?.text} />
+          <AutoTextarea minRows={2} maxLength={500} value={noteText} onChange={e => setNoteText(e.target.value)} onBlur={() => noteText !== (note?.text ?? '') && onNote(noteText)} placeholder="z. B. Saldo mit Bankbestätigung abgestimmt." autoFocus={!note?.text} />
           <div className="note-meta"><span>{a.docId ? 'Wird dem Beleg als erste Seite vorangestellt.' : 'Erscheint in der Excel-Dokumentation.'}</span><span>{note ? `${note.visum || '–'}, ${date(note.at.slice(0, 10))} · ` : ''}{noteText.length} / 500</span></div>
         </div>
       )}

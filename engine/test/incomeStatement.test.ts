@@ -23,7 +23,8 @@ const accounts = [
   acc('1000', 'A10', 'Kasse', 5_000, 4_000), // Bilanzkonto – gehört nicht dazu
   { ...acc('9200', 'X90', 'Gewinn', 0, 0), category: 'abschluss' },
 ];
-const a = analyzeIncomeStatement(accounts.map(x => (x.groupCode === 'A10' ? { ...x, category: 'aktiven' } : x)));
+const clean = accounts.map(x => (x.groupCode === 'A10' ? { ...x, category: 'aktiven' } : x));
+const a = analyzeIncomeStatement(clean);
 const sec = (id: string) => a.rows.find(r => r.kind === 'section' && r.id === id) as IncomeSection;
 const res = (id: string) => a.rows.find(r => r.kind === 'result' && r.id === id) as IncomeResult;
 
@@ -79,5 +80,41 @@ describe('Excel', () => {
     expect([ws.getCell(b1, 3).value, ws.getCell(b1, 9).value]).toEqual([380_000, 'Marge stabil']);
     const bvg = rowOf('Berufliche Vorsorge');
     expect([ws.getCell(bvg, 1).value, ws.getCell(bvg, 9).value, ws.getRow(bvg).outlineLevel]).toEqual(['5720', 'Neuer BVG-Plan ab 1.1.', 1]);
+  });
+});
+
+describe('Vorzeichen, Bezugsgrösse, Platzierung', () => {
+  it('Saldobilanz mit umgekehrtem Vorzeichen (Ertrag +): wird erkannt, Ertrag bleibt positiv', () => {
+    const flipped = clean.map(x => ({ ...x, balanceCurrentYear: -x.balanceCurrentYear, balancePreviousYear: x.balancePreviousYear === null ? null : -x.balancePreviousYear }));
+    const b = analyzeIncomeStatement(flipped);
+    expect(b.signFlipped).toBe(true);
+    expect(a.signFlipped).toBe(false);
+    expect(b.rows.map(r => r.cy)).toEqual(a.rows.map(r => r.cy));
+  });
+  it('Bezugsgrösse Lohnaufwand (Untergruppe): Lohn = 100 %, Sozialversicherungen in % des Lohns, positiv', () => {
+    const b = analyzeIncomeStatement(clean, { base: { kind: 'line', key: 'U:personal/lohn' } });
+    expect(b.base).toMatchObject({ key: 'U:personal/lohn', label: 'Lohnaufwand', cy: -15_000_000 });
+    const p = b.rows.find(r => r.key === 'S:personal') as IncomeSection;
+    expect(p.subs.map(s => [s.id, s.pctCy])).toEqual([['lohn', 1], ['sozial', 0.16]]);
+    expect(p.subs[1]!.accounts.map(x => x.pctCy)).toEqual([0.1, 0.06]);
+    expect(p.subs[0]!.pctPy).toBe(1);
+  });
+  it('Bezugsgrösse Einzelkonten (mehrere)', () => {
+    const b = analyzeIncomeStatement(clean, { base: { kind: 'accounts', accounts: ['3200', '3800'] } });
+    expect(b.base).toMatchObject({ cy: 98_000_000, label: '2 Konten (3200, 3800)' });
+    expect(res('betriebsertrag').pctCy).toBe(1);
+  });
+  it('unbekannte Bezugsgrösse → Betriebsertrag', () => {
+    expect(analyzeIncomeStatement(clean, { base: { kind: 'line', key: 'R:gibtsnicht' } }).base.key).toBe('R:betriebsertrag');
+  });
+  it('Platzierung per Drag & Drop: Konto in andere Untergruppe bzw. anderen Abschnitt', () => {
+    const b = analyzeIncomeStatement(clean, { placements: { '5720': { section: 'personal', sub: 'uebriger' }, '6500': { section: 'material', sub: 'dienstleistungen' } } });
+    const p = b.rows.find(r => r.key === 'S:personal') as IncomeSection;
+    expect(p.subs.map(s => [s.id, s.accounts.map(x => x.accountNumber)])).toEqual([['lohn', ['5000']], ['sozial', ['5700']], ['uebriger', ['5720']]]);
+    const m = b.rows.find(r => r.key === 'S:material') as IncomeSection;
+    expect(m.subs.find(s => s.id === 'dienstleistungen')!.accounts.map(x => x.accountNumber)).toEqual(['6500']);
+    // Jahresgewinn unverändert, Bruttoergebnis 1 kleiner um den Verwaltungsaufwand
+    expect(b.rows.find(r => r.key === 'R:gewinn')!.cy).toBe(res('gewinn').cy);
+    expect(b.rows.find(r => r.key === 'R:brutto1')!.cy).toBe(res('brutto1').cy - 2_000_000);
   });
 });

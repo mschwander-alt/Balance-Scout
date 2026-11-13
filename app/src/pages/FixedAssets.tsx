@@ -1,7 +1,7 @@
 import { Fragment, useEffect, useState } from 'react';
 import { bsb } from '../bridge';
 import { chf } from '../format';
-import { Modal, Spinner, WarnIcon, useToast } from '../components/ui';
+import { AutoTextarea, Modal, Spinner, WarnIcon, useToast } from '../components/ui';
 import type { FixedAddition, FixedAssetsDecision, FixedAssetsResult, MoveClass, ReviewDecisions } from '../../electron/shared';
 
 const CLS: [MoveClass, string][] = [['zugang', 'Zugang'], ['abgang', 'Abgang'], ['abschreibung', 'Abschreibung'], ['umbuchung', 'Umbuchung']];
@@ -157,11 +157,11 @@ export function FixedAssets({ historyId, decisions, update }: { historyId: strin
               </label>
             ))}
             <div className="row">
-              <input className="grow" placeholder="Neue Feststellung" value={newFinding} onChange={e => setNewFinding(e.target.value)} onKeyDown={e => { if (e.key === 'Enter' && newFinding.trim()) { setParams(p => ({ ...p, findings: [...p.findings, { text: newFinding.trim(), status: 'offen' }] })); setNewFinding(''); } }} />
+              <AutoTextarea className="grow" placeholder="Neue Feststellung" value={newFinding} onChange={e => setNewFinding(e.target.value)} submitOnEnter onSubmit={() => { if (newFinding.trim()) { setParams(p => ({ ...p, findings: [...p.findings, { text: newFinding.trim(), status: 'offen' }] })); setNewFinding(''); } }} />
               <button className="btn" disabled={!newFinding.trim()} onClick={() => { setParams(p => ({ ...p, findings: [...p.findings, { text: newFinding.trim(), status: 'offen' }] })); setNewFinding(''); }}>+ Feststellung erfassen</button>
             </div>
             <label className="field note-field"><span>Notiz zum Prüfgebiet</span>
-              <textarea rows={3} value={params.note ?? ''} onChange={e => setParams(p => ({ ...p, note: e.target.value }))} placeholder="z. B. a.o. Abschreibung Betriebsgebäude gemäss VR-Beschluss vom …" />
+              <AutoTextarea minRows={3} value={params.note ?? ''} onChange={e => setParams(p => ({ ...p, note: e.target.value }))} placeholder="z. B. a.o. Abschreibung Betriebsgebäude gemäss VR-Beschluss vom …" />
             </label>
             <p className="small muted">Der Anlagespiegel wird beim Abschliessen als „Analyse_Anlagespiegel.xlsx“ abgelegt (mit Register, falls für Sachanlagen ein Buchstabe vergeben ist).</p>
           </div>
