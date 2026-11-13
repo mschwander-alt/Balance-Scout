@@ -325,6 +325,22 @@ function registerIpc(): void {
     shell.showItemInFolder(r.filePath);
     return r.filePath;
   });
+  // Weitere Analysen (Erfolgsrechnung, Rechnungsabgrenzungen): Anzeige bzw. Export als Excel
+  const ANALYSES: Record<string, string> = { income: 'Analyse Erfolgsrechnung speichern', accruals: 'Rechnungsabgrenzungen speichern' };
+  ipcMain.handle('review:analysis', (_e, id: string, type: string, params: Record<string, unknown>) => {
+    if (!ANALYSES[type]) throw new Error(`Unbekannte Analyse: ${type}`);
+    if (!existsSync(userFile(`snapshot-${id}.json`))) throw new Error('Analysedaten fehlen – bitte die Prüfung erneut starten.');
+    return call<unknown>({ ...params, type, snapshotPath: userFile(`snapshot-${id}.json`) });
+  });
+  ipcMain.handle('review:exportAnalysis', async (_e, id: string, type: string, params: Record<string, unknown>, suggestedName: string) => {
+    if (!ANALYSES[type]) throw new Error(`Unbekannte Analyse: ${type}`);
+    const saved = readJson<{ input?: JobInput } | null>(`result-${id}.json`, null);
+    const r = await dialog.showSaveDialog(win!, { title: ANALYSES[type], defaultPath: path.join(saved?.input?.targetDir ?? app.getPath('documents'), suggestedName), filters: [{ name: 'Excel', extensions: ['xlsx'] }] });
+    if (r.canceled || !r.filePath) return null;
+    await call<unknown>({ ...params, type, snapshotPath: userFile(`snapshot-${id}.json`), exportPath: r.filePath });
+    shell.showItemInFolder(r.filePath);
+    return r.filePath;
+  });
   ipcMain.handle('review:groups', () => (groupsCache ??= call<GroupsInfo>({ type: 'groups' })));
   // Schritt 2: Abschliessen – Ablage mit Register, Notizen, Excel
   ipcMain.handle('review:finalize', async (_e, id: string, decisions: ReviewDecisions) => {

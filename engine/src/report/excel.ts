@@ -190,7 +190,7 @@ export async function writeExcelReport(res: RunResult, filePath: string): Promis
   ov.getCell(`B${r}`).value = res.documents.filter(d => d.doc.ocrPages > 0).length;
   for (const f of res.analysisFiles ?? []) {
     r++;
-    ov.getCell(`A${r}`).value = f.kind === 'forderungen' ? 'Vertiefte Prüfung Forderungen L+L' : f.kind === 'anlagen' ? 'Vertiefte Prüfung Sachanlagen (Anlagespiegel)' : 'Analyse';
+    ov.getCell(`A${r}`).value = f.kind === 'forderungen' ? 'Vertiefte Prüfung Forderungen L+L' : f.kind === 'anlagen' ? 'Vertiefte Prüfung Sachanlagen (Anlagespiegel)' : f.kind === 'erfolgsrechnung' ? 'Analyse Erfolgsrechnung (Vorjahresvergleich)' : f.kind === 'abgrenzungen' ? 'Rechnungsabgrenzungen (Vorjahresvergleich)' : 'Analyse';
     ov.getCell(`B${r}`).value = f.relPath ? { text: f.name, hyperlink: f.relPath } : f.name;
   }
   r += 2;

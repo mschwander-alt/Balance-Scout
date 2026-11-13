@@ -28,6 +28,8 @@ export interface ReviewDecisions {
   /** Konto (Nummer) -> vom Prüfer gewählte Gruppe (Code); Belege und Register folgen dem Konto */
   groupOverrides?: GroupOverrides;
   /** Vertiefte Prüfungen (Prüfgebiete) */
+  /** Analyse Erfolgsrechnung: Bemerkungen je Konto (Nummer), Untergruppe (U:…), Gruppe (S:…) oder Ergebnis (R:…) */
+  incomeNotes?: Record<string, { text: string; at?: string; visum?: string }>;
   analyses?: {
     fixedAssets?: { accounts?: string[]; categories?: Record<string, string>; classes?: Record<string, 'zugang' | 'abgang' | 'abschreibung' | 'umbuchung'>; findings: { text: string; status: 'offen' | 'erledigt' }[]; note?: string; visum?: string };
     receivables?: { docId: string | null; docIds?: string[]; accounts?: string[]; termDays: number; rates: Record<string, number>; findings: { text: string; status: 'offen' | 'erledigt' }[]; visum?: string; note?: string; assigned?: Record<string, string[]> };
@@ -253,11 +255,20 @@ export async function placeReviewed(
         content: await fixedAssetsWorkbook(r, { mandate: res.input.mandate, closingDate: res.input.closingDate ?? '', findings: fa.findings, note: fa.note, visum: fa.visum, sources: res.ledger.sources }) });
     }
   }
+  // Analyse der Erfolgsrechnung: als Nachweis, sobald Bemerkungen erfasst sind
+  const notes = Object.fromEntries(Object.entries(decisions.incomeNotes ?? {}).filter(([, n]) => n.text.trim()));
+  if (Object.keys(notes).length) {
+    const { analyzeIncomeStatement } = await import('./analysis/incomeStatement.js');
+    const { incomeWorkbook } = await import('./report/incomeExcel.js');
+    const name = 'Analyse_Erfolgsrechnung.xlsx';
+    plans.push({ docId: 'analyse:erfolgsrechnung', absPath: '', relPath: name, sha256: '', assigned: true, targetName: name, generated: true,
+      content: await incomeWorkbook(analyzeIncomeStatement(res.accounts), notes, { mandate: res.input.mandate, closingDate: res.input.closingDate ?? '' }) });
+  }
   const placed = await placeFiles(targetDir, plans, mode);
   const by = new Map(placed.map(p => [p.docId, p]));
-  const analysisFiles = (['analyse:forderungen', 'analyse:forderungen:pptx', 'analyse:anlagen'] as const)
+  const analysisFiles = (['analyse:forderungen', 'analyse:forderungen:pptx', 'analyse:anlagen', 'analyse:erfolgsrechnung'] as const)
     .map(k => ({ k, x: by.get(k) })).filter(({ x }) => !!x?.newPath)
-    .map(({ k, x }) => ({ kind: k === 'analyse:anlagen' ? 'anlagen' : 'forderungen', name: path.basename(x!.newPath!), path: x!.newPath!, relPath: x!.newRelPath }));
+    .map(({ k, x }) => ({ kind: k === 'analyse:anlagen' ? 'anlagen' : k === 'analyse:erfolgsrechnung' ? 'erfolgsrechnung' : 'forderungen', name: path.basename(x!.newPath!), path: x!.newPath!, relPath: x!.newRelPath }));
   return {
     ...res,
     analysisFiles,

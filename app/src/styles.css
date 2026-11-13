@@ -504,3 +504,25 @@ table.konten tr.group-row.drop-target td { box-shadow: inset 0 2px 0 var(--brand
 .additions-scroll { max-height: 60vh; overflow: auto; border: 1px solid var(--line); border-radius: 8px; }
 table.additions td { white-space: nowrap; } table.additions td:nth-child(3), table.additions td:nth-child(4) { white-space: normal; max-width: 420px; }
 .additions-scroll tfoot td { position: sticky; bottom: 0; background: var(--panel-2); }
+/* Analyse Erfolgsrechnung */
+.seg.er-view { display: inline-flex; width: auto; margin: 0 0 8px; }
+.seg.er-view button { flex: none; padding: 6px 14px; }
+table.income td { white-space: nowrap; }
+table.income td:nth-child(2) { max-width: 360px; overflow: hidden; text-overflow: ellipsis; }
+table.income td.cur { background: rgba(79, 199, 103, .06); }
+table.income td.pct { color: var(--muted); font-size: 11.5px; }
+table.income tr.inc-section td { background: var(--group-bg); font-weight: 600; border-top: 1px solid var(--line-strong); }
+table.income tr.inc-sub td { font-weight: 600; cursor: pointer; }
+table.income tr.inc-sub td:nth-child(2) { padding-left: 12px; }
+table.income tr.inc-sub .caret { color: var(--muted); }
+table.income tr.inc-account td:nth-child(2) { padding-left: 26px; color: var(--muted); }
+table.income tr.inc-account td { color: var(--text); }
+table.income tr.inc-big td.num:nth-last-child(2), table.income tr.inc-big td.num:nth-last-child(3) { color: var(--warn); font-weight: 600; }
+table.income tr.inc-result td { background: var(--accent-bg); color: var(--brand); font-weight: 700; border-top: 1px solid var(--ok-line); border-bottom: 1px solid var(--ok-line); }
+table.income td.note-cell { min-width: 220px; width: 28%; padding: 2px 6px; }
+.inline-note { width: 100%; border: 1px solid transparent; background: transparent; padding: 3px 6px; font-size: 12px; }
+.inline-note:hover { border-color: var(--line-strong); }
+.inline-note:focus { background: var(--panel-2); border-color: var(--brand); }
+.seg.er-view { align-self: flex-start; width: fit-content; }
+.inline-note::placeholder { color: transparent; }
+table.income tr:hover .inline-note::placeholder, .inline-note:focus::placeholder { color: var(--muted); }

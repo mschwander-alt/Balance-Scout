@@ -7,6 +7,7 @@ import { FLAG_LABEL, Info, Modal, Spinner, StatusBadge, WarnIcon, useToast } fro
 import { DocumentPreview } from '../components/DocumentPreview';
 import { Documents } from './Documents';
 import { AuditAreas } from './AuditAreas';
+import { IncomeAnalysisView } from './IncomeAnalysis';
 import { GENERAL_ACCOUNT, accountLabel, targetsOf, deriveView, groupAccounts, type ViewAccount, type ViewDoc } from '../review';
 
 type Tab = 'konten' | 'erfolg' | 'belege' | 'gebiete' | 'saldobilanz' | 'diagnose';
@@ -28,6 +29,8 @@ export function Result({ result: initial, onRepeat }: { result: AuditResult; onR
   const [busy, setBusy] = useState(false);
   const [search, setSearch] = useState('');
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  // Erfolgsrechnung: Konten (wie Bilanz) oder Analyse (Staffel mit Margen, Vorjahr, Bemerkungen)
+  const [erView, setErView] = useState<'konten' | 'analyse'>('analyse');
   // Drag & Drop: Konto in eine andere Gruppe verschieben
   const [dragAcc, setDragAcc] = useState<string | null>(null);
   const [dropGroup, setDropGroup] = useState<string | null>(null);
@@ -235,7 +238,16 @@ export function Result({ result: initial, onRepeat }: { result: AuditResult; onR
         ))}
       </nav>
 
-      {(tab === 'konten' || tab === 'erfolg') && (
+      {tab === 'erfolg' && (
+        <div className="seg er-view" role="tablist" aria-label="Ansicht Erfolgsrechnung">
+          <button role="tab" className={erView === 'analyse' ? 'active' : ''} onClick={() => setErView('analyse')}>Analyse (Staffel, Margen, Vorjahr)</button>
+          <button role="tab" className={erView === 'konten' ? 'active' : ''} onClick={() => setErView('konten')}>Konten</button>
+        </div>
+      )}
+      {tab === 'erfolg' && erView === 'analyse' && id && (
+        <IncomeAnalysisView historyId={id} decisions={decisions} update={update} visum={visum} closingDate={result.input?.closingDate ?? null} />
+      )}
+      {(tab === 'konten' || (tab === 'erfolg' && erView === 'konten')) && (
         <div className={`result-layout ${sel ? 'withpreview' : 'nopanel'}`}>
           <div className="stack" style={{ gap: 6 }}>
             <div className="row small" style={{ justifyContent: 'space-between' }}>

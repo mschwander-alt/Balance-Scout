@@ -109,6 +109,8 @@ export interface ReviewDecisions {
   assignments?: Record<string, { accountNumber: string | null; accountNumbers?: string[]; at: string; visum: string }>;
   notes?: Record<string, { text: string; at: string; visum: string }>;
   groupLetters?: Record<string, string>;
+  /** Analyse Erfolgsrechnung: Bemerkungen je Konto (Nummer), Untergruppe (U:…), Gruppe (S:…) oder Ergebnis (R:…) */
+  incomeNotes?: Record<string, { text: string; at: string; visum: string }>;
   /** Konto (Nummer) -> vom Prüfer gewählte Gruppe (Code); zugeordnete Belege und Register folgen dem Konto */
   groupOverrides?: Record<string, { groupCode: string; at: string; visum: string }>;
   analyses?: { receivables?: ReceivablesDecision; fixedAssets?: FixedAssetsDecision };
@@ -227,6 +229,9 @@ export interface BsbBridge {
     finalize(id: string, d: ReviewDecisions): Promise<unknown>;
     groups(): Promise<GroupsInfo>;
     fixedAssets(id: string, p: Partial<FixedAssetsDecision> & { groupOverrides?: ReviewDecisions['groupOverrides'] }): Promise<FixedAssetsResult>;
+    /** Analyse Erfolgsrechnung bzw. Rechnungsabgrenzungen berechnen; exportAnalysis speichert sie als Excel */
+    analysis<K extends keyof AnalysisResults>(id: string, type: K, p: Record<string, unknown>): Promise<AnalysisResults[K]>;
+    exportAnalysis(id: string, type: keyof AnalysisResults, p: Record<string, unknown>, suggestedName: string): Promise<string | null>;
     exportFixedAssets(id: string, p: Partial<FixedAssetsDecision> & { groupOverrides?: ReviewDecisions['groupOverrides'] }, suggestedName: string): Promise<string | null>;
     /** ESTV-Kursliste (PDF) wählen, lesen und speichern; liefert alle gespeicherten Listen */
     importRates(): Promise<Record<string, FxRateList> | null>;
@@ -244,3 +249,14 @@ export interface BsbBridge {
     version(): Promise<string>;
   };
 }
+
+// ---------------------------------------------------------------- Analyse der Erfolgsrechnung
+export interface IncomeAmounts { cy: number; py: number | null; diff: number | null; diffPct: number | null; pctCy: number | null; pctPy: number | null }
+export interface IncomeAccount extends IncomeAmounts { key: string; accountNumber: string; accountName: string; big: boolean }
+export interface IncomeSub extends IncomeAmounts { key: string; id: string; label: string; accounts: IncomeAccount[] }
+export interface IncomeSection extends IncomeAmounts { kind: 'section'; key: string; id: string; label: string; subs: IncomeSub[]; accounts: IncomeAccount[] }
+export interface IncomeResultRow extends IncomeAmounts { kind: 'result'; key: string; id: string; label: string }
+export interface IncomeAnalysis { rows: (IncomeSection | IncomeResultRow)[]; hasPreviousYear: boolean; base: { cy: number; py: number | null }; check: { total: number; accounts: number } }
+export interface AnalysisResults { income: IncomeAnalysis; accruals: AccrualsResult }
+// Rechnungsabgrenzungen (Vorjahresvergleich) – Details siehe engine/src/analysis/accruals.ts
+export interface AccrualsResult { [k: string]: unknown }

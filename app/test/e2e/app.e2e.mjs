@@ -133,6 +133,19 @@ assert.match(await page.locator('pre.diag').innerText(), /DIAGNOSEBERICHT/);
 
 // ---------------- Durchsicht: akzeptieren, Notiz, Belege zuordnen ----------------
 await page.getByRole('tab', { name: 'Erfolgsrechnung' }).click();
+// Analyse (Standard): Staffel mit Margen, Jahresgewinn = Total der Kontenansicht; Bemerkung erfassen
+await page.locator('table.income tr[data-inc="R:gewinn"]').waitFor();
+const histId = readdirSync(userData).find(f => f.startsWith('result-')).slice(7, -5);
+const inc = await page.evaluate(id => window.bsb.review.analysis(id, 'income', {}), histId);
+assert.equal(inc.check.accounts, 5);
+assert.equal(inc.rows.find(r => r.key === 'R:gewinn').cy, inc.check.total);
+await page.locator('table.income tr[data-inc="S:personal"] ~ tr.inc-sub').first().click();
+await page.getByLabel('Bemerkung Bruttoergebnis nach Material- und Warenaufwand').fill('Marge stabil');
+await page.getByLabel('Bemerkung Bruttoergebnis nach Material- und Warenaufwand').press('Enter');
+await page.getByText('1 Bemerkung erfasst').waitFor();
+await page.screenshot({ path: `${shots}-5g-er-analyse.png` });
+step(`Erfolgsrechnung-Analyse: Staffel bis Jahresgewinn CHF ${inc.check.total / 100}, Bemerkung erfasst`);
+await page.getByRole('tab', { name: 'Konten', exact: true }).click();
 assert.equal(await page.locator('table.konten.er tr[data-konto]').count(), 5, 'Erfolgsrechnung: 5 Konten');
 await page.locator('table.konten.er tr.total-row', { hasText: 'Jahres' }).waitFor();
 await page.screenshot({ path: `${shots}-5f-erfolgsrechnung.png` });
