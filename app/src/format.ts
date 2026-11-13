@@ -25,3 +25,11 @@ export function date(iso: string | null | undefined): string {
 export function shortUser(u: string): string {
   return u.includes('@') ? u.split('@')[0]! : u;
 }
+
+/** Betrag aus einer Eingabe in Rappen: 1'234.50 · 1234,5 · -500 · (leer → null) */
+export function parseChf(input: string): number | null {
+  const s = input.trim().replace(/['’\s]/g, '').replace(',', '.');
+  if (!s) return null;
+  if (!/^-?\d+(\.\d{1,2})?$/.test(s)) return null;
+  return Math.round(Number(s) * 100);
+}

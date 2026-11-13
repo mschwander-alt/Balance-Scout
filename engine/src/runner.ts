@@ -25,9 +25,9 @@ export type Request =
   | { id: string; type: 'finalize'; snapshotPath: string; decisions: ReviewDecisions; targetDir: string | null; fileMode: FileMode; reportDir: string }
   | { id: string; type: 'groups' }
   /** Vertiefte Prüfung Sachanlagen: Anlagespiegel (optional als Excel speichern) */
-  | { id: string; type: 'accruals'; snapshotPath: string; groupOverrides?: GroupOverrides; accounts?: string[]; classes?: Record<string, 'vorjahr' | 'laufend' | 'unterjaehrig'>; notes?: Record<string, { text: string }>; note?: string; visum?: string; exportPath?: string }
+  | { id: string; type: 'accruals'; snapshotPath: string; groupOverrides?: GroupOverrides; manual?: Record<string, import('./analysis/accruals.js').ManualAccrual[]>; edits?: Record<string, { label?: string; cy?: number; py?: number }>; attachments?: { id: string; name: string; path: string; account: string; position?: string | null }[]; accounts?: string[]; classes?: Record<string, 'vorjahr' | 'laufend' | 'unterjaehrig'>; notes?: Record<string, { text: string }>; note?: string; visum?: string; exportPath?: string }
   | { id: string; type: 'income'; snapshotPath: string; groupOverrides?: GroupOverrides; base?: import('./analysis/incomeStatement.js').IncomeBase | null; placements?: import('./analysis/incomeStatement.js').IncomePlacements; rowBases?: Record<string, import('./analysis/incomeStatement.js').IncomeBase>; notes?: Record<string, { text: string; at?: string; visum?: string }>; exportPath?: string; visum?: string }
-  | { id: string; type: 'fixedAssets'; snapshotPath: string; groupOverrides?: GroupOverrides; accounts?: string[]; categories?: Record<string, string>; classes?: Record<string, 'zugang' | 'abgang' | 'abschreibung' | 'umbuchung'>; exportPath?: string; findings?: { text: string; status: 'offen' | 'erledigt' }[]; note?: string; visum?: string }
+  | { id: string; type: 'fixedAssets'; snapshotPath: string; groupOverrides?: GroupOverrides; manual?: Record<string, import('./analysis/fixedAssets.js').ManualFixedPosting[]>; accounts?: string[]; categories?: Record<string, string>; classes?: Record<string, 'zugang' | 'abgang' | 'abschreibung' | 'umbuchung'>; exportPath?: string; findings?: { text: string; status: 'offen' | 'erledigt' }[]; note?: string; visum?: string }
   /** ESTV-Kursliste (PDF) lesen */
   | { id: string; type: 'rates'; path: string }
   /** Vertiefte Prüfung Forderungen: Fälligkeitsanalyse (optional als Excel speichern) */
@@ -138,7 +138,9 @@ async function handle(req: Request): Promise<unknown> {
     const r = accrualsFor(res, req);
     if (req.exportPath && r.available) {
       const { accrualsWorkbook } = await import('./report/accrualsExcel.js');
-      await writeFile(req.exportPath, await accrualsWorkbook(r, { mandate: snap.input.mandate, closingDate: snap.input.closingDate ?? '', notes: req.notes, note: req.note, visum: req.visum }));
+      await writeFile(req.exportPath, await accrualsWorkbook(r, { mandate: snap.input.mandate, closingDate: snap.input.closingDate ?? '', notes: req.notes, note: req.note, visum: req.visum,
+        // Registernummern (z. B. G.100.1) entstehen erst beim Abschliessen
+        attachments: (req.attachments ?? []).map((f, i) => ({ register: `Beilage ${i + 1}`, name: f.name, account: f.account, position: f.position ?? null })) }));
     }
     return r;
   }

@@ -35,8 +35,11 @@ export interface ReviewDecisions {
   incomePlacements?: import('./analysis/incomeStatement.js').IncomePlacements;
   incomeRowBases?: Record<string, import('./analysis/incomeStatement.js').IncomeBase>;
   analyses?: {
-    accruals?: { accounts?: string[]; classes?: Record<string, 'vorjahr' | 'laufend' | 'unterjaehrig'>; notes?: Record<string, { text: string }>; note?: string; visum?: string };
-    fixedAssets?: { accounts?: string[]; categories?: Record<string, string>; classes?: Record<string, 'zugang' | 'abgang' | 'abschreibung' | 'umbuchung'>; findings: { text: string; status: 'offen' | 'erledigt' }[]; note?: string; visum?: string };
+    accruals?: { accounts?: string[]; classes?: Record<string, 'vorjahr' | 'laufend' | 'unterjaehrig'>; notes?: Record<string, { text: string }>; note?: string; visum?: string;
+      manual?: Record<string, import('./analysis/accruals.js').ManualAccrual[]>; edits?: Record<string, { label?: string; cy?: number; py?: number }>;
+      /** vom Prüfer angehängte Dateien (je Konto bzw. Position) – abgelegt als <Buchstabe>.100.1, .100.2 … */
+      attachments?: { id: string; name: string; path: string; account: string; position?: string | null }[] };
+    fixedAssets?: { manual?: Record<string, import('./analysis/fixedAssets.js').ManualFixedPosting[]>; accounts?: string[]; categories?: Record<string, string>; classes?: Record<string, 'zugang' | 'abgang' | 'abschreibung' | 'umbuchung'>; findings: { text: string; status: 'offen' | 'erledigt' }[]; note?: string; visum?: string };
     receivables?: { docId: string | null; docIds?: string[]; accounts?: string[]; termDays: number; rates: Record<string, number>; findings: { text: string; status: 'offen' | 'erledigt' }[]; visum?: string; note?: string; assigned?: Record<string, string[]> };
   };
 }
@@ -235,8 +238,8 @@ export async function placeReviewed(
     if (r.aging) {
       const { agingPptx } = await import('./report/agingPptx.js');
       const letter = decisions.groupLetters?.A12?.trim() ?? '';
-      const used = [...registers.values()].filter(x => letter && x.startsWith(`${letter}.`)).length;
-      const stem = `${letter ? `${letter}.${used + 1}_` : ''}Analyse_Fälligkeit`;
+      // Analyse des Prüfgebiets: feste Registernummer 100 (kollidiert nie mit den Belegen 1, 2, …)
+      const stem = `${letter ? `${letter}.100_` : ''}Analyse_Fälligkeit`;
       const meta = {
         mandate: res.input.mandate, closingDate: res.input.closingDate!, sourceFile: r.filename ?? '', balanceChf: r.balanceChf,
         balanceAccounts: r.balanceAccounts, findings: rcv.findings, visum: rcv.visum, note: rcv.note, letter: letter || undefined,
@@ -254,8 +257,7 @@ export async function placeReviewed(
     const r = fixedAssetsFor(res, fa);
     if (r.available && r.rows.length) {
       const letter = (decisions.groupLetters?.A21 || decisions.groupLetters?.A22 || '').trim();
-      const used = [...registers.values()].filter(x => letter && x.startsWith(`${letter}.`)).length;
-      const name = `${letter ? `${letter}.${used + 1}_` : ''}Analyse_Anlagespiegel.xlsx`;
+      const name = `${letter ? `${letter}.100_` : ''}Analyse_Anlagespiegel.xlsx`;
       plans.push({ docId: 'analyse:anlagen', absPath: '', relPath: name, sha256: '', assigned: true, targetName: name, generated: true,
         content: await fixedAssetsWorkbook(r, { mandate: res.input.mandate, closingDate: res.input.closingDate ?? '', findings: fa.findings, note: fa.note, visum: fa.visum, sources: res.ledger.sources }) });
     }
@@ -268,10 +270,20 @@ export async function placeReviewed(
     const r = accrualsFor(res, acr);
     if (r.available && r.accounts.length) {
       const letter = (decisions.groupLetters?.A15 || decisions.groupLetters?.P13 || '').trim();
-      const used = [...registers.values()].filter(x => letter && x.startsWith(`${letter}.`)).length;
-      const name = `${letter ? `${letter}.${used + 1}_` : ''}Analyse_Rechnungsabgrenzungen.xlsx`;
+      const name = `${letter ? `${letter}.100_` : ''}Analyse_Rechnungsabgrenzungen.xlsx`;
+      // Angehängte Dateien: <Buchstabe>.100.1, .100.2 … (immer als Kopie – das Original bleibt beim Prüfer)
+      const atts: { register: string; name: string; account: string; position?: string | null }[] = [];
+      for (const f of acr.attachments ?? []) {
+        let content: Buffer;
+        try { content = await readFile(f.path); } catch { continue; } // Datei inzwischen verschoben/gelöscht
+        const n = atts.length + 1;
+        const register = letter ? `${letter}.100.${n}` : `Beilage ${n}`;
+        const target = `${letter ? `${letter}.100.${n}` : `Beilage_${n}`}_${f.name}`;
+        atts.push({ register, name: f.name, account: f.account, position: f.position ?? null });
+        plans.push({ docId: `analyse:abgrenzungen:beilage:${f.id}`, absPath: f.path, relPath: target, sha256: '', assigned: true, targetName: target, generated: true, content });
+      }
       plans.push({ docId: 'analyse:abgrenzungen', absPath: '', relPath: name, sha256: '', assigned: true, targetName: name, generated: true,
-        content: await accrualsWorkbook(r, { mandate: res.input.mandate, closingDate: res.input.closingDate ?? '', notes: acr.notes, note: acr.note, visum: acr.visum }) });
+        content: await accrualsWorkbook(r, { mandate: res.input.mandate, closingDate: res.input.closingDate ?? '', notes: acr.notes, note: acr.note, visum: acr.visum, attachments: atts }) });
     }
   }
   // Analyse der Erfolgsrechnung: als Nachweis, sobald Bemerkungen erfasst sind

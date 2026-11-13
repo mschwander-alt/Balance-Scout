@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useState } from 'react';
 import { bsb } from '../bridge';
-import { chf } from '../format';
+import { chf, parseChf } from '../format';
 import { AutoTextarea, Modal, Spinner, WarnIcon, useToast } from '../components/ui';
 import type { FixedAddition, FixedAssetsDecision, FixedAssetsResult, MoveClass, ReviewDecisions } from '../../electron/shared';
 
@@ -19,15 +19,17 @@ export function FixedAssets({ historyId, decisions, update }: { historyId: strin
   const [newFinding, setNewFinding] = useState('');
   // Zugangsliste: null = geschlossen, '' = alle Konten, sonst Anlagekonto
   const [additionsOf, setAdditionsOf] = useState<string | null>(null);
+  // neue manuelle Buchung (je aufgeklapptem Konto)
+  const [neu, setNeu] = useState({ date: '', text: '', amount: '', cls: 'zugang' as MoveClass });
 
   useEffect(() => {
     setBusy(true);
     const t = setTimeout(() => {
-      bsb().review.fixedAssets(historyId, { accounts: params.accounts, categories: params.categories, classes: params.classes, groupOverrides: decisions.groupOverrides }).then(setR, e => toast('error', (e as Error).message)).finally(() => setBusy(false));
+      bsb().review.fixedAssets(historyId, { accounts: params.accounts, categories: params.categories, classes: params.classes, manual: params.manual, groupOverrides: decisions.groupOverrides }).then(setR, e => toast('error', (e as Error).message)).finally(() => setBusy(false));
     }, r ? 250 : 0);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [historyId, params.accounts, params.categories, params.classes, decisions.groupOverrides]);
+  }, [historyId, params.accounts, params.categories, params.classes, params.manual, decisions.groupOverrides]);
   useEffect(() => {
     if (started) update(d => ({ ...d, analyses: { ...d.analyses, fixedAssets: params } }));
   }, [started, params, update]);
@@ -114,17 +116,33 @@ export function FixedAssets({ historyId, decisions, update }: { historyId: strin
                               {x.postings.map(pz => (
                                 <tr key={pz.key}>
                                   {x.wbAccount && <td>{pz.key.split('|')[0]}</td>}
-                                  <td>{pz.date.split('-').reverse().join('.')}</td><td title={pz.why}>{pz.text}</td><td>{pz.contra ?? ''}</td>
+                                  <td>{pz.date.split('-').reverse().join('.')}</td><td title={pz.why}>{pz.text}{pz.manual && <span className="flag note" style={{ marginLeft: 6 }}>manuell</span>}</td><td>{pz.contra ?? ''}</td>
                                   <td className="num">{chf(pz.amount)}</td>
                                   <td>
                                     <select className="assign" value={pz.cls} onChange={e => setParams(p => ({ ...p, classes: { ...p.classes, [pz.key]: e.target.value as MoveClass } }))}>
                                       {CLS.map(([k, l]) => <option key={k} value={k}>{l}{k === pz.auto ? ' (Vorschlag)' : ''}</option>)}
                                     </select>
                                     {pz.cls !== pz.auto && <span className="manual"> ✓ manuell</span>}
+                                    {pz.manual && <button className="icon-btn" aria-label={`Manuelle Buchung löschen ${pz.text}`} title="Manuelle Buchung löschen" onClick={() => setParams(p => ({ ...p, manual: { ...p.manual, [x.accountNumber]: (p.manual?.[x.accountNumber] ?? []).filter(m => `${x.accountNumber}|M|${m.id}` !== pz.key) } }))}>✕</button>}
                                   </td>
                                 </tr>
                               ))}
                               {!x.postings.length && <tr><td colSpan={6} className="muted">Keine Buchungen im Geschäftsjahr.</td></tr>}
+                              <tr className="fa-new">
+                                {x.wbAccount && <td>{x.accountNumber}</td>}
+                                <td><input type="date" aria-label="Datum manuelle Buchung" value={neu.date} onChange={e => setNeu(n => ({ ...n, date: e.target.value }))} /></td>
+                                <td><input placeholder="+ Buchung erfassen (Text, z. B. fehlende Aktivierung)" aria-label="Text manuelle Buchung" value={neu.text} onChange={e => setNeu(n => ({ ...n, text: e.target.value }))} /></td>
+                                <td className="small muted">manuell</td>
+                                <td className="num"><input className="w-sm num" placeholder="+/- 0.00" aria-label="Betrag manuelle Buchung" value={neu.amount} onChange={e => setNeu(n => ({ ...n, amount: e.target.value }))} /></td>
+                                <td>
+                                  <select className="assign" aria-label="Klassierung manuelle Buchung" value={neu.cls} onChange={e => setNeu(n => ({ ...n, cls: e.target.value as MoveClass }))}>{CLS.map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select>
+                                  <button className="btn btn-sm" disabled={!neu.date || !neu.text.trim() || !parseChf(neu.amount)} onClick={() => {
+                                    const amount = parseChf(neu.amount)!;
+                                    setParams(p => ({ ...p, manual: { ...p.manual, [x.accountNumber]: [...(p.manual?.[x.accountNumber] ?? []), { id: Math.random().toString(36).slice(2, 10), date: neu.date, text: neu.text.trim(), amount, cls: neu.cls }] } }));
+                                    setNeu({ date: '', text: '', amount: '', cls: 'zugang' });
+                                  }}>+ Hinzufügen</button>
+                                </td>
+                              </tr>
                             </tbody>
                           </table>
                         </td></tr>

@@ -18,7 +18,12 @@ export interface AccrualsParams {
   accounts?: string[] | null;
   /** Klassierung einzelner Buchungen (Schlüssel `${konto}|${seite}|${zeile}`) */
   classes?: Record<string, AccrualClass>;
+  /** Vom Prüfer erfasste zusätzliche Positionen je Konto (Beträge in Rappen, positiv = in Richtung des Kontos) */
+  manual?: Record<string, ManualAccrual[]>;
+  /** Korrekturen bestehender Positionen (Schlüssel `${konto}|${positionsschlüssel}`) */
+  edits?: Record<string, { label?: string; cy?: Cents; py?: Cents }>;
 }
+export interface ManualAccrual { id: string; label: string; contra?: string | null; cy: Cents; py: Cents }
 export interface AccrualPosting extends LedgerPosting { key: string; cls: AccrualClass; auto: AccrualClass; why: string }
 export interface AccrualPosition {
   key: string;
@@ -28,7 +33,9 @@ export interface AccrualPosition {
   /** positiv = Abgrenzung in Richtung des Kontos (aktiv: Guthaben, passiv: Schuld) */
   cy: Cents; py: Cents; diff: Cents;
   /** nur in einem Jahr vorhanden */
-  status: 'beide' | 'neu' | 'entfallen';
+  status: 'beide' | 'neu' | 'entfallen' | 'manuell';
+  /** vom Prüfer korrigiert (Bezeichnung bzw. Betrag) */
+  edited?: boolean;
   postings: string[];
 }
 export interface AccrualAccount {
@@ -171,7 +178,19 @@ export function accrualsFor(res: ResLike, p: AccrualsParams = {}): AccrualsResul
       positions.push({ key: it.keys[0]!, label: cleanLabel(it.text), contra: it.contra ?? q?.contra ?? null, cy: it.amount, py, diff: it.amount - py, status: q ? 'beide' : 'neu', postings: [...it.keys, ...(q?.keys ?? [])] });
     }
     for (const q of prev.filter(x => !used.has(x))) positions.push({ key: q.keys[0]!, label: cleanLabel(q.text), contra: q.contra, cy: 0, py: q.amount, diff: -q.amount, status: 'entfallen', postings: q.keys });
+    // Korrekturen des Prüfers an bestehenden Positionen
+    for (const x of positions) {
+      const e = p.edits?.[`${num}|${x.key}`];
+      if (!e) continue;
+      if (e.label !== undefined && e.label.trim()) x.label = e.label.trim();
+      if (e.cy !== undefined) x.cy = e.cy;
+      if (e.py !== undefined) x.py = e.py;
+      x.diff = x.cy - x.py;
+      x.edited = true;
+    }
     positions.sort((x, y) => y.cy - x.cy || y.py - x.py);
+    // zusätzliche Positionen des Prüfers (am Schluss, in Erfassungsreihenfolge)
+    for (const m of p.manual?.[num] ?? []) positions.push({ key: `M:${m.id}`, label: m.label, contra: m.contra ?? null, cy: m.cy, py: m.py, diff: m.cy - m.py, status: 'manuell', postings: [] });
     const totals = { cy: positions.reduce((a, x) => a + x.cy, 0), py: positions.reduce((a, x) => a + x.py, 0), diff: 0 };
     totals.diff = totals.cy - totals.py;
     const opening = s * (la.opening ?? 0);
@@ -179,8 +198,8 @@ export function accrualsFor(res: ResLike, p: AccrualsParams = {}): AccrualsResul
     const tbBalance = tb ? s * tb.balanceCurrentYear : null;
     const unexplained = { py: opening - totals.py, cy: closing - totals.cy };
     const flags: string[] = [];
-    if (Math.abs(unexplained.py) > 1) flags.push(`Vorjahr: Summe der Auflösungen CHF ${fmt(totals.py)} ≠ Saldovortrag CHF ${fmt(opening)} (Differenz ${fmt(unexplained.py)}) – Klassierung der Buchungen prüfen.`);
-    if (Math.abs(unexplained.cy) > 1) flags.push(`Laufendes Jahr: Summe der Abgrenzungen CHF ${fmt(totals.cy)} ≠ Schlusssaldo CHF ${fmt(closing)} (Differenz ${fmt(unexplained.cy)}) – Klassierung der Buchungen prüfen.`);
+    if (Math.abs(unexplained.py) > 1) flags.push(`Vorjahr: Summe der Auflösungen CHF ${fmt(totals.py)} ≠ Saldovortrag CHF ${fmt(opening)} (Differenz ${fmt(unexplained.py)}) – Klassierung der Buchungen bzw. manuelle Positionen prüfen.`);
+    if (Math.abs(unexplained.cy) > 1) flags.push(`Laufendes Jahr: Summe der Abgrenzungen CHF ${fmt(totals.cy)} ≠ Schlusssaldo CHF ${fmt(closing)} (Differenz ${fmt(unexplained.cy)}) – Klassierung der Buchungen bzw. manuelle Positionen prüfen.`);
     if (tbBalance !== null && Math.abs(tbBalance - closing) > 1) flags.push(`Schlusssaldo Kontoblatt CHF ${fmt(closing)} ≠ Saldobilanz CHF ${fmt(tbBalance)}.`);
     if (!la.consistent) flags.push('Kontoblatt: Saldovortrag + Buchungen ≠ Schlusssaldo.');
     if (postings.some(x => /nie auf null/.test(x.why) && x.cls === x.auto)) flags.push('Konto steht im Jahr nie auf null – Auflösung und Bildung nach Datum angenommen, bitte prüfen.');

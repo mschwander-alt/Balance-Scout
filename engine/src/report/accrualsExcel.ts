@@ -8,7 +8,7 @@ const CHF = "#,##0.00;[Red]-#,##0.00";
 const CLS: Record<string, string> = { vorjahr: 'Vorjahr (Auflösung)', laufend: 'laufendes Jahr (Bildung)', unterjaehrig: 'unterjährig' };
 
 /** Vorjahresvergleich der Rechnungsabgrenzungen (je Konto ein Block) als Excel */
-export async function accrualsWorkbook(r: AccrualsResult, m: { mandate: string; closingDate: string; notes?: Record<string, { text: string }>; note?: string; visum?: string }): Promise<Buffer> {
+export async function accrualsWorkbook(r: AccrualsResult, m: { mandate: string; closingDate: string; notes?: Record<string, { text: string }>; note?: string; visum?: string; attachments?: { register: string; name: string; account: string; position?: string | null }[] }): Promise<Buffer> {
   const wb = new ExcelJS.Workbook();
   wb.creator = 'Balance Scout';
   const ws = wb.addWorksheet('Rechnungsabgrenzungen', { pageSetup: { orientation: 'landscape', paperSize: 9, fitToPage: true, fitToWidth: 1, fitToHeight: 0 } });
@@ -32,7 +32,9 @@ export async function accrualsWorkbook(r: AccrualsResult, m: { mandate: string; 
     row++;
     const first = row;
     for (const x of a.positions) {
-      ws.getRow(row).values = [x.label, x.contra ?? '', x.cy / 100, x.py / 100, null, x.status === 'neu' ? 'neu' : x.status === 'entfallen' ? 'entfallen' : '', m.notes?.[`${a.accountNumber}|${x.key}`]?.text ?? ''];
+      const att = (m.attachments ?? []).filter(f => f.account === a.accountNumber && f.position === x.key).map(f => f.register);
+      const remark = [m.notes?.[`${a.accountNumber}|${x.key}`]?.text ?? '', att.length ? `Beleg ${att.join(', ')}` : ''].filter(Boolean).join(' · ');
+      ws.getRow(row).values = [x.label, x.contra ?? '', x.cy / 100, x.py / 100, null, x.status === 'beide' ? (x.edited ? 'korrigiert' : '') : x.status + (x.edited ? ', korrigiert' : ''), remark];
       ws.getCell(row, 5).value = { formula: `C${row}-D${row}`, result: x.diff / 100 };
       for (const c of [3, 4, 5]) ws.getCell(row, c).numFmt = CHF;
       ws.getCell(row, 3).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: CUR_FILL } };
@@ -60,6 +62,8 @@ export async function accrualsWorkbook(r: AccrualsResult, m: { mandate: string; 
       ws.getCell(row, 1).font = { italic: true, color: { argb: GREY } };
       row++;
     }
+    const general = (m.attachments ?? []).filter(f => f.account === a.accountNumber && !f.position);
+    if (general.length) { ws.getCell(row, 1).value = `Beilagen zum Konto: ${general.map(f => `${f.register} ${f.name}`).join(' · ')}`; ws.getCell(row, 1).font = { italic: true }; ws.mergeCells(row, 1, row, 7); row++; }
     for (const f of a.flags) { ws.getCell(row, 1).value = `⚠ ${f}`; ws.getCell(row, 1).font = { color: { argb: 'FFB3261E' } }; ws.mergeCells(row, 1, row, 7); row++; }
     row += 2;
   }

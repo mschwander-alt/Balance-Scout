@@ -121,7 +121,7 @@ export interface ReviewDecisions {
   analyses?: { receivables?: ReceivablesDecision; fixedAssets?: FixedAssetsDecision; accruals?: AccrualsDecision };
 }
 export type MoveClass = 'zugang' | 'abgang' | 'abschreibung' | 'umbuchung';
-export interface FixedAssetsDecision { accounts?: string[]; categories?: Record<string, string>; classes?: Record<string, MoveClass>; findings: { text: string; status: 'offen' | 'erledigt' }[]; note?: string; visum?: string }
+export interface FixedAssetsDecision { manual?: Record<string, { id: string; date: string; text: string; amount: number; cls: MoveClass }[]>; accounts?: string[]; categories?: Record<string, string>; classes?: Record<string, MoveClass>; findings: { text: string; status: 'offen' | 'erledigt' }[]; note?: string; visum?: string }
 export interface FixedAssetsResult {
   available: boolean; reason?: string;
   candidates: { accountNumber: string; accountName: string; balance: number; suggested: boolean; inLedger: boolean; wbFor?: string | null }[];
@@ -132,7 +132,7 @@ export interface FixedAssetsResult {
     kumOpening: number; kumDisposals: number; kumOther: number; kumClosing: number; linearRate: number | null;
     tbBalance: number | null; tbDiff: number | null; category: string | null; categoryLabel: string | null; estvRate: number | null; effectiveRate: number | null;
     flags: string[]; consistent: boolean;
-    postings: { key: string; date: string; text: string; contra: string | null; amount: number; cls: MoveClass; auto: MoveClass; why: string; page: number; lineNo: number }[];
+    postings: { key: string; date: string; text: string; contra: string | null; amount: number; cls: MoveClass; auto: MoveClass; why: string; page: number; lineNo: number; manual?: boolean }[];
   }[];
   totals: { opening: number; additions: number; disposals: number; depreciation: number; transfers: number; closing: number; tbBalance: number };
   categories: { key: string; label: string; rate: number }[];
@@ -268,7 +268,7 @@ export interface AnalysisResults { income: IncomeAnalysis; accruals: AccrualsRes
 // ---------------------------------------------------------------- Rechnungsabgrenzungen (engine/src/analysis/accruals.ts)
 export type AccrualClass = 'vorjahr' | 'laufend' | 'unterjaehrig';
 export interface AccrualPosting { key: string; date: string; text: string; contra: string | null; docNo: string | null; amount: number; cls: AccrualClass; auto: AccrualClass; why: string }
-export interface AccrualPosition { key: string; label: string; contra: string | null; cy: number; py: number; diff: number; status: 'beide' | 'neu' | 'entfallen'; postings: string[] }
+export interface AccrualPosition { key: string; label: string; contra: string | null; cy: number; py: number; diff: number; status: 'beide' | 'neu' | 'entfallen' | 'manuell'; edited?: boolean; postings: string[] }
 export interface AccrualAccount {
   accountNumber: string; accountName: string; side: 'aktiv' | 'passiv'; opening: number; closing: number; tbBalance: number | null;
   positions: AccrualPosition[]; totals: { cy: number; py: number; diff: number }; unexplained: { cy: number; py: number }; intraYear: number; postings: AccrualPosting[]; flags: string[];
@@ -278,4 +278,13 @@ export interface AccrualsResult {
   candidates: { accountNumber: string; accountName: string; balance: number; side: 'aktiv' | 'passiv'; suggested: boolean; inLedger: boolean }[];
   accounts: AccrualAccount[]; totals: { aktiv: { cy: number; py: number }; passiv: { cy: number; py: number } }; suggestions: string[];
 }
-export interface AccrualsDecision { accounts?: string[]; classes?: Record<string, AccrualClass>; notes?: Record<string, { text: string }>; note?: string; visum?: string }
+export interface AccrualsDecision {
+  accounts?: string[]; classes?: Record<string, AccrualClass>; notes?: Record<string, { text: string }>; note?: string; visum?: string;
+  /** zusätzliche Positionen des Prüfers je Konto (Rappen, positiv = in Richtung des Kontos) */
+  manual?: Record<string, { id: string; label: string; contra?: string | null; cy: number; py: number }[]>;
+  /** Korrekturen bestehender Positionen (Schlüssel `${konto}|${position}`) */
+  edits?: Record<string, { label?: string; cy?: number; py?: number }>;
+  /** angehängte Dateien (je Konto bzw. Position) – beim Abschluss <Buchstabe>.100.1, .100.2 … */
+  attachments?: AccrualAttachment[];
+}
+export interface AccrualAttachment { id: string; name: string; path: string; account: string; position?: string | null }

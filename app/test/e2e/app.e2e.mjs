@@ -3,7 +3,7 @@
  * Aufruf: xvfb-run -a node test/e2e/app.e2e.mjs
  */
 import { _electron as electron } from 'playwright-core';
-import { mkdtempSync, readdirSync, existsSync, readFileSync } from 'node:fs';
+import { mkdtempSync, readdirSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import assert from 'node:assert/strict';
@@ -12,6 +12,10 @@ const root = path.resolve(import.meta.dirname, '..', '..');
 const FIX = path.resolve(root, '..', 'engine', 'test', 'fixtures', 'alpen');
 const target = mkdtempSync(path.join(tmpdir(), 'bsb-ziel-'));
 const userData = mkdtempSync(path.join(tmpdir(), 'bsb-user-'));
+// Beleg, der im Prüfgebiet Rechnungsabgrenzungen angehängt wird
+const attachDir = mkdtempSync(path.join(tmpdir(), 'bsb-anhang-'));
+const attachFile = path.join(attachDir, 'Police_SwissLife_2026.pdf');
+writeFileSync(attachFile, '%PDF-1.4\n% Testbeleg\n');
 const shots = path.join(tmpdir(), 'bsb-shots');
 const t0 = Date.now();
 const step = m => console.log(`[${((Date.now() - t0) / 1000).toFixed(1)}s] ${m}`);
@@ -22,7 +26,7 @@ const app = await electron.launch({
     ...process.env,
     BSB_USER_DATA: userData,
     BSB_CLOUD_ROOTS: path.join(FIX, 'Kunde_Upload'),
-    BSB_E2E_PICKS: JSON.stringify({ trialBalance: path.join(FIX, 'Saldobilanz_2025.xlsx'), folders: [path.join(FIX, 'Kunde_Upload')], files: [], targetDir: target, rates: path.resolve(root, '..', 'engine', 'test', 'fixtures', 'fx', 'ESTV_Kursliste_2025.pdf') }),
+    BSB_E2E_PICKS: JSON.stringify({ trialBalance: path.join(FIX, 'Saldobilanz_2025.xlsx'), folders: [path.join(FIX, 'Kunde_Upload')], files: [attachFile], targetDir: target, rates: path.resolve(root, '..', 'engine', 'test', 'fixtures', 'fx', 'ESTV_Kursliste_2025.pdf') }),
   },
 });
 // Ausgaben von App und Prüf-Engine mitschreiben – bei einem Fehler werden sie gezeigt
@@ -390,6 +394,18 @@ await page.locator('tr[data-anlage="1500"]').click();
 await page.locator('table.brutto').waitFor();
 assert.match(await page.locator('table.brutto').innerText(), /Kum\. Abschreibungen \(1501\)[\s\S]*-323'500\.00/);
 await page.screenshot({ path: `${shots}-9-anlagen-bc.png` });
+// Manuelle Buchung im Anlagespiegel: fehlende Aktivierung als Zugang, danach wieder gelöscht
+const addTotal0 = await page.locator('table.anlagen .total-row td').nth(2).innerText();
+await page.getByLabel('Datum manuelle Buchung').fill('2025-11-30');
+await page.getByLabel('Text manuelle Buchung').fill('Werkzeugmaschine (nicht aktiviert)');
+await page.getByLabel('Betrag manuelle Buchung').fill("2'500");
+await page.locator('tr.fa-new').getByRole('button', { name: '+ Hinzufügen' }).click();
+await page.locator('table.anlagen td[title="manuell erfasst (Prüfer)"]', { hasText: 'Werkzeugmaschine (nicht aktiviert)' }).waitFor();
+const addTotal1 = await page.locator('table.anlagen .total-row td').nth(2).innerText();
+assert.notEqual(addTotal1, addTotal0, `Zugänge total ${addTotal0} → ${addTotal1}`);
+await page.getByLabel('Manuelle Buchung löschen Werkzeugmaschine (nicht aktiviert)').click();
+await page.locator('table.anlagen td[title="manuell erfasst (Prüfer)"]', { hasText: 'Werkzeugmaschine (nicht aktiviert)' }).waitFor({ state: 'detached' });
+step(`Anlagespiegel: manuelle Buchung erfasst (Zugänge ${addTotal0} → ${addTotal1}) und gelöscht`);
 step('Business Central: Wertberichtigungen zugeordnet, Brutto-Anlagespiegel, Abschreibungen = Aufwand');
 // Zugänge anklicken → Zugangsliste (Summe = Total Zugänge)
 const totAdd = fb.additionsList.reduce((x, a) => x + a.amount, 0);
@@ -415,12 +431,27 @@ await page.getByRole('button', { name: 'Vorjahresvergleich erstellen' }).click()
 const acr = page.locator('[data-abgrenzung="1300"]');
 await acr.waitFor();
 assert.match(await acr.locator('tfoot').innerText(), /139'514\.45[\s\S]*104'811\.00/);
-assert.equal(await acr.locator('tbody tr').count(), 14);
+assert.equal(await acr.locator('tbody tr:not(.acr-new)').count(), 14);
 await acr.getByLabel('Bemerkung Swiss Life, BVG Kader 07.-12.').fill('Prämienerhöhung lt. Police 2026');
 await acr.getByLabel('Bemerkung Swiss Life, BVG Kader 07.-12.').press('Enter');
 await page.screenshot({ path: `${shots}-9c-abgrenzungen.png` });
 const acrRes = await page.evaluate(id => window.bsb.review.analysis(id, 'accruals', {}), rap.historyId);
 assert.deepEqual(acrRes.accounts.map(a => [a.accountNumber, a.totals.cy, a.totals.py]), [['1300', 13951445, 10481100], ['2300', 3470000, 1850000]]);
+// Manuelle Eingriffe: Position korrigieren, Position hinzufügen, Beleg anhängen
+await acr.getByLabel('Korrigieren Helvetia, UVG 07.-12.').click();
+await acr.getByLabel('Betrag laufendes Jahr').fill("10'500.00");
+await acr.getByRole('button', { name: 'Übernehmen' }).click();
+await acr.locator('tr.acr-edited', { hasText: 'Helvetia, UVG 07.-12.' }).waitFor();
+await acr.getByLabel('Neue Position 1300').fill('Lizenz Mirus 2. HJ (nicht gebucht)');
+await acr.getByLabel('Neue Position Gegenkonto').fill('6560');
+await acr.getByLabel('Neue Position laufendes Jahr').fill('1200');
+await acr.getByRole('button', { name: '+ Hinzufügen' }).click();
+await acr.locator('tr.acr-manuell', { hasText: 'Lizenz Mirus 2. HJ' }).waitFor();
+assert.match(await acr.locator('tr.acr-unexplained').innerText(), /-1'700\.00/, 'Differenz zum Saldo: +500 Korrektur +1200 manuell');
+await acr.getByLabel('Anhängen Swiss Life, BVG Kader 07.-12.').click();
+await acr.locator('.att', { hasText: 'Police_SwissLife_2026.pdf' }).waitFor();
+await page.screenshot({ path: `${shots}-9d-abgrenzungen-manuell.png` });
+step('Rechnungsabgrenzungen manuell: Position korrigiert, Position hinzugefügt, Beleg angehängt');
 step('Rechnungsabgrenzungen: Vorjahresvergleich 139\'514.45 / 104\'811.00, 12 Positionen zugeordnet, 2 neu');
 
 // Bilanz und Erfolgsrechnung getrennt, mit Zwischensummen: Vorschau über die Schnittstelle

@@ -128,3 +128,57 @@ describe('Durchlauf mit Kontoblättern (Excel, ein Blatt je Konto)', () => {
     expect(r.accounts[1]!.positions.find(x => x.status === 'neu')!.label).toBe('TP Ferienguthaben');
   }, 60_000);
 });
+
+describe('Manuelle Eingriffe des Prüfers', () => {
+  it('zusätzliche Position, Korrektur einer Position; Total und „nicht aufgeschlüsselt“ folgen', () => {
+    const r0 = accrualsFor(res);
+    const swiss = r0.accounts[0]!.positions.find(x => x.label.startsWith('Swiss Life'))!;
+    const r = accrualsFor(res, {
+      manual: { '1300': [{ id: 'm1', label: 'Lizenz Mirus (nicht gebucht)', contra: '6560', cy: 400_000, py: 0 }] },
+      edits: { [`1300|${swiss.key}`]: { label: 'Swiss Life BVG Kader 2. HJ', cy: 7_500_000 } },
+    });
+    const a = r.accounts[0]!;
+    expect(a.positions.at(-1)).toMatchObject({ key: 'M:m1', label: 'Lizenz Mirus (nicht gebucht)', cy: 400_000, status: 'manuell', diff: 400_000 });
+    expect(a.positions.find(x => x.key === swiss.key)).toMatchObject({ label: 'Swiss Life BVG Kader 2. HJ', cy: 7_500_000, py: 4_495_000, diff: 3_005_000, edited: true });
+    expect(a.totals.cy).toBe(r0.accounts[0]!.totals.cy + 400_000 - 110_000);
+    expect(a.unexplained.cy).toBe(-290_000);
+    expect(a.flags.join(' ')).toMatch(/manuelle Positionen prüfen/);
+  });
+});
+
+describe('Abschluss: Aufstellung <Buchstabe>.100, Anhänge <Buchstabe>.100.1 …', () => {
+  it('legt Excel und Anhänge mit fortlaufender Nummer ab, Original des Anhangs bleibt', async () => {
+    const path = (await import('node:path')).default;
+    const { mkdtemp, writeFile, readdir } = await import('node:fs/promises');
+    const { existsSync } = await import('node:fs');
+    const { tmpdir } = await import('node:os');
+    const { runAudit, finalizeAudit, defaultGroupLetters } = await import('../src/index.js');
+    const DIR = path.resolve(import.meta.dirname, 'fixtures', 'rap');
+    const tmp = await mkdtemp(path.join(tmpdir(), 'bs-rap-'));
+    const pol = path.join(tmp, 'Police_SwissLife.pdf');
+    const ver = path.join(tmp, 'Vertrag_Abacus.pdf');
+    await writeFile(pol, '%PDF-1.4 Police'); await writeFile(ver, '%PDF-1.4 Vertrag');
+    const run = await runAudit({ mandate: 'Muster Treuhand AG', closingDate: '2026-06-30', trialBalancePath: path.join(DIR, 'Saldobilanz_2026.xlsx'), evidencePaths: [path.join(DIR, 'Saldobilanz_2026.xlsx')], targetDir: null, fileMode: 'none', ledgerPaths: [path.join(DIR, 'Kontoblaetter_2026.xlsx')] });
+    const letters = defaultGroupLetters();
+    const swiss = accrualsFor(run).accounts[0]!.positions.find(x => x.label.startsWith('Swiss Life'))!;
+    const target = path.join(tmp, 'Ablage');
+    const out = await finalizeAudit(run, { groupLetters: letters, analyses: { accruals: { attachments: [
+      { id: 'a1', name: 'Police_SwissLife.pdf', path: pol, account: '1300', position: swiss.key },
+      { id: 'a2', name: 'Vertrag_Abacus.pdf', path: ver, account: '1300' },
+      { id: 'a3', name: 'weg.pdf', path: path.join(tmp, 'gibt-es-nicht.pdf'), account: '1300' },
+    ] } } }, { targetDir: target, fileMode: 'move', reportDir: tmp });
+    const L = letters.A15 || letters.P13; // wie beim Abschluss: Buchstabe der aktiven, sonst der passiven Abgrenzungen
+    const files = (await readdir(path.join(target, '01_Zugeordnet'))).filter(f => f.startsWith(`${L}.100`)).sort();
+    expect(files).toEqual([`${L}.100.1_Police_SwissLife.pdf`, `${L}.100.2_Vertrag_Abacus.pdf`, `${L}.100_Analyse_Rechnungsabgrenzungen.xlsx`]);
+    expect(existsSync(pol) && existsSync(ver)).toBe(true); // Anhänge immer kopiert
+    expect(out.result.analysisFiles?.map(f => f.name)).toContain(`${L}.100_Analyse_Rechnungsabgrenzungen.xlsx`);
+    const ExcelJS = (await import('exceljs')).default;
+    const wb = new ExcelJS.Workbook();
+    await wb.xlsx.readFile(path.join(target, '01_Zugeordnet', `${L}.100_Analyse_Rechnungsabgrenzungen.xlsx`));
+    const ws = wb.getWorksheet('Rechnungsabgrenzungen')!;
+    const vals: string[] = [];
+    ws.eachRow(r => vals.push(r.values ? (r.values as unknown[]).map(v => String(v ?? '')).join('|') : ''));
+    expect(vals.join('\n')).toMatch(new RegExp(`Swiss Life, BVG Kader[^\\n]*Beleg ${L}\\.100\\.1`));
+    expect(vals.join('\n')).toContain(`Beilagen zum Konto: ${L}.100.2 Vertrag_Abacus.pdf`);
+  }, 60_000);
+});

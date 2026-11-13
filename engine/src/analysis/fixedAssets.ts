@@ -38,9 +38,12 @@ export interface FixedAssetsParams {
   categories?: Record<string, string>;
   /** Klassierung einzelner Buchungen (Schlüssel `${konto}|${seite}|${zeile}`) */
   classes?: Record<string, MoveClass>;
+  /** Vom Prüfer erfasste Buchungen je Anlagekonto (z. B. fehlende Aktivierung, Korrektur), Betrag + Soll / − Haben */
+  manual?: Record<string, ManualFixedPosting[]>;
 }
+export interface ManualFixedPosting { id: string; date: string; text: string; amount: Cents; cls: MoveClass }
 
-export interface FixedPosting extends LedgerPosting { key: string; cls: MoveClass; auto: MoveClass; why: string }
+export interface FixedPosting extends LedgerPosting { key: string; cls: MoveClass; auto: MoveClass; why: string; /** vom Prüfer erfasst */ manual?: boolean }
 export interface FixedAssetRow {
   accountNumber: string; accountName: string;
   /** Buchwerte (bei indirekter Methode: Anlagekonto + Wertberichtigungskonto) */
@@ -181,6 +184,13 @@ export function fixedAssetsFor(
     const wbNum = wbOf.get(num) ?? null;
     const wb = wbNum ? ledgerBy.get(norm(wbNum)) : undefined;
     const ap = mk(num, la, 'asset', wbNum, wb?.postings ?? []);
+    // manuelle Buchungen des Prüfers: wie Buchungen des Anlagekontos (fliessen in Summen, Zugangsliste und Endbestand)
+    const man = (p.manual?.[num] ?? []).map((m, i): FixedPosting => ({
+      date: m.date, text: m.text, contra: null, docNo: null, amount: m.amount, balance: null, page: 0, lineNo: i,
+      key: `${num}|M|${m.id}`, cls: m.cls, auto: m.cls, why: 'manuell erfasst (Prüfer)', manual: true,
+    }));
+    ap.push(...man);
+    const manualSum = man.reduce((x, m) => x + m.amount, 0);
     const wp = wb ? mk(wbNum!, wb, 'wb', num, la.postings) : [];
     const sum = (list: FixedPosting[], c: MoveClass) => list.filter(x => x.cls === c).reduce((s2, x) => s2 + x.amount, 0);
     // Anschaffungswerte (Anlagekonto) und kumulierte Abschreibungen (Wertberichtigungskonto bzw. bei direkter Methode die Abschreibung des Jahres)
@@ -199,7 +209,7 @@ export function fixedAssetsFor(
     const transfers = awTransfers + sum(wp, 'umbuchung');
     const opening = awOpening + kumOpening;
     const disposals = awDisposals - kumDisposals;
-    const closing = (la.closing ?? awOpening) + (wb ? wb.closing ?? kumOpening : 0);
+    const closing = (la.closing ?? awOpening) + manualSum + (wb ? wb.closing ?? kumOpening : 0);
     const postings = [...ap, ...wp].sort((x, y) => x.date.localeCompare(y.date));
     const catKey = p.categories?.[num] ?? categoryOf(la.accountName || tb?.accountName || '')?.key ?? null;
     const cat = ESTV_CATEGORIES.find(c => c.key === catKey) ?? null;
@@ -221,6 +231,7 @@ export function fixedAssetsFor(
     const tbDiff = tbBalance !== null ? closing - tbBalance : null;
     if (tbDiff) flags.push(`Buchwert laut Kontoblättern weicht von der Saldobilanz ab (CHF ${fmt(tbDiff)}).`);
     if (!la.consistent || (wb && !wb.consistent)) flags.push('Kontoblatt: Anfangssaldo + Buchungen ≠ Endsaldo.');
+    if (man.length) flags.push(`${man.length} manuelle Buchung${man.length > 1 ? 'en' : ''} des Prüfers (CHF ${fmt(manualSum)}) – Endbestand weicht entsprechend vom Kontoblatt ab.`);
     if (Math.abs(awClosing + kumClosing - closing) > 1) flags.push('Nicht alle Buchungen eindeutig zugeordnet – Klassierung prüfen.');
     rows.push({
       accountNumber: num, accountName: tb?.accountName ?? la.accountName, opening, additions, disposals, depreciation, transfers, closing,
@@ -250,7 +261,7 @@ export function fixedAssetsFor(
     suggestions.push(`Abschreibungen laut Anlagespiegel CHF ${fmt(totals.depreciation)} ≠ Abschreibungsaufwand laut Saldobilanz CHF ${fmt(expTotal)} (${expAccounts.map(a => a.accountNumber).join(', ')}) – Differenz CHF ${fmt(expense.diff)} klären (z. B. nicht gewählte Konten, Abschreibungen auf Finanzanlagen/Beteiligungen).`);
   const additionsList: FixedAddition[] = rows.flatMap(r => r.postings.filter(x => x.cls === 'zugang').map(x => ({
     assetAccount: r.accountNumber, assetName: r.accountName, account: x.key.split('|')[0] ?? r.accountNumber,
-    date: x.date, docNo: x.docNo, text: x.text, contra: x.contra, amount: x.amount, manual: x.cls !== x.auto, key: x.key, page: x.page, lineNo: x.lineNo,
+    date: x.date, docNo: x.docNo, text: x.text, contra: x.contra, amount: x.amount, manual: x.cls !== x.auto || !!x.manual, key: x.key, page: x.page, lineNo: x.lineNo,
   }))).sort((a, b) => a.assetAccount.localeCompare(b.assetAccount, 'de', { numeric: true }) || a.date.localeCompare(b.date));
   return { ...base, available: true, rows, totals, suggestions, expense, additionsList };
 }

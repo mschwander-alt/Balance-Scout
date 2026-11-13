@@ -69,3 +69,20 @@ describe('Anlagespiegel aus Kontoblättern', () => {
     expect(classify(p('RG ER0302 Evident Europe GmbH', 100), new Set()).cls).toBe('zugang');
   });
 });
+
+describe('Anlagespiegel: manuelle Buchungen', () => {
+  it('fehlende Aktivierung als Zugang erfassen: Zugänge, Zugangsliste, Endbestand, Hinweis', async () => {
+    const path = (await import('node:path')).default;
+    const { runAudit } = await import('../src/index.js');
+    const D = path.resolve(import.meta.dirname, 'fixtures', 'anlagen');
+    const run = await runAudit({ mandate: 'Muster Bau AG', closingDate: '2025-12-31', trialBalancePath: path.join(D, 'Saldobilanz_2025.xlsx'), evidencePaths: [path.join(D, 'Saldobilanz_2025.xlsx')], targetDir: null, fileMode: 'none', ledgerPaths: [path.join(D, 'Kontoblaetter_2025.pdf')] });
+    const r0 = fixedAssetsFor(run);
+    const r = fixedAssetsFor(run, { manual: { '1510': [{ id: 'x1', date: '2025-11-30', text: 'Büromöbel (nicht aktiviert)', amount: 500_000, cls: 'zugang' }] } });
+    const a0 = r0.rows.find(x => x.accountNumber === '1510')!;
+    const a = r.rows.find(x => x.accountNumber === '1510')!;
+    expect([a.additions - a0.additions, a.closing - a0.closing, a.tbDiff]).toEqual([500_000, 500_000, 500_000]);
+    expect(r.additionsList.find(x => x.key === '1510|M|x1')).toMatchObject({ manual: true, amount: 500_000, text: 'Büromöbel (nicht aktiviert)' });
+    expect(a.postings.find(x => x.key === '1510|M|x1')).toMatchObject({ manual: true, cls: 'zugang' });
+    expect(a.flags.join(' ')).toMatch(/1 manuelle Buchung des Prüfers \(CHF 5'000.00\)/);
+  }, 60_000);
+});
