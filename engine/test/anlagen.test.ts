@@ -86,3 +86,20 @@ describe('Anlagespiegel: manuelle Buchungen', () => {
     expect(a.flags.join(' ')).toMatch(/1 manuelle Buchung des Prüfers \(CHF 5'000.00\)/);
   }, 60_000);
 });
+
+describe('Kontoblatt für die Vorschau (Reiter „Kontoblatt“)', () => {
+  it('je Konto: Datei, Kontokopf (Seite/Zeile) und Lage der Buchungen auf der Seite', async () => {
+    const path = (await import('node:path')).default;
+    const { runAudit } = await import('../src/index.js');
+    const D = path.resolve(import.meta.dirname, 'fixtures', 'anlagen');
+    const run = await runAudit({ mandate: 'Muster Bau AG', closingDate: '2025-12-31', trialBalancePath: path.join(D, 'Saldobilanz_2025.xlsx'), evidencePaths: [path.join(D, 'Saldobilanz_2025.xlsx')], targetDir: null, fileMode: 'none', ledgerPaths: [path.join(D, 'Kontoblaetter_2025.pdf')] });
+    const la = run.ledger!.accounts.find(a => a.accountNumber === '1500')!;
+    expect(la.sourcePath).toBe(path.join(D, 'Kontoblaetter_2025.pdf'));
+    expect(la.head).toMatchObject({ page: la.pages[0] });
+    expect(la.head!.bbox).toBeDefined();
+    // Kontokopf vor der ersten Buchung, Buchungen mit Lage auf der Seite
+    const first = la.postings[0]!;
+    expect(first.page > la.head!.page || first.lineNo > la.head!.lineNo).toBe(true);
+    expect(la.postings.every(p => p.bbox)).toBe(true);
+  }, 60_000);
+});

@@ -25,6 +25,7 @@ export type Request =
   | { id: string; type: 'finalize'; snapshotPath: string; decisions: ReviewDecisions; targetDir: string | null; fileMode: FileMode; reportDir: string }
   | { id: string; type: 'groups' }
   /** Vertiefte Prüfung Sachanlagen: Anlagespiegel (optional als Excel speichern) */
+  | { id: string; type: 'ledgerAccount'; snapshotPath: string; accountNumber: string }
   | { id: string; type: 'accruals'; snapshotPath: string; groupOverrides?: GroupOverrides; manual?: Record<string, import('./analysis/accruals.js').ManualAccrual[]>; edits?: Record<string, { label?: string; cy?: number; py?: number }>; attachments?: { id: string; name: string; path: string; account: string; position?: string | null }[]; accounts?: string[]; classes?: Record<string, 'vorjahr' | 'laufend' | 'unterjaehrig'>; notes?: Record<string, { text: string }>; note?: string; visum?: string; exportPath?: string }
   | { id: string; type: 'income'; snapshotPath: string; groupOverrides?: GroupOverrides; base?: import('./analysis/incomeStatement.js').IncomeBase | null; placements?: import('./analysis/incomeStatement.js').IncomePlacements; rowBases?: Record<string, import('./analysis/incomeStatement.js').IncomeBase>; notes?: Record<string, { text: string; at?: string; visum?: string }>; exportPath?: string; visum?: string }
   | { id: string; type: 'fixedAssets'; snapshotPath: string; groupOverrides?: GroupOverrides; manual?: Record<string, import('./analysis/fixedAssets.js').ManualFixedPosting[]>; accounts?: string[]; categories?: Record<string, string>; classes?: Record<string, 'zugang' | 'abgang' | 'abschreibung' | 'umbuchung'>; exportPath?: string; findings?: { text: string; status: 'offen' | 'erledigt' }[]; note?: string; visum?: string }
@@ -129,6 +130,27 @@ async function handle(req: Request): Promise<unknown> {
       await writeFile(req.exportPath, await fixedAssetsWorkbook(r, { mandate: res.input.mandate, closingDate: res.input.closingDate ?? '', findings: req.findings ?? [], note: req.note, visum: req.visum, sources: res.ledger?.sources }));
     }
     return r;
+  }
+  if (req.type === 'ledgerAccount') {
+    // Kontoblatt eines Kontos für die Vorschau (Reiter „Kontoblatt“): Datei, Kontokopf, Kennzahlen, Buchungen
+    const snap = await loadSnapshot(req.snapshotPath);
+    const norm = (n: string) => n.replace(/\D/g, '').replace(/^0+/, '');
+    const la = snap.ledger?.accounts.find(a => norm(a.accountNumber) === norm(req.accountNumber));
+    const tb = snap.accounts.find(a => a.accountNumber === req.accountNumber);
+    if (!snap.ledger?.accounts.length) return { available: false, reason: 'Keine Kontoblätter in dieser Prüfung – bei „Neue Prüfung“, Schritt 4, hinzufügen.' };
+    if (!la) return { available: false, reason: `Konto ${req.accountNumber} kommt in den Kontoblättern nicht vor.` };
+    // ältere Prüfungen: Datei über den Namen aus den angegebenen Kontoblättern bzw. den Belegen finden
+    const sourcePath = la.sourcePath
+      ?? snap.input.ledgerPaths?.find(p => path.basename(p) === la.source)
+      ?? snap.documents.find(d => d.doc.filename === la.source)?.doc.absPath ?? null;
+    const head = la.head ?? (la.postings[0] ? { page: la.postings[0].page, lineNo: la.postings[0].lineNo, bbox: la.postings[0].bbox } : { page: la.pages[0] ?? 1, lineNo: 1 });
+    return {
+      available: !!sourcePath, reason: sourcePath ? undefined : `Datei des Kontoblatts „${la.source}“ nicht gefunden.`,
+      sourcePath, source: la.source, accountNumber: la.accountNumber, accountName: la.accountName, currency: la.currency,
+      opening: la.opening, closing: la.closing, debitTotal: la.debitTotal, creditTotal: la.creditTotal, consistent: la.consistent,
+      tbBalance: tb ? tb.balanceCurrentYear : null, head, pages: la.pages,
+      postings: la.postings.map(p => ({ date: p.date, text: p.text, contra: p.contra, docNo: p.docNo, amount: p.amount, balance: p.balance, page: p.page, lineNo: p.lineNo, bbox: p.bbox })),
+    };
   }
   if (req.type === 'accruals') {
     // Rechnungsabgrenzungen: Vorjahresvergleich aus den Kontoblättern (vom Prüfer verschobene Konten berücksichtigt)

@@ -164,7 +164,7 @@ await page.locator('table.income tr[data-inc="U:betrieb/raum"] td').nth(1).click
 await page.locator('table.income tr[data-inc="6000"]').dragTo(page.locator('table.income tr[data-inc="S:personal"]'));
 await page.locator('table.income tr[data-inc="6000"] .flag.moved').waitFor();
 assert.equal(await page.locator('table.income tr[data-inc="R:gewinn"] td.cur').innerText(), gewinn0);
-assert.match(await page.locator('table.income tr[data-inc="S:personal"]').innerText(), /-208'400\.00/);
+await page.locator('table.income tr[data-inc="S:personal"]', { hasText: "-208'400.00" }).waitFor(); // Neuberechnung abwarten
 await page.screenshot({ path: `${shots}-5g-er-analyse.png` });
 await page.locator('table.income tr[data-inc="6000"] .flag.moved').click();
 await page.locator('table.income tr[data-inc="6000"] .flag.moved').waitFor({ state: 'detached' });
@@ -406,6 +406,27 @@ assert.notEqual(addTotal1, addTotal0, `Zugänge total ${addTotal0} → ${addTota
 await page.getByLabel('Manuelle Buchung löschen Werkzeugmaschine (nicht aktiviert)').click();
 await page.locator('table.anlagen td[title="manuell erfasst (Prüfer)"]', { hasText: 'Werkzeugmaschine (nicht aktiviert)' }).waitFor({ state: 'detached' });
 step(`Anlagespiegel: manuelle Buchung erfasst (Zugänge ${addTotal0} → ${addTotal1}) und gelöscht`);
+// Reiter „Kontoblatt“ im Konto-Panel: springt an den Anfang des Kontos, Abgleich zur Saldobilanz, Buchung anklicken, Reiter bleibt beim Blättern
+await page.getByRole('tab', { name: 'Bilanz', exact: true }).click();
+await page.locator('tr[data-konto="1500"]').click();
+await page.getByRole('tab', { name: 'Kontoblatt' }).click();
+await page.locator('.ledger-kpis .ok', { hasText: 'Saldobilanz ✓' }).waitFor({ timeout: 20_000 });
+await page.locator('.ledger-view .viewer').waitFor();
+await page.locator('.ledger-view .hl-row, .ledger-view .hl-box').first().waitFor({ timeout: 20_000 });
+const nPost = await page.locator('.ledger-postings tbody tr[data-buchung]').count();
+assert.ok(nPost >= 3, `Buchungen im Kontoblatt: ${nPost}`);
+await page.locator('.ledger-postings tbody tr[data-buchung="2"]').click();
+await page.locator('.ledger-postings tbody tr.selected[data-buchung="2"]').waitFor();
+await page.getByRole('button', { name: '↑ zum Kontoanfang' }).waitFor();
+await page.screenshot({ path: `${shots}-9e-kontoblatt.png` });
+await page.getByRole('button', { name: 'nächstes Konto' }).click();
+await page.locator('[role="tab"][aria-selected="true"]', { hasText: 'Kontoblatt' }).waitFor();
+await page.locator('.ledger-kpis').waitFor();
+await page.getByRole('tab', { name: 'Beleg', exact: true }).click();
+step(`Reiter Kontoblatt: Konto 1500 am Kontoanfang, ${nPost} Buchungen, Abgleich ✓, Reiter bleibt beim Blättern`);
+await page.getByRole('tab', { name: 'Prüfgebiete' }).click();
+await page.locator('.area-item', { hasText: 'Mobile Sachanlagen' }).click();
+await page.locator('table.anlagen').waitFor();
 step('Business Central: Wertberichtigungen zugeordnet, Brutto-Anlagespiegel, Abschreibungen = Aufwand');
 // Zugänge anklicken → Zugangsliste (Summe = Total Zugänge)
 const totAdd = fb.additionsList.reduce((x, a) => x + a.amount, 0);

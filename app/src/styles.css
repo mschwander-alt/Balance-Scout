@@ -564,3 +564,17 @@ table.accruals tr.acr-manuell td:first-child { color: var(--brand); }
 table tr.fa-new td { background: var(--panel-2); }
 table tr.fa-new input { width: 100%; font-size: 12px; padding: 3px 6px; }
 table tr.fa-new input.num { text-align: right; }
+/* Konto-Panel: Reiter Beleg / Kontoblatt */
+.tabs.panel-tabs { padding: 0; margin: -2px 0 2px; }
+.tabs.panel-tabs button { padding: 6px 12px; font-size: 12.5px; border-bottom-width: 2px; }
+.ledger-view { display: flex; flex-direction: column; gap: 8px; min-height: 0; flex: 1; }
+.ledger-kpis { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; }
+.ledger-kpis > div { background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px; padding: 5px 8px; display: flex; flex-direction: column; }
+.ledger-kpis > div span { font-size: 10.5px; color: var(--muted); } .ledger-kpis > div strong { font-size: 12.5px; }
+.ledger-kpis > div.ok { background: var(--ok-bg); border-color: var(--ok-line); } .ledger-kpis > div.ok span { color: var(--ok); }
+.ledger-kpis > div.bad { background: var(--bad-bg); border-color: var(--bad-line); } .ledger-kpis > div.bad span { color: var(--bad); }
+.ledger-postings { max-height: 200px; overflow: auto; border: 1px solid var(--line); border-radius: 8px; flex-shrink: 0; }
+.ledger-postings td { white-space: nowrap; } .ledger-postings td:nth-child(2) { white-space: normal; max-width: 260px; }
+.ledger-postings tbody tr { cursor: pointer; }
+.ledger-postings tbody tr:hover td { background: var(--hover); }
+.ledger-view .viewer { min-height: 260px; }

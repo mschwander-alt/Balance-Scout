@@ -9,6 +9,7 @@ import { Documents } from './Documents';
 import { AuditAreas } from './AuditAreas';
 import { IncomeAnalysisView } from './IncomeAnalysis';
 import { useDragAutoScroll } from '../components/dragScroll';
+import { LedgerView } from '../components/LedgerView';
 import { GENERAL_ACCOUNT, accountLabel, targetsOf, deriveView, groupAccounts, type ViewAccount, type ViewDoc } from '../review';
 
 type Tab = 'konten' | 'erfolg' | 'belege' | 'gebiete' | 'saldobilanz' | 'diagnose';
@@ -32,6 +33,8 @@ export function Result({ result: initial, onRepeat }: { result: AuditResult; onR
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   // Erfolgsrechnung: Konten (wie Bilanz) oder Analyse (Staffel mit Margen, Vorjahr, Bemerkungen)
   const [erView, setErView] = useState<'konten' | 'analyse'>('analyse');
+  // Reiter im Konto-Panel – bleibt beim Blättern ‹ › stehen (z. B. Konto für Konto durch die Kontoblätter)
+  const [panelTab, setPanelTab] = useState<PanelTab>('beleg');
   // Drag & Drop: Konto in eine andere Gruppe verschieben
   const [dragAcc, setDragAcc] = useState<string | null>(null);
   const [dropGroup, setDropGroup] = useState<string | null>(null);
@@ -292,6 +295,7 @@ export function Result({ result: initial, onRepeat }: { result: AuditResult; onR
               onAccept={() => accept(sel)} onUnaccept={() => unaccept(sel)} onNote={t => setNote(sel.accountNumber, t)}
               onAssign={docId => assignAlso(docId, sel.accountNumber)} onUnassign={docId => unassignFrom(docId, sel.accountNumber)} onClose={() => setOpen(null)}
               groupOptions={groups?.groups ?? []} onGroup={code => moveAccount(sel.accountNumber, code)}
+              tab={panelTab} onTab={setPanelTab} historyId={id}
             />
           )}
         </div>
@@ -505,12 +509,16 @@ function DocLine({ d, accounts, filedInfo, onAssign }: { d: ViewDoc; accounts: V
   );
 }
 
-function AccountPanel({ a, docs, filedPath, note, accepted, nav, onAccept, onUnaccept, onNote, onAssign, onUnassign, onClose, groupOptions = [], onGroup }: {
+type PanelTab = 'beleg' | 'kontoblatt';
+const PANEL_TABS: [PanelTab, string][] = [['beleg', 'Beleg'], ['kontoblatt', 'Kontoblatt']];
+
+function AccountPanel({ a, docs, filedPath, note, accepted, nav, onAccept, onUnaccept, onNote, onAssign, onUnassign, onClose, groupOptions = [], onGroup, tab = 'beleg', onTab, historyId }: {
   a: ViewAccount; docs: ViewDoc[]; filedPath: string | null; note?: { text: string; at: string; visum: string }; accepted?: { visum: string; at: string; comment?: string };
   nav: { pos: number; count: number; prev: () => void; next: () => void };
   onAccept: () => void; onUnaccept: () => void; onNote: (t: string) => void; onAssign: (docId: string) => void; onUnassign: (docId: string) => void; onClose: () => void;
   /** Gruppe ändern (Code) bzw. zurücksetzen (null) */
   groupOptions?: { code: string; name: string; category: string }[]; onGroup?: (code: string | null) => void;
+  tab?: PanelTab; onTab?: (t: PanelTab) => void; historyId?: string;
 }) {
   const found = a.autoStatus === 'BELEGT' || a.autoStatus === 'PRUEFEN';
   const all: Best[] = found && a.best ? [a.best, ...a.candidates] : a.candidates;
@@ -561,6 +569,13 @@ function AccountPanel({ a, docs, filedPath, note, accepted, nav, onAccept, onUna
           {a.groupSource === 'manuell' && <button className="link" onClick={() => onGroup(null)} title={`Automatisch: ${a.autoGroup?.name ?? 'Ohne Gruppe'}`}>zurücksetzen</button>}
         </div>
       )}
+      {onTab && (
+        <nav className="tabs panel-tabs" role="tablist" aria-label="Ansicht Konto">
+          {PANEL_TABS.map(([k, l]) => <button key={k} role="tab" aria-selected={tab === k} className={tab === k ? 'active' : ''} onClick={() => onTab(k)}>{l}</button>)}
+        </nav>
+      )}
+      {tab === 'kontoblatt' && historyId && <LedgerView historyId={historyId} accountNumber={a.accountNumber} />}
+      {tab === 'beleg' && (<>
       <div className="doc-line small">
         {doc ? <>{doc.register && <span className="register">{doc.register}</span>}<span>{doc.filename}</span></> : <span>Kein Beleg</span>}
         <Info label="Details zur Fundstelle">
@@ -628,6 +643,7 @@ function AccountPanel({ a, docs, filedPath, note, accepted, nav, onAccept, onUna
       ) : (
         <p className="muted">{a.status === 'KEIN_NACHWEIS' ? 'Kein passender Betrag in den Unterlagen gefunden.' : 'Für dieses Konto ist kein Nachweis nötig.'}</p>
       )}
+      </>)}
     </aside>
   );
 }

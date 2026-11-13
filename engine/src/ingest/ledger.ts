@@ -18,6 +18,8 @@ export interface LedgerPosting {
   balance: Cents | null;
   page: number;
   lineNo: number;
+  /** Lage der Zeile auf der Seite (PDF/Scan) – für die Markierung in der Vorschau */
+  bbox?: EvidenceLine['bbox'];
 }
 
 export interface LedgerAccount {
@@ -34,6 +36,10 @@ export interface LedgerAccount {
   consistent: boolean;
   pages: number[];
   source: string;
+  /** Datei des Kontoblatts (absoluter Pfad) – für die Vorschau */
+  sourcePath?: string;
+  /** Kontokopf (Anfang des Kontos im Kontoblatt) */
+  head?: { page: number; lineNo: number; bbox?: EvidenceLine['bbox'] };
 }
 
 export interface Ledger {
@@ -154,11 +160,13 @@ export function parseLedger(lines: EvidenceLine[], opts: { pageLabels?: Record<n
   // Navision/Business Central druckt einen Saldo von 0.00 nicht; Abacus druckt bei Buchungen ohne Betrag in
   // Fremdwährung den unveränderten Saldo. Ein einzelner Betrag = bisheriger Saldo bedeutet daher je nach System Verschiedenes.
   const hidesZeroBalance = lines.slice(0, 3000).some(l => /endsaldo periode|sachkontenblatt|jahresvortrag/i.test(l.text));
+  let curLine: EvidenceLine | null = null;
   const open = (no: string, name: string, page: number) => {
     const k = no;
     let a = accounts.get(k);
     if (!a) {
-      a = { accountNumber: no, accountName: name.trim(), currency: pageCurrency ?? baseCurrency, opening: null, closing: null, debitTotal: 0, creditTotal: 0, postings: [], consistent: false, pages: [], source: opts.source ?? '' };
+      a = { accountNumber: no, accountName: name.trim(), currency: pageCurrency ?? baseCurrency, opening: null, closing: null, debitTotal: 0, creditTotal: 0, postings: [], consistent: false, pages: [], source: opts.source ?? '',
+        head: curLine && curLine.page === page ? { page, lineNo: curLine.lineNo, bbox: curLine.bbox } : { page, lineNo: 1 } };
       accounts.set(k, a);
     }
     if (pageCurrency) a.currency = pageCurrency;
@@ -168,6 +176,7 @@ export function parseLedger(lines: EvidenceLine[], opts: { pageLabels?: Record<n
 
   for (let li = 0; li < lines.length; li++) {
     const ln = lines[li]!;
+    curLine = ln;
     const t = ln.text.replace(/\s+/g, ' ').trim();
     if (!t) continue;
     const cells = t.includes(' | ');
@@ -240,7 +249,7 @@ export function parseLedger(lines: EvidenceLine[], opts: { pageLabels?: Record<n
     // Folgezeile ohne Datum, die den Saldo verändert (z. B. MWST-Aufteilung bei Abacus): nur bei exakt passender Saldokette
     if (!dm && strict && strict.amount !== 0 && a.postings.length && !OPENING.test(t) && !CLOSING.test(t)) {
       const last = a.postings[a.postings.length - 1]!;
-      a.postings.push({ ...last, text: postingText(t) || last.text, contra: null, amount: strict.amount, balance: strict.balance, lineNo: ln.lineNo, page: ln.page });
+      a.postings.push({ ...last, text: postingText(t) || last.text, contra: null, amount: strict.amount, balance: strict.balance, lineNo: ln.lineNo, page: ln.page, bbox: ln.bbox });
       continue;
     }
     if (dm && am.length >= 1) {
@@ -278,7 +287,7 @@ export function parseLedger(lines: EvidenceLine[], opts: { pageLabels?: Record<n
       }
       // ohne gedruckten Saldo: laufenden Saldo fortschreiben
       if (balance === null && prev !== null && prev !== undefined) balance = prev + amount;
-      a.postings.push({ date: iso(dm[1]!, dm[2]!, dm[3]!), text: postingText(t.slice(dm[0].length)), contra, docNo, amount, balance, page: ln.page, lineNo: ln.lineNo });
+      a.postings.push({ date: iso(dm[1]!, dm[2]!, dm[3]!), text: postingText(t.slice(dm[0].length)), contra, docNo, amount, balance, page: ln.page, lineNo: ln.lineNo, bbox: ln.bbox });
       if (!a.pages.includes(ln.page)) a.pages.push(ln.page);
     }
   }

@@ -332,6 +332,13 @@ function registerIpc(): void {
     if (!existsSync(userFile(`snapshot-${id}.json`))) throw new Error('Analysedaten fehlen – bitte die Prüfung erneut starten.');
     return call<unknown>({ ...params, type, snapshotPath: userFile(`snapshot-${id}.json`) });
   });
+  // Reiter „Kontoblatt“: Kontoblatt eines Kontos; die Datei wird für die Vorschau freigegeben
+  ipcMain.handle('review:ledgerAccount', async (_e, id: string, accountNumber: string) => {
+    if (!existsSync(userFile(`snapshot-${id}.json`))) throw new Error('Analysedaten fehlen – bitte die Prüfung erneut starten.');
+    const r = await call<{ sourcePath?: string | null }>({ type: 'ledgerAccount', snapshotPath: userFile(`snapshot-${id}.json`), accountNumber });
+    if (r.sourcePath) previewAllowed.add(path.resolve(r.sourcePath));
+    return r;
+  });
   ipcMain.handle('review:exportAnalysis', async (_e, id: string, type: string, params: Record<string, unknown>, suggestedName: string) => {
     if (!ANALYSES[type]) throw new Error(`Unbekannte Analyse: ${type}`);
     const saved = readJson<{ input?: JobInput } | null>(`result-${id}.json`, null);

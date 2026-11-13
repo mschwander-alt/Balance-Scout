@@ -241,6 +241,8 @@ export interface BsbBridge {
     /** ESTV-Kursliste (PDF) wählen, lesen und speichern; liefert alle gespeicherten Listen */
     importRates(): Promise<Record<string, FxRateList> | null>;
     receivables(id: string, p: Partial<ReceivablesDecision> & { groupOverrides?: ReviewDecisions['groupOverrides'] }): Promise<ReceivablesResult>;
+    /** Kontoblatt eines Kontos (Datei, Kontokopf, Kennzahlen, Buchungen) */
+    ledgerAccount(id: string, accountNumber: string): Promise<LedgerAccountView>;
     exportReceivables(id: string, p: Partial<ReceivablesDecision> & { groupOverrides?: ReviewDecisions['groupOverrides'] }, suggestedName: string, format: 'xlsx' | 'pptx'): Promise<string | null>;
   };
   app: {
@@ -288,3 +290,13 @@ export interface AccrualsDecision {
   attachments?: AccrualAttachment[];
 }
 export interface AccrualAttachment { id: string; name: string; path: string; account: string; position?: string | null }
+
+// ---------------------------------------------------------------- Kontoblatt eines Kontos (Reiter „Kontoblatt“)
+export interface LedgerAccountView {
+  available: boolean; reason?: string; sourcePath?: string | null; source?: string;
+  accountNumber: string; accountName: string; currency: string;
+  opening: number | null; closing: number | null; debitTotal: number; creditTotal: number; consistent: boolean;
+  tbBalance: number | null; pages: number[];
+  head: { page: number; lineNo: number; bbox?: { x0: number; y0: number; x1: number; y1: number } };
+  postings: { date: string; text: string; contra: string | null; docNo: string | null; amount: number; balance: number | null; page: number; lineNo: number; bbox?: { x0: number; y0: number; x1: number; y1: number } }[];
+}

@@ -181,7 +181,11 @@ export async function runAudit(input: RunInput): Promise<RunResult> {
     // Kontoblätter im Kundenordner bleiben im Belegverzeichnis, werden aber nicht für den Abgleich verwendet
     const ledgerIds = new Set<string>();
     for (const d of docs) if (looksLikeLedger(d.lines)) { ledgerIds.add(d.id); ledgerDocs.push(d); }
-    const ledgers = ledgerDocs.map(d => parseLedger(d.lines, { pageLabels: d.pageLabels, source: d.filename }));
+    const ledgers = ledgerDocs.map(d => {
+      const l = parseLedger(d.lines, { pageLabels: d.pageLabels, source: d.filename });
+      for (const a of l.accounts) a.sourcePath = d.absPath; // für die Vorschau im Reiter „Kontoblatt“
+      return l;
+    });
     const ledgerFiles = ledgerDocs.map((d, i) => {
       const l = ledgers[i]!;
       const dates = l.accounts.flatMap(a => a.postings.map(p => p.date)).sort();
