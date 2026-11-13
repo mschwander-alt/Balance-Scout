@@ -3,6 +3,7 @@ import { mkdir, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import type { RunResult, DocumentSummary } from '../run.js';
 import type { AccountResult } from '../domain/matching/engine.js';
+import { areaOverview, AREA_STATE_LABEL } from '../analysis/areas.js';
 
 const BLUE = 'FF0F5EA8';
 const GREEN_HDR = 'FF1D7A46';
@@ -18,7 +19,7 @@ const STATUS_LABEL: Record<string, string> = {
 const FILL: Record<string, string> = {
   Belegt: 'FFE5F4EA', Prüfen: 'FFFFF4DC', 'Kein Nachweis': 'FFFDE8E7', Nullsaldo: 'FFEEF0F3', 'Nicht im Umfang': 'FFEEF0F3',
   Bestätigt: 'FFE5F4EA', Abweichung: 'FFFDE8E7', Offen: 'FFFFF4DC', 'Nicht anwendbar': 'FFEEF0F3',
-  Zugeordnet: 'FFE5F4EA', 'Nicht zugeordnet': 'FFFDE8E7', 'Nicht relevant': 'FFEEF0F3',
+  Zugeordnet: 'FFE5F4EA', 'Nicht zugeordnet': 'FFFDE8E7', 'Nicht relevant': 'FFEEF0F3', erledigt: 'FFE5F4EA', 'in Arbeit': 'FFFFF4DC', offen: 'FFEEF0F3',
 };
 const FLAG_TEXT: Record<string, string> = {
   SIGN_CONFLICT: 'Vorzeichen prüfen',
@@ -217,6 +218,37 @@ export async function writeExcelReport(res: RunResult, filePath: string): Promis
   ov.mergeCells(`A${r}:C${r}`);
   ov.getRow(r).height = 32;
   ov.getCell('B6').numFmt = DATE;
+
+  // ---------------- Prüfgebiete: Status, Visum, Feststellungen (Inhaltsverzeichnis der Prüfung) ----------------
+  if (res.review) {
+    const pa = wb.addWorksheet('Prüfgebiete', { pageSetup: { orientation: 'landscape', paperSize: 9, fitToPage: true, fitToWidth: 1, fitToHeight: 0 } });
+    header(pa, [
+      { name: 'Register', width: 9 }, { name: 'Prüfgebiet', width: 40 }, { name: 'Konten', width: 8 }, { name: 'Saldo Vorjahr CHF', width: 16 }, { name: 'Saldo Stichtag CHF', width: 16 },
+      { name: 'Abdeckung', width: 11 }, { name: 'Vertiefte Prüfung', width: 24 }, { name: 'Status', width: 12 }, { name: 'Visum', width: 8 }, { name: 'Datum', width: 11 },
+      { name: 'Offene Feststellungen', width: 12 }, { name: 'Feststellungen', width: 70 },
+    ]);
+    const rows = areaOverview(res.accounts.map(a => ({
+      accountNumber: a.accountNumber, groupCode: a.groupCode, category: a.category, balance: a.balanceCurrentYear, balancePreviousYear: a.balancePreviousYear,
+      status: res.byAccount.get(`${a.accountNumber}#${a.rowIndex}`)?.status ?? 'NICHT_IM_UMFANG',
+    })), res.review.decisions);
+    rows.forEach((x, i) => {
+      const row = i + 2;
+      pa.getRow(row).values = [
+        x.letter || '–', x.name, x.accounts, x.py / 100, x.cy / 100, x.coverage, x.analysis ?? '–', AREA_STATE_LABEL[x.status], x.visum || null, isoToDate(x.at?.slice(0, 10) ?? null),
+        x.findings.filter(f => f.status === 'offen').length || null,
+        x.findings.map(f => `${f.status === 'erledigt' ? '☑' : '☐'} ${f.text}`).join('\n') || null,
+      ];
+      pa.getCell(row, 4).numFmt = CHF; pa.getCell(row, 5).numFmt = CHF; pa.getCell(row, 6).numFmt = '0%'; pa.getCell(row, 10).numFmt = DATE;
+      pa.getCell(row, 12).alignment = { wrapText: true, vertical: 'top' };
+      pa.getRow(row).alignment = { vertical: 'top' };
+      pa.getCell(row, 12).alignment = { wrapText: true, vertical: 'top' };
+    });
+    colorRule(pa, `H2:H${Math.max(rows.length + 1, 2)}`, ['erledigt', 'in Arbeit', 'offen']);
+    const done = rows.filter(x => x.status === 'erledigt').length;
+    r += 2;
+    ov.getCell(`A${r}`).value = 'Prüfgebiete erledigt';
+    ov.getCell(`B${r}`).value = { text: `${done} von ${rows.length} (offene Feststellungen: ${rows.reduce((s, x) => s + x.findings.filter(f => f.status === 'offen').length, 0)})`, hyperlink: "#'Prüfgebiete'!A1" };
+  }
 
   // ---------------- Saldenabstimmung ----------------
   const ws = wb.addWorksheet(S, { pageSetup: { orientation: 'landscape', paperSize: 9, fitToPage: true, fitToWidth: 1, fitToHeight: 0 } });

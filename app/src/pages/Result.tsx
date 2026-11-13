@@ -11,6 +11,8 @@ import { IncomeAnalysisView } from './IncomeAnalysis';
 import { useDragAutoScroll } from '../components/dragScroll';
 import { LedgerView } from '../components/LedgerView';
 import { FocusRail, GroupAnalysis, FocusBottom } from './FocusMode';
+import { GroupPanel } from './GroupWorkspace';
+import { AREA_ANALYSIS, areaStateLabel } from '../areas';
 import { GENERAL_ACCOUNT, accountLabel, targetsOf, deriveView, groupAccounts, type ViewAccount, type ViewDoc } from '../review';
 
 type Tab = 'konten' | 'erfolg' | 'belege' | 'gebiete' | 'saldobilanz' | 'diagnose';
@@ -38,6 +40,9 @@ export function Result({ result: initial, onRepeat }: { result: AuditResult; onR
   const [panelTab, setPanelTab] = useState<PanelTab>('beleg');
   // Fokus-Modus: Bilanz eingeklappt zur Kontoleiste – links vertiefte Prüfung, rechts das Konto, unten Kommentare und Dateien
   const [focus, setFocus] = useState(false);
+  // Gruppen-Arbeitsbereich (Klick auf eine Gruppenzeile) und vorgewähltes Prüfgebiet im Reiter Prüfgebiete
+  const [openGroup, setOpenGroup] = useState<string | null>(null);
+  const [areaPick, setAreaPick] = useState<string | null>(null);
   // Drag & Drop: Konto in eine andere Gruppe verschieben
   const [dragAcc, setDragAcc] = useState<string | null>(null);
   const [dropGroup, setDropGroup] = useState<string | null>(null);
@@ -79,6 +84,11 @@ export function Result({ result: initial, onRepeat }: { result: AuditResult; onR
     [view.docs, docFilter],
   );
   const sel = view.accounts.find(a => a.accountNumber === open) ?? null;
+  const openGroupInfo = openGroup ? (() => {
+    const items = view.accounts.filter(a => a.groupCode === openGroup);
+    const g = groups?.groups.find(x => x.code === openGroup);
+    return g && items.length ? { code: g.code, name: g.name, items } : null;
+  })() : null;
   const flatList = () => (grouped ? groupAccounts(accounts, order).flatMap(g => g.items) : accounts);
   const navInfo = (num: string) => {
     const list = flatList();
@@ -99,7 +109,7 @@ export function Result({ result: initial, onRepeat }: { result: AuditResult; onR
     const h = (e: KeyboardEvent) => {
       const tag = (e.target as HTMLElement)?.tagName;
       if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
-      if (e.key === 'Escape') { if (focus) return setFocus(false); return setOpen(null); }
+      if (e.key === 'Escape') { if (focus) return setFocus(false); if (!open) return setOpenGroup(null); return setOpen(null); }
       if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
       e.preventDefault();
       const list = grouped ? groupAccounts(accounts, order).flatMap(g => g.items) : accounts;
@@ -297,7 +307,7 @@ export function Result({ result: initial, onRepeat }: { result: AuditResult; onR
         </div>
       )}
       {(tab === 'konten' || (tab === 'erfolg' && erView === 'konten')) && !(focus && sel && id) && (
-        <div className={`result-layout ${sel ? 'withpreview' : 'nopanel'}`}>
+        <div className={`result-layout ${sel || openGroupInfo ? 'withpreview' : 'nopanel'}`}>
           <div className="stack" style={{ gap: 6 }}>
             <div className="row small" style={{ justifyContent: 'space-between' }}>
               <span className="muted">{er ? `${accounts.length} Konten der Erfolgsrechnung – Analyse von Vorjahr und Veränderung (keine Saldennachweise nötig)` : filter !== 'ALLE' || search ? `${accounts.length} von ${view.accounts.filter(a => !isER(a)).length} Konten` : ''}{!er && filter !== 'ALLE' && <> · <button className="link" onClick={() => setFilter('ALLE')}>Filter aufheben</button></>}</span>
@@ -322,7 +332,8 @@ export function Result({ result: initial, onRepeat }: { result: AuditResult; onR
                     ) : (
                       <GroupRows key={g.code || 'alle'} g={g} grouped={grouped} collapsed={collapsed.has(g.code)}
                         onToggle={() => setCollapsed(c => { const n = new Set(c); if (n.has(g.code)) n.delete(g.code); else n.add(g.code); return n; })}
-                        letter={decisions.groupLetters?.[g.code]} open={open} setOpen={setOpen} docs={view.docs} notes={decisions.notes ?? {}} dnd={dnd} />
+                        letter={decisions.groupLetters?.[g.code]} open={open} setOpen={setOpen} docs={view.docs} notes={decisions.notes ?? {}} dnd={dnd}
+                        groupOpen={openGroup === g.code && !sel} onOpenGroup={() => { setOpen(null); setOpenGroup(g.code); }} areaState={decisions.areaStatus?.[g.code]?.status} hasAnalysis={!!AREA_ANALYSIS[g.code]} />
                     ),
                   )}
                 </tbody>
@@ -340,6 +351,12 @@ export function Result({ result: initial, onRepeat }: { result: AuditResult; onR
               tab={panelTab} onTab={setPanelTab} historyId={id} onFocus={id ? () => setFocus(true) : undefined}
             />
           )}
+          {!sel && openGroupInfo && (
+            <GroupPanel key={openGroupInfo.code} code={openGroupInfo.code} name={openGroupInfo.name} items={openGroupInfo.items} allAccounts={view.accounts} docs={view.docs}
+              decisions={decisions} update={update} visum={visum} onOpenAccount={n => setOpen(n)} onClose={() => setOpenGroup(null)}
+              onDeepen={id && openGroupInfo.items.length ? () => { setOpen(openGroupInfo.items[0]!.accountNumber); setFocus(true); } : undefined}
+              onAreas={() => { setAreaPick(openGroupInfo.code); setOpen(null); setTab('gebiete'); }} />
+          )}
         </div>
       )}
 
@@ -348,7 +365,9 @@ export function Result({ result: initial, onRepeat }: { result: AuditResult; onR
       )}
 
       {tab === 'gebiete' && (
-        <AuditAreas historyId={id} accounts={view.accounts} docs={view.docs} groups={groups} decisions={decisions} update={update} closingDate={result.input?.closingDate ?? null} rates={result.fxRates?.rates ?? result.input?.fxRates?.rates} />
+        <AuditAreas key={areaPick ?? 'uebersicht'} historyId={id} accounts={view.accounts} docs={view.docs} groups={groups} decisions={decisions} update={update} closingDate={result.input?.closingDate ?? null} rates={result.fxRates?.rates ?? result.input?.fxRates?.rates}
+          initialArea={areaPick} visum={visum}
+          onOpenGroup={code => { setAreaPick(null); setOpen(null); if (code === 'ER') { setTab('erfolg'); setErView('analyse'); } else { setTab('konten'); setOpenGroup(code); setCollapsed(c => { const n = new Set(c); n.delete(code); return n; }); setTimeout(() => document.querySelector(`[data-gruppe="${code}"]`)?.scrollIntoView({ block: 'center' }), 50); } }} />
       )}
 
       {tab === 'saldobilanz' && (
@@ -455,9 +474,11 @@ const PROBLEM_FLAGS = new Set(['SIGN_CONFLICT', 'AMBIGUOUS', 'CURRENCY_MISMATCH'
 /** Drag & Drop der Konten zwischen Gruppen */
 type Dnd = { enabled: boolean; dragging: string | null; over: string | null; start: (num: string) => void; end: () => void; overGroup: (code: string) => void; drop: (code: string) => void };
 
-function GroupRows({ g, grouped, collapsed, onToggle, letter, open, setOpen, docs, notes, dnd }: {
+function GroupRows({ g, grouped, collapsed, onToggle, letter, open, setOpen, docs, notes, dnd, groupOpen = false, onOpenGroup, areaState, hasAnalysis = false }: {
   g: Group; grouped: boolean; collapsed: boolean; onToggle: () => void; letter?: string; open: string | null;
   setOpen: (n: string) => void; docs: ViewDoc[]; notes: Record<string, unknown>; dnd?: Dnd;
+  /** Gruppen-Arbeitsbereich offen / öffnen; Status des Prüfgebiets */
+  groupOpen?: boolean; onOpenGroup?: () => void; areaState?: import('../../electron/shared').AreaState; hasAnalysis?: boolean;
 }) {
   // Ziel: Gruppenzeile und alle Konten der Gruppe
   const target = dnd?.enabled && dnd.dragging ? {
@@ -472,12 +493,13 @@ function GroupRows({ g, grouped, collapsed, onToggle, letter, open, setOpen, doc
   return (
     <>
       {grouped && (
-        <tr className={`group-row ${isOver ? 'drop-target' : ''}`} onClick={onToggle} aria-expanded={!collapsed} data-gruppe={g.code} {...target}>
-          <td colSpan={2} title={g.name}><span className="caret">{collapsed ? '›' : '⌄'}</span>{letter ? <span className="register">{letter}</span> : null} {g.name}</td>
+        <tr className={`group-row ${isOver ? 'drop-target' : ''} ${groupOpen ? 'selected' : ''}`} onClick={onOpenGroup ?? onToggle} aria-expanded={!collapsed} data-gruppe={g.code} {...target}
+          title={onOpenGroup ? 'Klick: Gruppen-Arbeitsbereich öffnen · Pfeil: auf-/zuklappen' : undefined}>
+          <td colSpan={2}><button className="caret" aria-label={collapsed ? `${g.name} aufklappen` : `${g.name} zuklappen`} onClick={e => { e.stopPropagation(); onToggle(); }}>{collapsed ? '›' : '⌄'}</button>{letter ? <span className="register">{letter}</span> : null} {g.name}</td>
           <td className="num">{chf(g.total)}</td>
           <td className="num">{hasVj ? chf(vj) : ''}</td>
           <Delta cy={g.total} vj={hasVj ? vj : null} />
-          <td className="small muted" title={`${g.items.length} Konten, ${nDocs} Belege`}>{g.items.length}</td>
+          <td className="small muted" title={`${g.items.length} Konten, ${nDocs} Belege`}>{areaState || hasAnalysis ? <span className={`area-chip st-${areaState ?? 'offen'}`} data-areastatus={areaState ?? 'offen'}>{hasAnalysis ? 'Analyse · ' : ''}{areaStateLabel(areaState ?? 'offen')}</span> : g.items.length}</td>
           <td className="small muted">{nDocs || ''}</td>
         </tr>
       )}

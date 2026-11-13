@@ -9,6 +9,7 @@ import { Receivables, FIXED, ACCRUALS } from './AuditAreas';
 import { FixedAssets } from './FixedAssets';
 import { Accruals } from './Accruals';
 import { IncomeAnalysisView } from './IncomeAnalysis';
+import { AreaStatusControl, GroupFindings } from './GroupWorkspace';
 
 type Group = { code: string; name: string; items: ViewAccount[] };
 const DOT: Record<string, string> = { BELEGT: 'ok', PRUEFEN: 'warn', KEIN_NACHWEIS: 'bad', NULLSALDO: 'grey', NICHT_IM_UMFANG: 'grey' };
@@ -102,12 +103,9 @@ export function FocusBottom({ sel, groupCode, letter, decisions, update, docs, v
   const toast = useToast();
   const [tab, setTab] = useState<BottomTab>('kommentar');
   const [noteText, setNoteText] = useState(decisions.notes?.[sel.accountNumber]?.text ?? '');
-  const [newFinding, setNewFinding] = useState('');
   const [busy, setBusy] = useState(false);
   useEffect(() => setNoteText(decisions.notes?.[sel.accountNumber]?.text ?? ''), [sel.accountNumber, decisions.notes]);
   const findings = decisions.groupFindings?.[groupCode] ?? [];
-  const setFindings = (fn: (f: typeof findings) => typeof findings) => update(d => ({ ...d, groupFindings: { ...d.groupFindings, [groupCode]: fn(d.groupFindings?.[groupCode] ?? []) } }));
-  const addFinding = () => { if (!newFinding.trim()) return; setFindings(f => [...f, { text: newFinding.trim(), status: 'offen', at: new Date().toISOString(), visum }]); setNewFinding(''); };
   const evidence = docs.filter(d => d.accounts.includes(sel.accountNumber));
   const attachments = decisions.groupAttachments?.[groupCode] ?? [];
   const accrualAtts = ACCRUALS.includes(groupCode) ? (decisions.analyses?.accruals?.attachments ?? []).filter(f => f.account === sel.accountNumber) : [];
@@ -156,17 +154,11 @@ export function FocusBottom({ sel, groupCode, letter, decisions, update, docs, v
             <AutoTextarea minRows={3} maxLength={500} value={noteText} onChange={e => setNoteText(e.target.value)} onBlur={() => noteText !== (decisions.notes?.[sel.accountNumber]?.text ?? '') && onNote(noteText)} placeholder="z. B. Saldo mit Bankbestätigung abgestimmt." aria-label="Notiz zum Konto" />
           </label>
           <div className="stack" style={{ gap: 5 }}>
-            <span className="small muted">Feststellungen der Gruppe</span>
-            {findings.map((f, i) => (
-              <label key={i} className={`finding ${f.status}`}>
-                <input type="checkbox" checked={f.status === 'erledigt'} onChange={e => setFindings(x => x.map((y, j) => (j === i ? { ...y, status: e.target.checked ? 'erledigt' : 'offen' } : y)))} />
-                <span className="grow">{f.text}</span>
-                <button className="icon-btn" aria-label="Feststellung entfernen" onClick={e => { e.preventDefault(); setFindings(x => x.filter((_, j) => j !== i)); }}>✕</button>
-              </label>
-            ))}
-            <div className="row">
-              <AutoTextarea className="grow" placeholder="+ Neue Feststellung (Enter)" aria-label="Neue Feststellung" value={newFinding} onChange={e => setNewFinding(e.target.value)} submitOnEnter onSubmit={addFinding} />
+            <div className="row" style={{ justifyContent: 'space-between' }}>
+              <span className="small muted">Feststellungen der Gruppe</span>
+              <AreaStatusControl compact code={groupCode} decisions={decisions} update={update} visum={visum} />
             </div>
+            <GroupFindings code={groupCode} decisions={decisions} update={update} visum={visum} />
           </div>
         </div>
       )}

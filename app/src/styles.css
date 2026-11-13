@@ -613,3 +613,28 @@ table tr.fa-new input.num { text-align: right; }
 }
 .file-line .link { text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .focus-layout .panel-nav { flex-wrap: nowrap; white-space: nowrap; }
+
+/* ── Prüfgebiete: Status, Gruppen-Arbeitsbereich, Übersicht ── */
+.group-row td button.caret { background: none; border: 0; color: inherit; font: inherit; cursor: pointer; padding: 0 6px 0 0; width: 18px; }
+.group-row { cursor: pointer; }
+.area-chip { display: inline-block; font-size: 11px; padding: 1px 7px; border-radius: 99px; border: 1px solid var(--line-strong); color: var(--muted); white-space: nowrap; }
+.area-chip.st-in_arbeit { border-color: var(--warn-line); color: var(--warn); }
+.area-chip.st-erledigt { border-color: var(--ok-line); color: var(--ok); }
+.group-kpis, .area-kpis { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+.group-kpis > div, .area-kpis > div { background: var(--panel-2); border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; display: flex; flex-direction: column; gap: 2px; }
+.group-kpis span, .area-kpis span { font-size: 11px; color: var(--muted); }
+.group-kpis strong, .area-kpis strong { font-variant-numeric: tabular-nums; }
+.area-kpis .ok strong { color: var(--ok); } .area-kpis .warn strong { color: var(--warn); }
+.group-section { display: flex; flex-direction: column; gap: 6px; padding-top: 10px; border-top: 1px solid var(--line-soft); }
+.area-status { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.area-seg { margin: 0; width: auto; }
+.area-seg button { flex: none; padding: 5px 12px; color: var(--muted); }
+.area-status.compact .area-seg button { padding: 2px 8px; font-size: 11px; }
+.area-seg button.active.st-offen { background: var(--panel-2); color: var(--text); }
+.area-seg button.active.st-in_arbeit { background: var(--warn-bg); color: var(--warn); }
+.area-seg button.active.st-erledigt { background: var(--ok-bg); color: var(--ok); }
+.area-select { padding: 3px 6px; font-size: 12px; }
+.area-select.st-in_arbeit { color: var(--warn); border-color: var(--warn-line); }
+.area-select.st-erledigt { color: var(--ok); border-color: var(--ok-line); }
+.warn-text { color: var(--warn); }
+.area-item.overview .register.empty { background: var(--panel-2); color: var(--brand); }

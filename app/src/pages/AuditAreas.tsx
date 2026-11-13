@@ -7,6 +7,8 @@ import type { AgingItem, GroupsInfo, ReceivablesDecision, ReceivablesResult, Rev
 import type { ViewAccount, ViewDoc } from '../review';
 import { FixedAssets } from './FixedAssets';
 import { Accruals } from './Accruals';
+import { areaOverview, AREA_STATES } from '../areas';
+import type { AreaState } from '../../electron/shared';
 
 /** Prüfgebiete mit Vorjahresvergleich der Rechnungsabgrenzungen */
 export const ACCRUALS = ['A15', 'P13'];
@@ -16,14 +18,17 @@ export const FIXED = ['A21', 'A22', 'A23'];
 const BUCKETS = ['Nicht fällig', '1–30 Tage', '31–60 Tage', '61–90 Tage', '> 90 Tage'];
 /** Altersklassen als Ampel: nicht fällig (grün) bis > 90 Tage (rot) – lesbar auf dunklem Grund */
 const SHADES = ['#4fc767', '#b7d84f', '#e3b341', '#f0883e', '#f85149'];
+const OVERVIEW = '~uebersicht';
 type Sub = 'faelligkeit' | 'posten' | 'feststellungen';
 /** Sortierung Kundentabelle: Name, Total oder Index der Altersklasse */
 type CustSortKey = 'name' | 'total' | number;
 
 /** Prüfgebiete: Bilanzpositionen links, vertiefte Prüfung rechts (zuerst Forderungen aus L+L). */
-export function AuditAreas({ historyId, accounts, docs, groups, decisions, update, closingDate, rates }: {
+export function AuditAreas({ historyId, accounts, docs, groups, decisions, update, closingDate, rates, initialArea, visum = '', onOpenGroup }: {
   historyId?: string; accounts: ViewAccount[]; docs: ViewDoc[]; groups: GroupsInfo | null; decisions: ReviewDecisions;
   update: (fn: (d: ReviewDecisions) => ReviewDecisions) => void; closingDate: string | null; rates?: Record<string, number>;
+  /** vorgewähltes Prüfgebiet (sonst Übersicht); Klick in der Übersicht öffnet die Gruppe in der Bilanz */
+  initialArea?: string | null; visum?: string; onOpenGroup?: (code: string) => void;
 }) {
   const areas = useMemo(() => {
     const order = groups?.groups.filter(g => g.category === 'aktiven' || g.category === 'passiven') ?? [];
@@ -34,12 +39,15 @@ export function AuditAreas({ historyId, accounts, docs, groups, decisions, updat
       })
       .filter(a => a.n > 0);
   }, [groups, accounts, decisions.groupLetters]);
-  const [area, setArea] = useState('A12');
-  const cur = areas.find(a => a.code === area) ?? areas[0];
+  const [area, setArea] = useState(initialArea ?? OVERVIEW);
+  const cur = area === OVERVIEW ? undefined : areas.find(a => a.code === area) ?? areas[0];
   return (
     <div className="areas">
       <aside className="area-list">
-        <div className="small muted" style={{ padding: '4px 8px 8px' }}>Gezielte Analysen auf Basis der Kundenunterlagen</div>
+        <button className={`area-item overview ${area === OVERVIEW ? 'active' : ''}`} onClick={() => setArea(OVERVIEW)}>
+          <span className="register empty">≡</span><span className="grow"><span className="area-name">Übersicht</span><span className="small muted">Status, Visum, Feststellungen</span></span>
+        </button>
+        <div className="small muted" style={{ padding: '8px 8px 6px' }}>Gezielte Analysen auf Basis der Kundenunterlagen</div>
         {areas.map(a => (
           <button key={a.code} className={`area-item ${a.code === cur?.code ? 'active' : ''} ${a.code === 'A12' || FIXED.includes(a.code) || ACCRUALS.includes(a.code) ? '' : 'later'}`} onClick={() => setArea(a.code)}>
             {a.letter ? <span className="register">{a.letter}</span> : <span className="register empty" />}
@@ -49,6 +57,7 @@ export function AuditAreas({ historyId, accounts, docs, groups, decisions, updat
         ))}
       </aside>
       <section className="area-body">
+        {area === OVERVIEW && <AreaOverview accounts={accounts} groups={groups} decisions={decisions} update={update} visum={visum} onOpen={code => onOpenGroup?.(code)} />}
         {cur && (
           <div className="area-head">
             {cur.letter && <span className="register lg">{cur.letter}</span>}
@@ -69,7 +78,7 @@ export function AuditAreas({ historyId, accounts, docs, groups, decisions, updat
           <FixedAssets historyId={historyId} decisions={decisions} update={update} />
         ) : cur && ACCRUALS.includes(cur.code) && historyId ? (
           <Accruals historyId={historyId} decisions={decisions} update={update} closingDate={closingDate} />
-        ) : (
+        ) : !cur ? null : (
           <div className="card muted">Für dieses Prüfgebiet ist noch keine vertiefte Analyse verfügbar. Verfügbar sind: Forderungen aus L+L (Fälligkeitsanalyse), Sachanlagen und immaterielle Werte (Anlagespiegel) sowie aktive und passive Rechnungsabgrenzungen (Vorjahresvergleich).</div>
         )}
       </section>
@@ -431,6 +440,50 @@ function Donut({ values, total }: { values: number[]; total: number }) {
       <ul className="legend">
         {values.map((v, i) => <li key={i}><span className="dot" style={{ background: SHADES[i] }} /> {BUCKETS[i]} <strong>{total ? ((v / total) * 100).toFixed(1) : '0.0'} %</strong></li>)}
       </ul>
+    </div>
+  );
+}
+
+/** Übersicht der Prüfgebiete (Checkliste): Status und Visum direkt setzbar, Klick auf die Zeile öffnet die Gruppe in der Bilanz */
+function AreaOverview({ accounts, groups, decisions, update, visum, onOpen }: {
+  accounts: ViewAccount[]; groups: GroupsInfo | null; decisions: ReviewDecisions; update: (fn: (d: ReviewDecisions) => ReviewDecisions) => void; visum: string; onOpen: (code: string) => void;
+}) {
+  const rows = areaOverview(accounts, groups?.groups ?? [], decisions);
+  const open = rows.reduce((s, r) => s + r.findings.filter(f => f.status === 'offen').length, 0);
+  const setStatus = (code: string, s: AreaState) => update(d => ({ ...d, areaStatus: { ...d.areaStatus, [code]: { status: s, at: new Date().toISOString(), visum: visum.trim() } } }));
+  return (
+    <div className="stack" style={{ gap: 10 }}>
+      <div className="area-kpis">
+        <div><span>Prüfgebiete</span><strong>{rows.length}</strong></div>
+        <div className="ok"><span>erledigt</span><strong>{rows.filter(r => r.status === 'erledigt').length}</strong></div>
+        <div className="warn"><span>in Arbeit</span><strong>{rows.filter(r => r.status === 'in_arbeit').length}</strong></div>
+        <div className={open ? 'warn' : ''}><span>offene Feststellungen</span><strong>{open}</strong></div>
+      </div>
+      <table className="grid clickable area-overview">
+        <thead><tr><th>Reg.</th><th>Prüfgebiet</th><th className="num">Saldo</th><th className="num">Abdeckung</th><th>Vertiefte Prüfung</th><th>Status</th><th>Visum</th><th>Feststellungen</th></tr></thead>
+        <tbody>
+          {rows.map(r => {
+            const nOpen = r.findings.filter(f => f.status === 'offen').length;
+            return (
+              <tr key={r.code} data-gebiet={r.code} onClick={() => onOpen(r.code)} title={r.code === 'ER' ? 'Analyse der Erfolgsrechnung öffnen' : 'In der Bilanz bei dieser Gruppe öffnen'}>
+                <td>{r.letter ? <span className="register">{r.letter}</span> : <span className="muted">–</span>}</td>
+                <td>{r.name}</td>
+                <td className="num">{chf(r.cy)}</td>
+                <td className="num">{r.coverage === null ? '–' : pct(r.coverage)}</td>
+                <td className={r.analysis ? '' : 'muted'}>{r.analysis ?? '–'}</td>
+                <td onClick={e => e.stopPropagation()}>
+                  <select className={`area-select st-${r.status}`} value={r.status} aria-label={`Status ${r.name}`} onChange={e => setStatus(r.code, e.target.value as AreaState)}>
+                    {AREA_STATES.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+                  </select>
+                </td>
+                <td>{r.visum || <span className="muted">–</span>}{r.at && <span className="small muted"> · {date(r.at.slice(0, 10))}</span>}</td>
+                <td className={nOpen ? 'warn-text' : 'muted'} title={r.findings.map(f => `${f.status === 'erledigt' ? '☑' : '☐'} ${f.text}`).join('\n')}>{nOpen ? `${nOpen} offen` : r.findings.length ? 'alle erledigt' : '–'}</td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+      <p className="small muted">Klick auf eine Zeile öffnet die Bilanz bei dieser Gruppe mit dem Gruppen-Arbeitsbereich. Die Übersicht erscheint beim Abschliessen als Blatt „Prüfgebiete“ im Excel.</p>
     </div>
   );
 }

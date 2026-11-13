@@ -119,6 +119,8 @@ export interface ReviewDecisions {
   /** Fokus-Modus: Beilagen zur vertieften Prüfung je Gruppe (abgelegt als <Buchstabe>.100.n) und Feststellungen je Gruppe */
   groupAttachments?: Record<string, { id: string; name: string; path: string; account?: string | null }[]>;
   groupFindings?: Record<string, { text: string; status: 'offen' | 'erledigt'; at?: string; visum?: string }[]>;
+  /** Status je Prüfgebiet (Gruppencode, „ER“ = Erfolgsrechnung) mit Visum */
+  areaStatus?: Record<string, { status: AreaState; at: string; visum: string }>;
   /** Konto (Nummer) -> vom Prüfer gewählte Gruppe (Code); zugeordnete Belege und Register folgen dem Konto */
   groupOverrides?: Record<string, { groupCode: string; at: string; visum: string }>;
   analyses?: { receivables?: ReceivablesDecision; fixedAssets?: FixedAssetsDecision; accruals?: AccrualsDecision };
@@ -308,3 +310,5 @@ export interface LedgerAccountView {
 
 /** Vom Prüfer hochgeladener Nachweis (Felder wie ein Beleg im Belegverzeichnis) */
 export interface UploadedDoc { id: string; filename: string; relPath: string; absPath: string; uploaded?: boolean; [k: string]: unknown }
+
+export type AreaState = 'offen' | 'in_arbeit' | 'erledigt';

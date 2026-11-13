@@ -1,6 +1,6 @@
 import type { LocalOcr } from '../../ingest/ocr.js';
 import type { Grid } from './parser.js';
-import { pdfjsOptions } from '../../ingest/pdfjsAssets.js';
+import { loadPdfjs, pdfjsOptions } from '../../ingest/pdfjsAssets.js';
 
 /** Textstück mit horizontaler Lage (relativ zur Seitenbreite, 0–1) */
 interface Token {
@@ -19,7 +19,7 @@ const isAmountLike = (t: string) => AMOUNT_RX.test(t.trim()) && /\d/.test(t);
  * Spalten werden aus der Lage rekonstruiert (untereinander stehende Beträge = eine Spalte).
  */
 export async function pdfToGrid(buffer: Buffer, ocr?: LocalOcr): Promise<{ grid: Grid; ocrPages: number }> {
-  const { getDocumentProxy, renderPageAsImage, createIsomorphicCanvasFactory } = await import('unpdf');
+  const { getDocumentProxy, renderPageAsImage, createIsomorphicCanvasFactory } = await loadPdfjs();
   const CanvasFactory = await createIsomorphicCanvasFactory(() => import('@napi-rs/canvas'));
   const pdf = await getDocumentProxy(new Uint8Array(buffer), { CanvasFactory, ...pdfjsOptions() } as never);
   const lines: Line[] = [];

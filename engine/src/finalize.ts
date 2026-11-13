@@ -28,7 +28,9 @@ export interface ReviewDecisions {
   /** Beilagen zur vertieften Prüfung je Gruppe (Code) – abgelegt als <Buchstabe>.100.1, .100.2 … (nach denen der Abgrenzungen) */
   groupAttachments?: Record<string, { id: string; name: string; path: string; account?: string | null }[]>;
   /** Feststellungen je Gruppe (Code), z. B. aus dem Fokus-Modus */
-  groupFindings?: Record<string, { text: string; status: 'offen' | 'erledigt' }[]>;
+  groupFindings?: Record<string, { text: string; status: 'offen' | 'erledigt'; at?: string; visum?: string }[]>;
+  /** Status je Prüfgebiet (Gruppencode, „ER“ = Erfolgsrechnung): offen / in Arbeit / erledigt mit Visum */
+  areaStatus?: Record<string, AreaStatus>;
   /** Konto (Nummer) -> vom Prüfer gewählte Gruppe (Code); Belege und Register folgen dem Konto */
   groupOverrides?: GroupOverrides;
   /** Vertiefte Prüfungen (Prüfgebiete) */
@@ -47,6 +49,9 @@ export interface ReviewDecisions {
     receivables?: { docId: string | null; docIds?: string[]; accounts?: string[]; termDays: number; rates: Record<string, number>; findings: { text: string; status: 'offen' | 'erledigt' }[]; visum?: string; note?: string; assigned?: Record<string, string[]> };
   };
 }
+
+export type AreaState = 'offen' | 'in_arbeit' | 'erledigt';
+export interface AreaStatus { status: AreaState; at: string; visum: string }
 
 export interface Review {
   decisions: ReviewDecisions;

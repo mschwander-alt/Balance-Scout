@@ -3,7 +3,7 @@ import { readFile, readdir, stat } from 'node:fs/promises';
 import path from 'node:path';
 import Papa from 'papaparse';
 import type { LocalOcr } from './ocr.js';
-import { pdfjsOptions } from './pdfjsAssets.js';
+import { loadPdfjs, pdfjsOptions } from './pdfjsAssets.js';
 
 /** Position auf der Seite, relativ zur Seitengrösse (0–1), Ursprung oben links */
 export interface BBox {
@@ -160,7 +160,7 @@ export async function readDocument(absPath: string, relPath: string, ctx: ReadCo
 
 // ---------------------------------------------------------------- PDF
 async function readPdf(buf: Buffer, doc: EvidenceDocument, ctx: ReadContext): Promise<void> {
-  const { getDocumentProxy, renderPageAsImage, createIsomorphicCanvasFactory } = await import('unpdf');
+  const { getDocumentProxy, renderPageAsImage, createIsomorphicCanvasFactory } = await loadPdfjs();
   doc.method = 'pdf';
   // Zeichenfläche ausdrücklich aus Node (@napi-rs/canvas): pdf.js hält sich im Electron-Hintergrundprozess
   // sonst für einen Browser und scheitert beim Rendern von Scan-Seiten.

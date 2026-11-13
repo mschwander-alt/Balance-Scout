@@ -44,3 +44,26 @@ export function pdfjsOptions(): Record<string, unknown> {
     disableFontFace: true,
   };
 }
+
+let pdfjsReady: Promise<typeof import('unpdf')> | null = null;
+/**
+ * unpdf mit dem vollständigen pdf.js (`pdfjs-dist`, gleiche Version wie in unpdf).
+ * Die in unpdf eingebaute Serverless-Variante lädt keine Bilddecoder: CCITT-Fax- und JBIG2-Scans (1-Bit, typisch für
+ * Bank- und Kopierer-Scans) sowie JPEG 2000 blieben in Vorschau und Texterkennung weiss.
+ * Der Worker läuft im selben Prozess (`globalThis.pdfjsWorker`) – im Electron-Hilfsprozess gibt es keinen Web-Worker.
+ */
+export function loadPdfjs(): Promise<typeof import('unpdf')> {
+  pdfjsReady ??= (async () => {
+    const unpdf = await import('unpdf');
+    try {
+      const workerPath: string = 'pdfjs-dist/legacy/build/pdf.worker.mjs';
+      const worker: unknown = await import(workerPath);
+      (globalThis as { pdfjsWorker?: unknown }).pdfjsWorker = worker;
+      await unpdf.definePDFJSModule(() => import('pdfjs-dist/legacy/build/pdf.mjs'));
+    } catch {
+      // pdfjs-dist fehlt: eingebaute Variante (ohne Bilddecoder) verwenden
+    }
+    return unpdf;
+  })();
+  return pdfjsReady;
+}

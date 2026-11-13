@@ -7,6 +7,7 @@ import { mkdtempSync, readdirSync, existsSync, readFileSync, writeFileSync } fro
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import assert from 'node:assert/strict';
+import { createRequire } from 'node:module';
 
 const root = path.resolve(import.meta.dirname, '..', '..');
 const FIX = path.resolve(root, '..', 'engine', 'test', 'fixtures', 'alpen');
@@ -283,8 +284,50 @@ const savedDec = JSON.parse(readFileSync(readdirSync(userData).filter(f => f.sta
 assert.equal(Object.keys(savedDec.accepted).length, 1);
 assert.ok(Object.keys(savedDec.assignments).length >= 2);
 
-// ---------------- Prüfgebiete: Forderungen L+L – Fälligkeitsanalyse ----------------
+// ---------------- Gruppen-Arbeitsbereich: Klick auf die Gruppenzeile ----------------
+await page.getByRole('tab', { name: 'Bilanz', exact: true }).click();
+await page.locator('tr.group-row[data-gruppe="A10"]').click();
+const gp = page.locator('aside.group-panel');
+await gp.waitFor();
+assert.match(await gp.locator('h3').innerText(), /Flüssige Mittel/);
+const nGp = await gp.locator('tr[data-gruppenkonto]').count();
+assert.ok(nGp >= 2, `Konten in der Gruppe: ${nGp}`);
+await gp.getByRole('radio', { name: 'erledigt' }).click();
+await gp.getByText('Visum MS').waitFor();
+await gp.getByLabel('Neue Feststellung').fill('Bankbestätigung UBS per Stichtag nachfordern');
+await gp.getByLabel('Neue Feststellung').press('Enter');
+await gp.locator('.finding', { hasText: 'Bankbestätigung UBS' }).waitFor();
+await page.locator('tr.group-row[data-gruppe="A10"] [data-areastatus="erledigt"]').waitFor();
+await page.screenshot({ path: `${shots}-6b-gruppe.png` });
+// Konto aus der Gruppe öffnen, Esc führt zurück zur Gruppe, nochmals Esc schliesst
+await gp.locator('tr[data-gruppenkonto]').first().click();
+await page.locator('aside.preview-panel:not(.group-panel)').waitFor();
+await page.keyboard.press('Escape');
+await gp.waitFor();
+await page.keyboard.press('Escape');
+await gp.waitFor({ state: 'detached' });
+// Zuklappen über den Pfeil öffnet keinen Arbeitsbereich
+await page.getByRole('button', { name: 'Flüssige Mittel zuklappen' }).click();
+assert.equal(await gp.count(), 0);
+await page.getByRole('button', { name: 'Flüssige Mittel aufklappen' }).click();
+step(`Gruppen-Arbeitsbereich: ${nGp} Konten, Status erledigt mit Visum, Feststellung erfasst`);
+
+// ---------------- Prüfgebiete: Übersicht, danach Forderungen L+L – Fälligkeitsanalyse ----------------
 await page.getByRole('tab', { name: 'Prüfgebiete' }).click();
+const ovA10 = page.locator('table.area-overview tr[data-gebiet="A10"]');
+await ovA10.waitFor();
+assert.equal(await ovA10.locator('select').inputValue(), 'erledigt');
+assert.match(await ovA10.innerText(), /MS[\s\S]*1 offen/);
+await page.getByLabel('Status Forderungen aus Lieferungen und Leistungen').selectOption('in_arbeit');
+assert.equal(await page.locator('.area-kpis .warn strong').first().innerText(), '1');
+assert.ok(await page.locator('table.area-overview tr[data-gebiet="ER"]').count() === 1, 'Erfolgsrechnung als Prüfgebiet');
+await page.screenshot({ path: `${shots}-6c-pruefgebiete.png` });
+// Klick auf die Zeile → Bilanz mit Gruppen-Arbeitsbereich
+await ovA10.locator('td').nth(1).click();
+await page.locator('aside.group-panel h3', { hasText: 'Flüssige Mittel' }).waitFor();
+await page.getByRole('tab', { name: 'Prüfgebiete' }).click();
+await page.locator('.area-item', { hasText: 'Forderungen aus Lieferungen' }).click();
+step('Übersicht Prüfgebiete: Status setzbar, Klick führt zur Gruppe');
 // Nur Belege, die Forderungskonten zugeordnet sind, stehen zur Auswahl; die Analyse startet erst auf Knopfdruck
 await page.locator('.pick-line', { hasText: 'OP_Debitoren' }).waitFor();
 assert.equal(await page.locator('.recon').count(), 0, 'Analyse darf nicht automatisch laufen');
@@ -335,6 +378,15 @@ const irrelevant = readdirSync(path.join(target, '03_Nicht_relevant'));
 const excel = readdirSync(target).filter(f => f.endsWith('.xlsx'));
 console.log(`Ablage: ${assigned.length} zugeordnet (${assigned.slice(0, 6).join(', ')} …), ${unassigned.length} nicht zugeordnet, ${irrelevant.length} nicht relevant, Excel: ${excel.join(', ')}`);
 assert.equal(excel.length, 1);
+{
+  const JSZip = createRequire(path.resolve(root, '..', 'engine', 'package.json'))('jszip');
+  const z = await JSZip.loadAsync(readFileSync(path.join(target, excel[0])));
+  assert.match(await z.file('xl/workbook.xml').async('string'), /name="Übersicht"[\s\S]*name="Prüfgebiete"/);
+  const strings = await z.file('xl/sharedStrings.xml')?.async('string') ?? '';
+  const sheets = await Promise.all(Object.keys(z.files).filter(f => /^xl\/worksheets\/sheet\d+\.xml$/.test(f)).map(f => z.file(f).async('string')));
+  assert.ok((strings + sheets.join('')).includes('Bankbestätigung UBS per Stichtag nachfordern'), 'Feststellung im Blatt Prüfgebiete');
+  step('Excel: Blatt „Prüfgebiete“ mit Status und Feststellungen');
+}
 assert.equal(unassigned.length, 0);
 assert.ok(assigned.filter(f => /^[A-Z]+\d*\.\d+_/.test(f)).length >= 12, 'Dateinamen mit Register');
 assert.ok(assigned.includes(`A.1_${generalDoc.split('/').pop()}`), 'Allgemeine Prüfungen mit Register A');
@@ -382,7 +434,7 @@ const fb = await page.evaluate(id => window.bsb.review.fixedAssets(id, {}), bc.h
 assert.deepEqual(fb.rows.map(x => [x.accountNumber, x.wbAccount, x.closing, x.tbDiff]), [['1500', '1501', 21490000, 0], ['1510', null, 3900000, 0], ['1530', '1531', 2400000, 0]]);
 assert.equal(fb.expense.diff, 0);
 // Oberfläche: Prüfgebiet Mobile Sachanlagen
-await page.getByRole('button', { name: 'Übersicht' }).click();
+await page.getByRole('button', { name: 'Übersicht', exact: true }).click();
 await page.locator('.hist > div', { hasText: 'Muster Maschinen AG' }).first().getByRole('button', { name: /Durchsicht fortsetzen|Ergebnis/ }).click();
 await page.getByRole('tab', { name: 'Prüfgebiete' }).click();
 await page.locator('.area-item', { hasText: 'Mobile Sachanlagen' }).click();
@@ -444,7 +496,7 @@ const rap = await page.evaluate(F => window.bsb.engine.run({
   mandate: 'Muster Treuhand AG', closingDate: '2026-06-30', trialBalancePath: F + '/Saldobilanz_2026.xlsx', signConvention: 'signed', evidencePaths: [F + '/Saldobilanz_2026.xlsx'],
   targetDir: null, fileMode: 'none', absoluteToleranceCents: 100, ledgerPaths: [F + '/Kontoblaetter_2026.xlsx'],
 }), RAP);
-await page.getByRole('button', { name: 'Übersicht' }).click();
+await page.getByRole('button', { name: 'Übersicht', exact: true }).click();
 await page.locator('.hist > div', { hasText: 'Muster Treuhand AG' }).first().getByRole('button', { name: /Durchsicht fortsetzen|Ergebnis/ }).click();
 await page.getByRole('tab', { name: 'Prüfgebiete' }).click();
 await page.locator('.area-item', { hasText: 'Aktive Rechnungsabgrenzungen' }).click();
@@ -513,7 +565,7 @@ assert.ok(sp.validation.checks.filter(c => c.name.startsWith('Aktuelles Jahr')).
 step(`Bilanz.xlsx + Erfolgsrechnung.pdf: ${sp.accounts.length} Konten, ${sp.excluded.length} Zeilen ausgeblendet`);
 
 // Verlauf nach Neustart
-await page.getByRole('button', { name: 'Übersicht' }).click();
+await page.getByRole('button', { name: 'Übersicht', exact: true }).click();
 await page.getByText('Letzte Prüfungen').waitFor();
 assert.ok((await page.locator('.hist').innerText()).includes('Alpenblick Treuhand AG'));
 const hist = JSON.parse(readFileSync(path.join(userData, 'history.json'), 'utf8'));
