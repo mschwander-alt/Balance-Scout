@@ -116,6 +116,9 @@ export interface ReviewDecisions {
   incomePlacements?: Record<string, { section: string; sub?: string }>;
   /** Analyse Erfolgsrechnung: Bezugsgrösse je Zeile (Kontonummer bzw. R:/S:/U:…), z. B. AHV in % des Lohnaufwands */
   incomeRowBases?: Record<string, IncomeBase>;
+  /** Fokus-Modus: Beilagen zur vertieften Prüfung je Gruppe (abgelegt als <Buchstabe>.100.n) und Feststellungen je Gruppe */
+  groupAttachments?: Record<string, { id: string; name: string; path: string; account?: string | null }[]>;
+  groupFindings?: Record<string, { text: string; status: 'offen' | 'erledigt'; at?: string; visum?: string }[]>;
   /** Konto (Nummer) -> vom Prüfer gewählte Gruppe (Code); zugeordnete Belege und Register folgen dem Konto */
   groupOverrides?: Record<string, { groupCode: string; at: string; visum: string }>;
   analyses?: { receivables?: ReceivablesDecision; fixedAssets?: FixedAssetsDecision; accruals?: AccrualsDecision };
@@ -243,6 +246,8 @@ export interface BsbBridge {
     receivables(id: string, p: Partial<ReceivablesDecision> & { groupOverrides?: ReviewDecisions['groupOverrides'] }): Promise<ReceivablesResult>;
     /** Kontoblatt eines Kontos (Datei, Kontokopf, Kennzahlen, Buchungen) */
     ledgerAccount(id: string, accountNumber: string): Promise<LedgerAccountView>;
+    /** Vom Prüfer hochgeladener Nachweis: gelesen und in die Prüfung aufgenommen (Zuordnung folgt als Entscheid) */
+    addDocument(id: string, path: string): Promise<UploadedDoc>;
     exportReceivables(id: string, p: Partial<ReceivablesDecision> & { groupOverrides?: ReviewDecisions['groupOverrides'] }, suggestedName: string, format: 'xlsx' | 'pptx'): Promise<string | null>;
   };
   app: {
@@ -300,3 +305,6 @@ export interface LedgerAccountView {
   head: { page: number; lineNo: number; bbox?: { x0: number; y0: number; x1: number; y1: number } };
   postings: { date: string; text: string; contra: string | null; docNo: string | null; amount: number; balance: number | null; page: number; lineNo: number; bbox?: { x0: number; y0: number; x1: number; y1: number } }[];
 }
+
+/** Vom Prüfer hochgeladener Nachweis (Felder wie ein Beleg im Belegverzeichnis) */
+export interface UploadedDoc { id: string; filename: string; relPath: string; absPath: string; uploaded?: boolean; [k: string]: unknown }

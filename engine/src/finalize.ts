@@ -25,6 +25,10 @@ export interface ReviewDecisions {
   notes?: Record<string, { text: string; at: string; visum: string }>;
   /** Gruppe (Code, z. B. "A10") -> Registerbuchstabe (z. B. "B"); leer = ohne Präfix */
   groupLetters?: Record<string, string>;
+  /** Beilagen zur vertieften Prüfung je Gruppe (Code) – abgelegt als <Buchstabe>.100.1, .100.2 … (nach denen der Abgrenzungen) */
+  groupAttachments?: Record<string, { id: string; name: string; path: string; account?: string | null }[]>;
+  /** Feststellungen je Gruppe (Code), z. B. aus dem Fokus-Modus */
+  groupFindings?: Record<string, { text: string; status: 'offen' | 'erledigt' }[]>;
   /** Konto (Nummer) -> vom Prüfer gewählte Gruppe (Code); Belege und Register folgen dem Konto */
   groupOverrides?: GroupOverrides;
   /** Vertiefte Prüfungen (Prüfgebiete) */
@@ -228,6 +232,18 @@ export async function placeReviewed(
       });
     }
   }
+  // Beilagen zu Analysen: fortlaufend je Registerbuchstabe <Buchstabe>.100.1, .100.2 … (immer als Kopie)
+  const attachCount = new Map<string, number>();
+  const placeAttachment = async (letter: string, f: { id: string; name: string; path: string }, docId: string): Promise<string | null> => {
+    let content: Buffer;
+    try { content = await readFile(f.path); } catch { return null; } // Datei inzwischen verschoben/gelöscht
+    const n = (attachCount.get(letter) ?? 0) + 1;
+    attachCount.set(letter, n);
+    const register = letter ? `${letter}.100.${n}` : `Beilage ${n}`;
+    const target = `${letter ? `${letter}.100.${n}` : `Beilage_${n}`}_${f.name}`;
+    plans.push({ docId, absPath: f.path, relPath: target, sha256: '', assigned: true, targetName: target, generated: true, content });
+    return register;
+  };
   // Vertiefte Prüfung Forderungen: Fälligkeitsanalyse als eigener Nachweis (z. B. E.5_Analyse_Fälligkeit.xlsx)
   const rcv = decisions.analyses?.receivables;
   if (rcv) {
@@ -274,17 +290,17 @@ export async function placeReviewed(
       // Angehängte Dateien: <Buchstabe>.100.1, .100.2 … (immer als Kopie – das Original bleibt beim Prüfer)
       const atts: { register: string; name: string; account: string; position?: string | null }[] = [];
       for (const f of acr.attachments ?? []) {
-        let content: Buffer;
-        try { content = await readFile(f.path); } catch { continue; } // Datei inzwischen verschoben/gelöscht
-        const n = atts.length + 1;
-        const register = letter ? `${letter}.100.${n}` : `Beilage ${n}`;
-        const target = `${letter ? `${letter}.100.${n}` : `Beilage_${n}`}_${f.name}`;
-        atts.push({ register, name: f.name, account: f.account, position: f.position ?? null });
-        plans.push({ docId: `analyse:abgrenzungen:beilage:${f.id}`, absPath: f.path, relPath: target, sha256: '', assigned: true, targetName: target, generated: true, content });
+        const register = await placeAttachment(letter, f, `analyse:abgrenzungen:beilage:${f.id}`);
+        if (register) atts.push({ register, name: f.name, account: f.account, position: f.position ?? null });
       }
       plans.push({ docId: 'analyse:abgrenzungen', absPath: '', relPath: name, sha256: '', assigned: true, targetName: name, generated: true,
         content: await accrualsWorkbook(r, { mandate: res.input.mandate, closingDate: res.input.closingDate ?? '', notes: acr.notes, note: acr.note, visum: acr.visum, attachments: atts }) });
     }
+  }
+  // Beilagen der übrigen Prüfgebiete (Fokus-Modus „Beilage zur Analyse“)
+  for (const [group, list] of Object.entries(decisions.groupAttachments ?? {})) {
+    const letter = (decisions.groupLetters?.[group] ?? '').trim();
+    for (const f of list) await placeAttachment(letter, f, `analyse:beilage:${group}:${f.id}`);
   }
   // Analyse der Erfolgsrechnung: als Nachweis, sobald Bemerkungen erfasst sind
   const notes = Object.fromEntries(Object.entries(decisions.incomeNotes ?? {}).filter(([, n]) => n.text.trim()));

@@ -317,3 +317,24 @@ export async function runAudit(input: RunInput): Promise<RunResult> {
     await ocr.close();
   }
 }
+
+/**
+ * Nachträglich vom Prüfer hochgeladener Nachweis (z. B. Saldobestätigung): Zusammenfassung wie bei den Kundenbelegen
+ * (erkanntes Datum, massgebender Betrag, Beträge für Vorschläge, Suchtext). Die Zuordnung zum Konto erfolgt als
+ * manueller Entscheid der Durchsicht.
+ */
+export function summarizeUploadedDocument(d: EvidenceDocument, closingDate: string | null): DocumentSummary {
+  const facts = detectBalanceDate(d, closingDate);
+  const a = extractAmounts(d.id, d.lines);
+  const kw = a.filter(x => x.context.balanceKeyword);
+  const pick = kw.length ? kw[kw.length - 1]! : [...a].sort((x, y) => Math.abs(y.cents) - Math.abs(x.cents))[0];
+  return {
+    doc: d, docType: guessDocType(d), balanceDate: facts?.date ?? null, balanceDateEvidence: facts?.evidence ?? null,
+    amountCount: a.length,
+    keyAmount: pick ? { cents: pick.cents, page: pick.page, lineNo: pick.lineNo, line: pick.line, bbox: pick.bbox } : null,
+    keyDate: facts?.date ?? findDates(d)[0]?.iso ?? null,
+    amountSet: [...new Set(a.map(x => Math.abs(x.cents)))].slice(0, 400),
+    searchText: d.lines.map(l => l.text).join(' ').toLowerCase().slice(0, 8000),
+    assignedAccounts: [], assigned: false, targetName: d.filename, placement: null,
+  };
+}

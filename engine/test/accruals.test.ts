@@ -157,7 +157,8 @@ describe('Abschluss: Aufstellung <Buchstabe>.100, Anhänge <Buchstabe>.100.1 …
     const tmp = await mkdtemp(path.join(tmpdir(), 'bs-rap-'));
     const pol = path.join(tmp, 'Police_SwissLife.pdf');
     const ver = path.join(tmp, 'Vertrag_Abacus.pdf');
-    await writeFile(pol, '%PDF-1.4 Police'); await writeFile(ver, '%PDF-1.4 Vertrag');
+    const mail = path.join(tmp, 'Mail_Revision.msg');
+    await writeFile(pol, '%PDF-1.4 Police'); await writeFile(ver, '%PDF-1.4 Vertrag'); await writeFile(mail, 'Mail');
     const run = await runAudit({ mandate: 'Muster Treuhand AG', closingDate: '2026-06-30', trialBalancePath: path.join(DIR, 'Saldobilanz_2026.xlsx'), evidencePaths: [path.join(DIR, 'Saldobilanz_2026.xlsx')], targetDir: null, fileMode: 'none', ledgerPaths: [path.join(DIR, 'Kontoblaetter_2026.xlsx')] });
     const letters = defaultGroupLetters();
     const swiss = accrualsFor(run).accounts[0]!.positions.find(x => x.label.startsWith('Swiss Life'))!;
@@ -166,10 +167,10 @@ describe('Abschluss: Aufstellung <Buchstabe>.100, Anhänge <Buchstabe>.100.1 …
       { id: 'a1', name: 'Police_SwissLife.pdf', path: pol, account: '1300', position: swiss.key },
       { id: 'a2', name: 'Vertrag_Abacus.pdf', path: ver, account: '1300' },
       { id: 'a3', name: 'weg.pdf', path: path.join(tmp, 'gibt-es-nicht.pdf'), account: '1300' },
-    ] } } }, { targetDir: target, fileMode: 'move', reportDir: tmp });
+    ] } }, groupAttachments: { P13: [{ id: 'g1', name: 'Mail_Revision.msg', path: mail }] } }, { targetDir: target, fileMode: 'move', reportDir: tmp });
     const L = letters.A15 || letters.P13; // wie beim Abschluss: Buchstabe der aktiven, sonst der passiven Abgrenzungen
     const files = (await readdir(path.join(target, '01_Zugeordnet'))).filter(f => f.startsWith(`${L}.100`)).sort();
-    expect(files).toEqual([`${L}.100.1_Police_SwissLife.pdf`, `${L}.100.2_Vertrag_Abacus.pdf`, `${L}.100_Analyse_Rechnungsabgrenzungen.xlsx`]);
+    expect(files).toEqual([`${L}.100.1_Police_SwissLife.pdf`, `${L}.100.2_Vertrag_Abacus.pdf`, `${L}.100.3_Mail_Revision.msg`, `${L}.100_Analyse_Rechnungsabgrenzungen.xlsx`]);
     expect(existsSync(pol) && existsSync(ver)).toBe(true); // Anhänge immer kopiert
     expect(out.result.analysisFiles?.map(f => f.name)).toContain(`${L}.100_Analyse_Rechnungsabgrenzungen.xlsx`);
     const ExcelJS = (await import('exceljs')).default;

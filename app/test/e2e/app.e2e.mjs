@@ -475,6 +475,36 @@ await page.screenshot({ path: `${shots}-9d-abgrenzungen-manuell.png` });
 step('Rechnungsabgrenzungen manuell: Position korrigiert, Position hinzugefügt, Beleg angehängt');
 step('Rechnungsabgrenzungen: Vorjahresvergleich 139\'514.45 / 104\'811.00, 12 Positionen zugeordnet, 2 neu');
 
+// Fokus-Modus: Bilanz eingeklappt – links Prüfung der Gruppe, rechts das Konto, unten Notiz/Feststellungen/Dateien
+await page.getByRole('tab', { name: 'Bilanz', exact: true }).click();
+await page.locator('tr[data-konto="1300"]').click();
+await page.getByRole('button', { name: 'Fokus-Modus', exact: true }).click();
+const focusL = page.locator('.focus-layout');
+await focusL.waitFor();
+await focusL.locator('.focus-rail .rail-acc.active', { hasText: '1300' }).waitFor();
+await focusL.locator('.focus-analysis', { hasText: 'Vorjahresvergleich der Abgrenzungen' }).waitFor();
+await focusL.locator('.preview-panel h3', { hasText: '1300' }).waitFor();
+await page.getByLabel('Neue Feststellung').fill('Police Swiss Life 2026 nachfordern');
+await page.getByLabel('Neue Feststellung').press('Enter');
+await focusL.locator('.finding', { hasText: 'Police Swiss Life 2026 nachfordern' }).waitFor();
+await page.getByLabel('Notiz zum Konto').fill('Abgrenzungen mit Kontoblatt abgestimmt.');
+await page.getByRole('tab', { name: /Nachweise & Dateien/ }).click();
+await page.getByRole('button', { name: 'Beilage anhängen …' }).click();
+await focusL.locator('.file-line', { hasText: 'Beilage Analyse' }).waitFor();
+await page.getByRole('button', { name: 'Nachweis hochladen …' }).click();
+await focusL.locator('.file-line', { hasText: 'hochgeladen' }).waitFor({ timeout: 30_000 });
+await page.screenshot({ path: `${shots}-9f-fokus.png` });
+// Blättern in der Kontoleiste: nächstes Konto, Analyse wechselt mit
+await focusL.locator('.focus-rail .rail-acc', { hasText: '2300' }).click();
+await focusL.locator('.preview-panel h3', { hasText: '2300' }).waitFor();
+await page.getByRole('tab', { name: 'Verlauf' }).click();
+await focusL.locator('.history-list').waitFor();
+await page.getByRole('button', { name: '⇥ Bilanz einblenden' }).click();
+await page.locator('table.konten').waitFor();
+const persisted = readFileSync(path.join(userData, `result-${rap.historyId}.json`), 'utf8');
+assert.ok(persisted.includes('Nachweise Prüfer/Police_SwissLife_2026.pdf'), 'hochgeladener Nachweis im Ergebnis gespeichert');
+step('Fokus-Modus: Kontoleiste, Prüfung links, Konto rechts, Feststellung, Notiz, Beilage und Nachweis hochgeladen');
+
 // Bilanz und Erfolgsrechnung getrennt, mit Zwischensummen: Vorschau über die Schnittstelle
 const SPLIT = path.resolve(root, '..', 'engine', 'test', 'fixtures', 'tb_split');
 const sp = await page.evaluate(p => window.bsb.engine.previewTrialBalance(p, 'signed', { accountDigits: { min: 4, max: 4 } }), [path.join(SPLIT, 'Bilanz_2025.xlsx'), path.join(SPLIT, 'Erfolgsrechnung_2025.pdf')]);

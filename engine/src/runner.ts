@@ -25,6 +25,7 @@ export type Request =
   | { id: string; type: 'finalize'; snapshotPath: string; decisions: ReviewDecisions; targetDir: string | null; fileMode: FileMode; reportDir: string }
   | { id: string; type: 'groups' }
   /** Vertiefte Prüfung Sachanlagen: Anlagespiegel (optional als Excel speichern) */
+  | { id: string; type: 'addDocument'; snapshotPath: string; path: string; ocr?: { langPath?: string } }
   | { id: string; type: 'ledgerAccount'; snapshotPath: string; accountNumber: string }
   | { id: string; type: 'accruals'; snapshotPath: string; groupOverrides?: GroupOverrides; manual?: Record<string, import('./analysis/accruals.js').ManualAccrual[]>; edits?: Record<string, { label?: string; cy?: number; py?: number }>; attachments?: { id: string; name: string; path: string; account: string; position?: string | null }[]; accounts?: string[]; classes?: Record<string, 'vorjahr' | 'laufend' | 'unterjaehrig'>; notes?: Record<string, { text: string }>; note?: string; visum?: string; exportPath?: string }
   | { id: string; type: 'income'; snapshotPath: string; groupOverrides?: GroupOverrides; base?: import('./analysis/incomeStatement.js').IncomeBase | null; placements?: import('./analysis/incomeStatement.js').IncomePlacements; rowBases?: Record<string, import('./analysis/incomeStatement.js').IncomeBase>; notes?: Record<string, { text: string; at?: string; visum?: string }>; exportPath?: string; visum?: string }
@@ -130,6 +131,31 @@ async function handle(req: Request): Promise<unknown> {
       await writeFile(req.exportPath, await fixedAssetsWorkbook(r, { mandate: res.input.mandate, closingDate: res.input.closingDate ?? '', findings: req.findings ?? [], note: req.note, visum: req.visum, sources: res.ledger?.sources }));
     }
     return r;
+  }
+  if (req.type === 'addDocument') {
+    // Vom Prüfer hochgeladener Nachweis: lesen (auch Scan), in die Prüfung aufnehmen; Zuordnung zum Konto folgt als Entscheid
+    const snap = await loadSnapshot(req.snapshotPath);
+    const { readDocument } = await import('./ingest/readDocument.js');
+    const { summarizeUploadedDocument } = await import('./run.js');
+    const relBase = `Nachweise Prüfer/${path.basename(req.path)}`;
+    let rel = relBase;
+    for (let n = 2; snap.documents.some(d => d.doc.relPath === rel); n++) rel = relBase.replace(/(\.[^.]+)?$/, m => ` (${n})${m}`);
+    const { LocalOcr } = await import('./ingest/ocr.js');
+    const ocr = new LocalOcr(req.ocr);
+    let doc;
+    try { doc = await readDocument(req.path, rel, { ocr }); } finally { await ocr.close(); }
+    const sum = summarizeUploadedDocument(doc, snap.input.closingDate);
+    snap.documents.push(sum);
+    await saveSnapshot(snap, req.snapshotPath);
+    const d = sum;
+    return {
+      id: d.doc.id, filename: d.doc.filename, relPath: d.doc.relPath, absPath: d.doc.absPath, ext: d.doc.ext, size: d.doc.size,
+      status: d.doc.status, method: d.doc.method, pageCount: d.doc.pageCount, ocrPages: d.doc.ocrPages, ocrConfidence: d.doc.ocrConfidence,
+      warnings: d.doc.warnings, docType: d.docType, balanceDate: d.balanceDate, amountCount: d.amountCount,
+      assigned: false, assignedAccounts: [], targetName: d.targetName, placement: null, notePath: null,
+      keyAmount: d.keyAmount ?? null, keyDate: d.keyDate ?? null, amountSet: d.amountSet ?? [], searchText: d.searchText ?? '', register: null, irrelevant: false,
+      uploaded: true,
+    };
   }
   if (req.type === 'ledgerAccount') {
     // Kontoblatt eines Kontos für die Vorschau (Reiter „Kontoblatt“): Datei, Kontokopf, Kennzahlen, Buchungen

@@ -578,3 +578,38 @@ table tr.fa-new input.num { text-align: right; }
 .ledger-postings tbody tr { cursor: pointer; }
 .ledger-postings tbody tr:hover td { background: var(--hover); }
 .ledger-view .viewer { min-height: 260px; }
+
+/* ── Fokus-Modus: Kontoleiste | vertiefte Prüfung | Konto, unten Kommentare & Dateien ── */
+.focus-layout { display: grid; grid-template-columns: 112px minmax(0, 1fr) minmax(380px, 40%); grid-template-rows: minmax(0, 1fr) auto; gap: 10px; height: calc(100vh - 170px); min-height: 520px; }
+.focus-rail { grid-row: 1 / span 2; display: flex; flex-direction: column; background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); min-height: 0; }
+.focus-exit { border: 0; border-bottom: 1px solid var(--line); background: var(--panel-2); color: var(--brand); font: inherit; font-size: 11px; padding: 8px 4px; cursor: pointer; border-radius: var(--radius) var(--radius) 0 0; }
+.focus-rail-list { flex: 1; overflow: auto; padding: 4px; }
+.rail-group { margin-bottom: 6px; }
+.rail-head { display: flex; align-items: center; gap: 4px; font-size: 10px; color: var(--muted); padding: 4px 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-transform: uppercase; letter-spacing: .03em; }
+.rail-head .register { font-size: 10px; padding: 0 4px; }
+.rail-acc { display: flex; align-items: center; gap: 6px; width: 100%; border: 0; background: none; color: var(--text); font: inherit; font-size: 12px; font-variant-numeric: tabular-nums; padding: 3px 6px; border-radius: 4px; cursor: pointer; text-align: left; }
+.rail-acc:hover { background: var(--hover); }
+.rail-acc.active { background: var(--accent-bg); color: var(--brand); font-weight: 600; box-shadow: inset 2px 0 0 var(--brand); }
+.rail-foot { padding: 6px; border-top: 1px solid var(--line); text-align: center; font-size: 10px; }
+.focus-analysis { display: flex; flex-direction: column; background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); min-height: 0; min-width: 0; }
+.focus-analysis-head { display: flex; align-items: center; gap: 8px; padding: 10px 14px; border-bottom: 1px solid var(--line); background: var(--panel-2); border-radius: var(--radius) var(--radius) 0 0; }
+.focus-analysis-body { flex: 1; overflow: auto; padding: 12px 14px; min-height: 0; }
+.focus-layout > .preview-panel { position: static; max-height: none; min-height: 0; overflow: auto; }
+.focus-bottom { grid-column: 2 / span 2; background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); max-height: 34vh; overflow: auto; display: flex; flex-direction: column; }
+.focus-bottom-tabs { padding: 0 12px; align-items: center; position: sticky; top: 0; background: var(--panel); z-index: 1; }
+.focus-bottom-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; padding: 12px; }
+.focus-bottom .drop-zones { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.focus-bottom .drop { padding: 10px; text-align: left; line-height: 1.4; }
+.focus-toggle { font-size: 11px !important; width: auto !important; padding: 0 6px !important; color: var(--brand) !important; }
+.finding { display: flex; align-items: flex-start; gap: 8px; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel-2); font-size: 13px; }
+.finding.erledigt .grow { text-decoration: line-through; color: var(--muted); }
+.file-line { display: flex; align-items: center; gap: 8px; padding: 4px 0; border-bottom: 1px solid var(--line-soft); }
+.register.outline { background: transparent; border: 1px solid var(--line-strong); color: var(--muted); }
+.history-list { list-style: none; margin: 0; padding: 10px 14px; display: flex; flex-direction: column; gap: 4px; font-size: 13px; }
+@media (max-width: 1100px) {
+  .focus-layout { grid-template-columns: 90px minmax(0, 1fr); height: auto; }
+  .focus-layout > .preview-panel, .focus-bottom { grid-column: 2; }
+  .focus-bottom-grid { grid-template-columns: 1fr; }
+}
+.file-line .link { text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.focus-layout .panel-nav { flex-wrap: nowrap; white-space: nowrap; }

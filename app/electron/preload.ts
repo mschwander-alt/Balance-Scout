@@ -31,6 +31,7 @@ const bridge: BsbBridge & { app: BsbBridge['app'] & { loadResult(id: string): Pr
     receivables: (id, p) => ipcRenderer.invoke('review:receivables', id, p),
     analysis: (id, type, p) => ipcRenderer.invoke('review:analysis', id, type, p),
     ledgerAccount: (id, n) => ipcRenderer.invoke('review:ledgerAccount', id, n),
+    addDocument: (id, p) => ipcRenderer.invoke('review:addDocument', id, p),
     exportAnalysis: (id, type, p, name) => ipcRenderer.invoke('review:exportAnalysis', id, type, p, name),
     exportReceivables: (id, p, name, format) => ipcRenderer.invoke('review:exportReceivables', id, p, name, format),
   },

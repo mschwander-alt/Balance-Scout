@@ -332,6 +332,15 @@ function registerIpc(): void {
     if (!existsSync(userFile(`snapshot-${id}.json`))) throw new Error('Analysedaten fehlen – bitte die Prüfung erneut starten.');
     return call<unknown>({ ...params, type, snapshotPath: userFile(`snapshot-${id}.json`) });
   });
+  // Fokus-Modus: vom Prüfer hochgeladener Nachweis – gelesen (auch Scan), in die Prüfung aufgenommen, für die Vorschau freigegeben
+  ipcMain.handle('review:addDocument', async (_e, id: string, filePath: string) => {
+    if (!existsSync(userFile(`snapshot-${id}.json`))) throw new Error('Analysedaten fehlen – bitte die Prüfung erneut starten.');
+    const doc = await call<{ absPath: string }>({ type: 'addDocument', snapshotPath: userFile(`snapshot-${id}.json`), path: filePath, ocr: { langPath: tessdata() } });
+    const saved = readJson<{ documents?: unknown[] } & Record<string, unknown> | null>(`result-${id}.json`, null);
+    if (saved) writeJson(`result-${id}.json`, { ...saved, documents: [...(saved.documents ?? []), doc] });
+    previewAllowed.add(path.resolve(doc.absPath));
+    return doc;
+  });
   // Reiter „Kontoblatt“: Kontoblatt eines Kontos; die Datei wird für die Vorschau freigegeben
   ipcMain.handle('review:ledgerAccount', async (_e, id: string, accountNumber: string) => {
     if (!existsSync(userFile(`snapshot-${id}.json`))) throw new Error('Analysedaten fehlen – bitte die Prüfung erneut starten.');

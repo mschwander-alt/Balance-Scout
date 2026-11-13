@@ -10,6 +10,7 @@ import { AuditAreas } from './AuditAreas';
 import { IncomeAnalysisView } from './IncomeAnalysis';
 import { useDragAutoScroll } from '../components/dragScroll';
 import { LedgerView } from '../components/LedgerView';
+import { FocusRail, GroupAnalysis, FocusBottom } from './FocusMode';
 import { GENERAL_ACCOUNT, accountLabel, targetsOf, deriveView, groupAccounts, type ViewAccount, type ViewDoc } from '../review';
 
 type Tab = 'konten' | 'erfolg' | 'belege' | 'gebiete' | 'saldobilanz' | 'diagnose';
@@ -35,6 +36,8 @@ export function Result({ result: initial, onRepeat }: { result: AuditResult; onR
   const [erView, setErView] = useState<'konten' | 'analyse'>('analyse');
   // Reiter im Konto-Panel – bleibt beim Blättern ‹ › stehen (z. B. Konto für Konto durch die Kontoblätter)
   const [panelTab, setPanelTab] = useState<PanelTab>('beleg');
+  // Fokus-Modus: Bilanz eingeklappt zur Kontoleiste – links vertiefte Prüfung, rechts das Konto, unten Kommentare und Dateien
+  const [focus, setFocus] = useState(false);
   // Drag & Drop: Konto in eine andere Gruppe verschieben
   const [dragAcc, setDragAcc] = useState<string | null>(null);
   const [dropGroup, setDropGroup] = useState<string | null>(null);
@@ -96,7 +99,7 @@ export function Result({ result: initial, onRepeat }: { result: AuditResult; onR
     const h = (e: KeyboardEvent) => {
       const tag = (e.target as HTMLElement)?.tagName;
       if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
-      if (e.key === 'Escape') return setOpen(null);
+      if (e.key === 'Escape') { if (focus) return setFocus(false); return setOpen(null); }
       if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
       e.preventDefault();
       const list = grouped ? groupAccounts(accounts, order).flatMap(g => g.items) : accounts;
@@ -109,7 +112,7 @@ export function Result({ result: initial, onRepeat }: { result: AuditResult; onR
     };
     window.addEventListener('keydown', h);
     return () => window.removeEventListener('keydown', h);
-  }, [tab, accounts, open, grouped, order]);
+  }, [tab, accounts, open, grouped, order, focus]);
 
   const now = () => new Date().toISOString();
   const needVisum = () => visum.trim();
@@ -172,6 +175,24 @@ export function Result({ result: initial, onRepeat }: { result: AuditResult; onR
     const { [num]: _x, ...rest } = d.notes ?? {};
     return { ...d, notes: text.trim() ? { ...rest, [num]: { text, at: now(), visum: needVisum() } } : rest };
   });
+
+  /** Nachweis zum Konto hochladen: Datei lesen (inkl. Texterkennung), ins Belegverzeichnis aufnehmen und dem Konto zuordnen */
+  const addEvidence = async (num: string, files: { path: string; name: string }[]) => {
+    if (!id) return;
+    needVisum();
+    let n = 0;
+    for (const f of files) {
+      try {
+        const doc = await bsb().review.addDocument(id, f.path);
+        setResult(r => ({ ...r, documents: [...r.documents.filter(d => d.id !== doc.id), doc as unknown as AuditResult['documents'][number]] }));
+        update(d => ({ ...d, assignments: { ...d.assignments, [doc.id]: { accountNumber: num, at: now(), visum: needVisum() } } }));
+        n++;
+      } catch (e) {
+        toast('error', `${f.name}: ${(e as Error).message}`);
+      }
+    }
+    if (n) toast('ok', `${n} Nachweis${n > 1 ? 'e' : ''} hochgeladen und Konto ${num} zugeordnet.`);
+  };
 
   const finalize = async () => {
     if (!id) return;
@@ -254,7 +275,28 @@ export function Result({ result: initial, onRepeat }: { result: AuditResult; onR
       {tab === 'erfolg' && erView === 'analyse' && id && (
         <IncomeAnalysisView historyId={id} decisions={decisions} update={update} visum={visum} closingDate={result.input?.closingDate ?? null} onMoveGroup={moveAccount} />
       )}
-      {(tab === 'konten' || (tab === 'erfolg' && erView === 'konten')) && (
+      {(tab === 'konten' || (tab === 'erfolg' && erView === 'konten')) && focus && sel && id && (
+        <div className="focus-layout">
+          <FocusRail groups={grouped ? groupAccounts(accounts, order) : [{ code: '', name: 'Alle Konten', items: accounts }]} open={open} setOpen={setOpen}
+            letters={decisions.groupLetters ?? groups?.letters ?? {}} onExit={() => setFocus(false)} />
+          <GroupAnalysis sel={sel} group={groupAccounts(view.accounts.filter(a => isER(a) === isER(sel)), order).find(g => g.code === (sel.groupCode ?? ''))}
+            historyId={id} decisions={decisions} update={update} docs={view.docs} letter={(decisions.groupLetters ?? groups?.letters ?? {})[sel.groupCode ?? ''] ?? ''}
+            rates={result.fxRates?.rates ?? result.input?.fxRates?.rates ?? {}} visum={visum} closingDate={result.input?.closingDate ?? null} onMoveGroup={moveAccount} />
+          <AccountPanel
+            key={sel.accountNumber} a={sel} docs={view.docs} filedPath={filed(sel.docId)?.placement?.newPath ?? null}
+            note={decisions.notes?.[sel.accountNumber]} accepted={decisions.accepted?.[sel.accountNumber]}
+            nav={navInfo(sel.accountNumber)}
+            onAccept={() => accept(sel)} onUnaccept={() => unaccept(sel)} onNote={t => setNote(sel.accountNumber, t)}
+            onAssign={docId => assignAlso(docId, sel.accountNumber)} onUnassign={docId => unassignFrom(docId, sel.accountNumber)} onClose={() => setFocus(false)}
+            groupOptions={groups?.groups ?? []} onGroup={code => moveAccount(sel.accountNumber, code)}
+            tab={panelTab} onTab={setPanelTab} historyId={id} focus onFocus={() => setFocus(false)} hideNote
+          />
+          <FocusBottom sel={sel} groupCode={sel.groupCode ?? ''} letter={(decisions.groupLetters ?? groups?.letters ?? {})[sel.groupCode ?? ''] ?? ''}
+            decisions={decisions} update={update} docs={view.docs} visum={visum} onNote={t => setNote(sel.accountNumber, t)}
+            onAddEvidence={files => addEvidence(sel.accountNumber, files)} />
+        </div>
+      )}
+      {(tab === 'konten' || (tab === 'erfolg' && erView === 'konten')) && !(focus && sel && id) && (
         <div className={`result-layout ${sel ? 'withpreview' : 'nopanel'}`}>
           <div className="stack" style={{ gap: 6 }}>
             <div className="row small" style={{ justifyContent: 'space-between' }}>
@@ -295,7 +337,7 @@ export function Result({ result: initial, onRepeat }: { result: AuditResult; onR
               onAccept={() => accept(sel)} onUnaccept={() => unaccept(sel)} onNote={t => setNote(sel.accountNumber, t)}
               onAssign={docId => assignAlso(docId, sel.accountNumber)} onUnassign={docId => unassignFrom(docId, sel.accountNumber)} onClose={() => setOpen(null)}
               groupOptions={groups?.groups ?? []} onGroup={code => moveAccount(sel.accountNumber, code)}
-              tab={panelTab} onTab={setPanelTab} historyId={id}
+              tab={panelTab} onTab={setPanelTab} historyId={id} onFocus={id ? () => setFocus(true) : undefined}
             />
           )}
         </div>
@@ -512,13 +554,15 @@ function DocLine({ d, accounts, filedInfo, onAssign }: { d: ViewDoc; accounts: V
 type PanelTab = 'beleg' | 'kontoblatt';
 const PANEL_TABS: [PanelTab, string][] = [['beleg', 'Beleg'], ['kontoblatt', 'Kontoblatt']];
 
-function AccountPanel({ a, docs, filedPath, note, accepted, nav, onAccept, onUnaccept, onNote, onAssign, onUnassign, onClose, groupOptions = [], onGroup, tab = 'beleg', onTab, historyId }: {
+function AccountPanel({ a, docs, filedPath, note, accepted, nav, onAccept, onUnaccept, onNote, onAssign, onUnassign, onClose, groupOptions = [], onGroup, tab = 'beleg', onTab, historyId, focus = false, onFocus, hideNote = false }: {
   a: ViewAccount; docs: ViewDoc[]; filedPath: string | null; note?: { text: string; at: string; visum: string }; accepted?: { visum: string; at: string; comment?: string };
   nav: { pos: number; count: number; prev: () => void; next: () => void };
   onAccept: () => void; onUnaccept: () => void; onNote: (t: string) => void; onAssign: (docId: string) => void; onUnassign: (docId: string) => void; onClose: () => void;
   /** Gruppe ändern (Code) bzw. zurücksetzen (null) */
   groupOptions?: { code: string; name: string; category: string }[]; onGroup?: (code: string | null) => void;
   tab?: PanelTab; onTab?: (t: PanelTab) => void; historyId?: string;
+  /** Fokus-Modus ein-/ausschalten; im Fokus-Modus steht die Notiz unten */
+  focus?: boolean; onFocus?: () => void; hideNote?: boolean;
 }) {
   const found = a.autoStatus === 'BELEGT' || a.autoStatus === 'PRUEFEN';
   const all: Best[] = found && a.best ? [a.best, ...a.candidates] : a.candidates;
@@ -552,6 +596,7 @@ function AccountPanel({ a, docs, filedPath, note, accepted, nav, onAccept, onUna
           <button aria-label="vorheriges Konto" onClick={nav.prev} disabled={nav.pos <= 1}>‹</button>
           <span className="small">{nav.pos} / {nav.count}</span>
           <button aria-label="nächstes Konto" onClick={nav.next} disabled={nav.pos >= nav.count}>›</button>
+          {onFocus && <button className="focus-toggle" aria-label={focus ? 'Fokus-Modus beenden' : 'Fokus-Modus'} title={focus ? 'Bilanz wieder einblenden' : 'Fokus-Modus: Bilanz einklappen, vertiefte Prüfung links, Konto rechts, Kommentare unten'} onClick={onFocus}>{focus ? '⤡' : '⤢ Fokus'}</button>}
           <button aria-label="Schliessen (Esc)" onClick={onClose}>✕</button>
         </span>
       </div>
@@ -612,7 +657,7 @@ function AccountPanel({ a, docs, filedPath, note, accepted, nav, onAccept, onUna
         {manualDoc
           ? <button className="btn" onClick={() => onUnassign(manualDoc.id)}>Zuordnung aufheben</button>
           : (a.status === 'KEIN_NACHWEIS' || a.status === 'PRUEFEN') && candidatesToAssign.length > 0 && <button className={`btn ${showAssign ? 'on' : ''}`} onClick={() => setShowAssign(v => !v)}>Beleg zuordnen</button>}
-        <button className={`btn ${showNote ? 'on' : ''}`} onClick={() => setShowNote(v => !v)}>Notiz{note?.text ? ' ✓' : ''}</button>
+        {!hideNote && <button className={`btn ${showNote ? 'on' : ''}`} onClick={() => setShowNote(v => !v)}>Notiz{note?.text ? ' ✓' : ''}</button>}
       </div>
       {showAssign && !manualDoc && (
         <select className="assign" style={{ maxWidth: '100%' }} value="" onChange={e => { if (e.target.value) { onAssign(e.target.value); setShowAssign(false); } }}>
@@ -620,7 +665,7 @@ function AccountPanel({ a, docs, filedPath, note, accepted, nav, onAccept, onUna
           {candidatesToAssign.map(d => <option key={d.id} value={d.id}>{d.relPath}{d.assigned ? ` (bereits: ${d.accounts.map(accountLabel).join(', ')})` : ''}</option>)}
         </select>
       )}
-      {showNote && (
+      {showNote && !hideNote && (
         <div className="note-field">
           <AutoTextarea minRows={2} maxLength={500} value={noteText} onChange={e => setNoteText(e.target.value)} onBlur={() => noteText !== (note?.text ?? '') && onNote(noteText)} placeholder="z. B. Saldo mit Bankbestätigung abgestimmt." autoFocus={!note?.text} />
           <div className="note-meta"><span>{a.docId ? 'Wird dem Beleg als erste Seite vorangestellt.' : 'Erscheint in der Excel-Dokumentation.'}</span><span>{note ? `${note.visum || '–'}, ${date(note.at.slice(0, 10))} · ` : ''}{noteText.length} / 500</span></div>

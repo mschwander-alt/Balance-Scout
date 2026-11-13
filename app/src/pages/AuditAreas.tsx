@@ -9,10 +9,10 @@ import { FixedAssets } from './FixedAssets';
 import { Accruals } from './Accruals';
 
 /** Prüfgebiete mit Vorjahresvergleich der Rechnungsabgrenzungen */
-const ACCRUALS = ['A15', 'P13'];
+export const ACCRUALS = ['A15', 'P13'];
 
 /** Prüfgebiete mit Anlagespiegel: mobile/immobile Sachanlagen, immaterielle Werte */
-const FIXED = ['A21', 'A22', 'A23'];
+export const FIXED = ['A21', 'A22', 'A23'];
 const BUCKETS = ['Nicht fällig', '1–30 Tage', '31–60 Tage', '61–90 Tage', '> 90 Tage'];
 /** Altersklassen als Ampel: nicht fällig (grün) bis > 90 Tage (rot) – lesbar auf dunklem Grund */
 const SHADES = ['#4fc767', '#b7d84f', '#e3b341', '#f0883e', '#f85149'];
@@ -77,7 +77,7 @@ export function AuditAreas({ historyId, accounts, docs, groups, decisions, updat
   );
 }
 
-function Receivables({ historyId, docs, decisions, update, letter, defaultRates }: {
+export function Receivables({ historyId, docs, decisions, update, letter, defaultRates }: {
   historyId: string; docs: ViewDoc[]; decisions: ReviewDecisions; update: (fn: (d: ReviewDecisions) => ReviewDecisions) => void; letter: string; defaultRates: Record<string, number>;
 }) {
   const toast = useToast();
