@@ -23,6 +23,27 @@ describe('Anlagespiegel aus Kontoblättern', () => {
     expect(r.candidates.map(c => c.accountNumber)).not.toContain('6800');
   });
 
+  it('Zugangsliste: alle Zugangsbuchungen, Summe = Zugänge; manuelle Klassierung fliesst ein; im Excel als Blatt „Zugänge“', async () => {
+    const r = fixedAssetsFor(res);
+    expect(r.additionsList.length).toBeGreaterThan(0);
+    expect(r.additionsList.reduce((s, a) => s + a.amount, 0)).toBe(r.totals.additions);
+    for (const row of r.rows) expect(r.additionsList.filter(a => a.assetAccount === row.accountNumber).reduce((s, a) => s + a.amount, 0)).toBe(row.additions);
+    expect(r.additionsList.every(a => a.date && a.key && !a.manual)).toBe(true);
+    // eine Abschreibung als Zugang umklassieren → erscheint (markiert) in der Liste
+    const dep = r.rows.find(x => x.accountNumber === '1510')!.postings.find(p => p.cls === 'abschreibung')!;
+    const r2 = fixedAssetsFor(res, { classes: { [dep.key]: 'zugang' } });
+    expect(r2.additionsList.find(a => a.key === dep.key)).toMatchObject({ assetAccount: '1510', manual: true });
+    expect(r2.additionsList.reduce((s, a) => s + a.amount, 0)).toBe(r2.totals.additions);
+    const ExcelJS = (await import('exceljs')).default;
+    const { fixedAssetsWorkbook } = await import('../src/report/fixedAssetsExcel.js');
+    const wb = new ExcelJS.Workbook();
+    await wb.xlsx.load(await fixedAssetsWorkbook(r, { mandate: 'Muster Bau AG', closingDate: '2025-12-31', findings: [] }) as never);
+    expect(wb.worksheets.map(w => w.name)).toEqual(['Anlagespiegel', 'Zugänge', 'Buchungen']);
+    const zs = wb.getWorksheet('Zugänge')!;
+    expect(zs.getCell(4, 1).value).toBe('Anlagekonto');
+    expect(zs.getCell(5 + r.additionsList.length, 1).value).toBe('Total');
+  });
+
   it('ESTV-Kategorie und effektiver Satz; Abschreibung über Normalsatz wird gemeldet', () => {
     const r = fixedAssetsFor(res);
     const by = Object.fromEntries(r.rows.map(x => [x.accountNumber, x]));
@@ -47,4 +68,38 @@ describe('Anlagespiegel aus Kontoblättern', () => {
     expect(classify(p('Ausbuchen RW VW Tiguan', -100), new Set()).cls).toBe('abgang');
     expect(classify(p('RG ER0302 Evident Europe GmbH', 100), new Set()).cls).toBe('zugang');
   });
+});
+
+describe('Anlagespiegel: manuelle Buchungen', () => {
+  it('fehlende Aktivierung als Zugang erfassen: Zugänge, Zugangsliste, Endbestand, Hinweis', async () => {
+    const path = (await import('node:path')).default;
+    const { runAudit } = await import('../src/index.js');
+    const D = path.resolve(import.meta.dirname, 'fixtures', 'anlagen');
+    const run = await runAudit({ mandate: 'Muster Bau AG', closingDate: '2025-12-31', trialBalancePath: path.join(D, 'Saldobilanz_2025.xlsx'), evidencePaths: [path.join(D, 'Saldobilanz_2025.xlsx')], targetDir: null, fileMode: 'none', ledgerPaths: [path.join(D, 'Kontoblaetter_2025.pdf')] });
+    const r0 = fixedAssetsFor(run);
+    const r = fixedAssetsFor(run, { manual: { '1510': [{ id: 'x1', date: '2025-11-30', text: 'Büromöbel (nicht aktiviert)', amount: 500_000, cls: 'zugang' }] } });
+    const a0 = r0.rows.find(x => x.accountNumber === '1510')!;
+    const a = r.rows.find(x => x.accountNumber === '1510')!;
+    expect([a.additions - a0.additions, a.closing - a0.closing, a.tbDiff]).toEqual([500_000, 500_000, 500_000]);
+    expect(r.additionsList.find(x => x.key === '1510|M|x1')).toMatchObject({ manual: true, amount: 500_000, text: 'Büromöbel (nicht aktiviert)' });
+    expect(a.postings.find(x => x.key === '1510|M|x1')).toMatchObject({ manual: true, cls: 'zugang' });
+    expect(a.flags.join(' ')).toMatch(/1 manuelle Buchung des Prüfers \(CHF 5'000.00\)/);
+  }, 60_000);
+});
+
+describe('Kontoblatt für die Vorschau (Reiter „Kontoblatt“)', () => {
+  it('je Konto: Datei, Kontokopf (Seite/Zeile) und Lage der Buchungen auf der Seite', async () => {
+    const path = (await import('node:path')).default;
+    const { runAudit } = await import('../src/index.js');
+    const D = path.resolve(import.meta.dirname, 'fixtures', 'anlagen');
+    const run = await runAudit({ mandate: 'Muster Bau AG', closingDate: '2025-12-31', trialBalancePath: path.join(D, 'Saldobilanz_2025.xlsx'), evidencePaths: [path.join(D, 'Saldobilanz_2025.xlsx')], targetDir: null, fileMode: 'none', ledgerPaths: [path.join(D, 'Kontoblaetter_2025.pdf')] });
+    const la = run.ledger!.accounts.find(a => a.accountNumber === '1500')!;
+    expect(la.sourcePath).toBe(path.join(D, 'Kontoblaetter_2025.pdf'));
+    expect(la.head).toMatchObject({ page: la.pages[0] });
+    expect(la.head!.bbox).toBeDefined();
+    // Kontokopf vor der ersten Buchung, Buchungen mit Lage auf der Seite
+    const first = la.postings[0]!;
+    expect(first.page > la.head!.page || first.lineNo > la.head!.lineNo).toBe(true);
+    expect(la.postings.every(p => p.bbox)).toBe(true);
+  }, 60_000);
 });

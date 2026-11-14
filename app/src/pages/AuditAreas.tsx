@@ -1,75 +1,31 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { bsb } from '../bridge';
 import { chf, date, pct } from '../format';
-import { Info, Spinner, useToast } from '../components/ui';
+import { AutoTextarea, Info, Spinner, useToast } from '../components/ui';
 import { DocumentPreview } from '../components/DocumentPreview';
 import type { AgingItem, GroupsInfo, ReceivablesDecision, ReceivablesResult, ReviewDecisions } from '../../electron/shared';
 import type { ViewAccount, ViewDoc } from '../review';
 import { FixedAssets } from './FixedAssets';
+import { Accruals } from './Accruals';
+import { receivablesAuto, type AutoResults } from '../procedureAuto';
+
+/** Prüfgebiete mit Vorjahresvergleich der Rechnungsabgrenzungen */
+export const ACCRUALS = ['A15', 'P13'];
 
 /** Prüfgebiete mit Anlagespiegel: mobile/immobile Sachanlagen, immaterielle Werte */
-const FIXED = ['A21', 'A22', 'A23'];
+export const FIXED = ['A21', 'A22', 'A23'];
 const BUCKETS = ['Nicht fällig', '1–30 Tage', '31–60 Tage', '61–90 Tage', '> 90 Tage'];
-const SHADES = ['#1f5f9e', '#3b82c4', '#6ea6d9', '#a4c8ea', '#d4e5f6'];
+/** Altersklassen als Ampel: nicht fällig (grün) bis > 90 Tage (rot) – lesbar auf dunklem Grund */
+const SHADES = ['#4fc767', '#b7d84f', '#e3b341', '#f0883e', '#f85149'];
+const OVERVIEW = '~uebersicht';
 type Sub = 'faelligkeit' | 'posten' | 'feststellungen';
+/** Sortierung Kundentabelle: Name, Total oder Index der Altersklasse */
+type CustSortKey = 'name' | 'total' | number;
 
-/** Prüfgebiete: Bilanzpositionen links, vertiefte Prüfung rechts (zuerst Forderungen aus L+L). */
-export function AuditAreas({ historyId, accounts, docs, groups, decisions, update, closingDate, rates }: {
-  historyId?: string; accounts: ViewAccount[]; docs: ViewDoc[]; groups: GroupsInfo | null; decisions: ReviewDecisions;
-  update: (fn: (d: ReviewDecisions) => ReviewDecisions) => void; closingDate: string | null; rates?: Record<string, number>;
-}) {
-  const areas = useMemo(() => {
-    const order = groups?.groups.filter(g => g.category === 'aktiven' || g.category === 'passiven') ?? [];
-    return order
-      .map(g => {
-        const items = accounts.filter(a => a.groupCode === g.code);
-        return { code: g.code, name: g.name, letter: decisions.groupLetters?.[g.code] ?? '', cy: items.reduce((s, a) => s + a.balance, 0), vj: items.reduce((s, a) => s + (a.balancePreviousYear ?? 0), 0), n: items.length };
-      })
-      .filter(a => a.n > 0);
-  }, [groups, accounts, decisions.groupLetters]);
-  const [area, setArea] = useState('A12');
-  const cur = areas.find(a => a.code === area) ?? areas[0];
-  return (
-    <div className="areas">
-      <aside className="area-list">
-        <div className="small muted" style={{ padding: '4px 8px 8px' }}>Gezielte Analysen auf Basis der Kundenunterlagen</div>
-        {areas.map(a => (
-          <button key={a.code} className={`area-item ${a.code === cur?.code ? 'active' : ''} ${a.code === 'A12' || FIXED.includes(a.code) ? '' : 'later'}`} onClick={() => setArea(a.code)}>
-            {a.letter ? <span className="register">{a.letter}</span> : <span className="register empty" />}
-            <span className="grow"><span className="area-name">{a.name}</span><span className="small muted">CHF {chf(Math.abs(a.cy))}</span></span>
-            <span className="muted">›</span>
-          </button>
-        ))}
-      </aside>
-      <section className="area-body">
-        {cur && (
-          <div className="area-head">
-            {cur.letter && <span className="register lg">{cur.letter}</span>}
-            <div className="grow">
-              <h2>{cur.name}</h2>
-              <p className="small muted">{cur.code === 'A12' ? 'Vertiefte Prüfung – Fälligkeitsanalyse' : FIXED.includes(cur.code) ? 'Vertiefte Prüfung – Anlagespiegel und Abschreibungen' : 'Vertiefte Prüfung folgt'}</p>
-            </div>
-            <div className="saldo-box">
-              <span className="small muted">Saldo per {date(closingDate)}</span>
-              <strong>CHF {chf(Math.abs(cur.cy))}</strong>
-              <span className="small muted">VJ {chf(Math.abs(cur.vj))}{cur.vj ? ` · Δ ${(((Math.abs(cur.cy) - Math.abs(cur.vj)) / Math.abs(cur.vj)) * 100).toFixed(1)} %` : ''}</span>
-            </div>
-          </div>
-        )}
-        {cur?.code === 'A12' && historyId ? (
-          <Receivables historyId={historyId} docs={docs} decisions={decisions} update={update} letter={cur.letter} defaultRates={rates ?? {}} />
-        ) : cur && FIXED.includes(cur.code) && historyId ? (
-          <FixedAssets historyId={historyId} decisions={decisions} update={update} />
-        ) : (
-          <div className="card muted">Für dieses Prüfgebiet ist noch keine vertiefte Analyse verfügbar. Verfügbar sind: Forderungen aus L+L (Fälligkeitsanalyse) sowie Sachanlagen und immaterielle Werte (Anlagespiegel).</div>
-        )}
-      </section>
-    </div>
-  );
-}
-
-function Receivables({ historyId, docs, decisions, update, letter, defaultRates }: {
+export function Receivables({ historyId, docs, decisions, update, letter, defaultRates, onSummary }: {
   historyId: string; docs: ViewDoc[]; decisions: ReviewDecisions; update: (fn: (d: ReviewDecisions) => ReviewDecisions) => void; letter: string; defaultRates: Record<string, number>;
+  /** Ergebnis für die Prüfungshandlungen (Abstimmung, Altersstruktur) */
+  onSummary?: (s: AutoResults) => void;
 }) {
   const toast = useToast();
   const saved = decisions.analyses?.receivables;
@@ -80,26 +36,32 @@ function Receivables({ historyId, docs, decisions, update, letter, defaultRates 
   const [r, setR] = useState<ReceivablesResult | null>(null);
   const [busy, setBusy] = useState(false);
   const [sub, setSub] = useState<Sub>('faelligkeit');
+  useEffect(() => { if (r && onSummary) onSummary(receivablesAuto(r, letter ? `${letter}.100` : '')); }, [r, letter, onSummary]);
   const [cust, setCust] = useState<string | null>(null);
   const [item, setItem] = useState<AgingItem | null>(null);
   const [newFinding, setNewFinding] = useState('');
+  const [custFilter, setCustFilter] = useState('');
+  const [custSort, setCustSort] = useState<{ key: CustSortKey; dir: 1 | -1 }>({ key: 'total', dir: -1 });
   // Zuordnung aus der Durchsicht (inkl. manueller Änderungen und Mehrfachzuordnung)
   const assigned = useMemo(() => Object.fromEntries(docs.map(d => [d.id, d.accounts])), [docs]);
   const assignedKey = JSON.stringify(assigned);
+  // Vom Prüfer verschobene Konten (Gruppe) – Forderungskonten können neu dazukommen oder wegfallen
+  const groupOverrides = decisions.groupOverrides;
+  const overridesKey = JSON.stringify(groupOverrides ?? {});
 
   // Kandidaten laden: Belege, die Konten der Forderungen L+L zugeordnet sind (noch keine Analyse)
   useEffect(() => {
-    void bsb().review.receivables(historyId, { docIds: ['__keine__'], assigned }).then(res => {
+    void bsb().review.receivables(historyId, { docIds: ['__keine__'], assigned, groupOverrides }).then(res => {
       setInfo(res);
       setParams(p => (p.docIds?.length ? p : { ...p, docIds: res.candidates.filter(c => c.looksLikeOpList).map(c => c.docId) }));
     }, e => toast('error', (e as Error).message));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [historyId, assignedKey, toast]);
+  }, [historyId, assignedKey, overridesKey, toast]);
 
   const run = async (p: ReceivablesDecision) => {
     setBusy(true);
     try {
-      const res = await bsb().review.receivables(historyId, { ...p, assigned });
+      const res = await bsb().review.receivables(historyId, { ...p, assigned, groupOverrides });
       setR(res);
       return res;
     } catch (e) {
@@ -115,7 +77,7 @@ function Receivables({ historyId, docs, decisions, update, letter, defaultRates 
     const t = setTimeout(() => void run(params), 300);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [started, params.termDays, params.rates, params.docIds, params.accounts, assignedKey]);
+  }, [started, params.termDays, params.rates, params.docIds, params.accounts, assignedKey, overridesKey]);
   // Gestartete Analyse in den Entscheiden speichern (Abschluss legt sie als Nachweis ab)
   useEffect(() => {
     if (started) update(d => ({ ...d, analyses: { ...d.analyses, receivables: { ...params, assigned } } }));
@@ -138,15 +100,28 @@ function Receivables({ historyId, docs, decisions, update, letter, defaultRates 
   const selDocs = params.docIds ?? [];
   const accFromDocs = [...new Set(cands.filter(c => selDocs.includes(c.docId)).flatMap(c => c.accounts))];
   const selAccounts = params.accounts?.length ? params.accounts : accFromDocs;
+  const setAccounts = (accounts: string[]) => setParams(p => ({ ...p, accounts: [...new Set(accounts)] }));
+  // Abstimmung: Forderungskonten und gewählte Konten als Häkchen, alle übrigen Konten über die Auswahlliste
+  const accOpts = info?.accountOptions ?? [];
+  const shownAccounts = accOpts.filter(o => o.suggested || selAccounts.includes(o.accountNumber));
+  const otherAccounts = accOpts.filter(o => !o.suggested && !selAccounts.includes(o.accountNumber));
   const a = started ? r?.aging : null;
   const opDocOf = (i: AgingItem) => docs.find(d => d.id === ((i as AgingItem & { sourceDocId?: string }).sourceDocId ?? r?.docId));
-  const customers = a?.customers ?? [];
-  const top = customers.slice(0, 8);
-  const rest = customers.slice(8);
+  // Forderungen nach Kunden: alle Kunden, durchsuchbar und sortierbar
+  const customers = useMemo(() => {
+    const q = custFilter.trim().toLowerCase();
+    const list = (a?.customers ?? []).filter(c => !q || `${c.customerNo} ${c.customerName}`.toLowerCase().includes(q));
+    const val = (c: (typeof list)[number]) => (custSort.key === 'name' ? 0 : custSort.key === 'total' ? c.totalChf : c.buckets[custSort.key]!);
+    return [...list].sort((x, y) => custSort.key === 'name'
+      ? (x.customerName || x.customerNo).localeCompare(y.customerName || y.customerNo, 'de') * custSort.dir
+      : (val(x) - val(y)) * custSort.dir || (x.customerName || '').localeCompare(y.customerName || '', 'de'));
+  }, [a, custFilter, custSort]);
+  const sortBy = (key: CustSortKey) => setCustSort(s => (s.key === key ? { key, dir: s.dir === 1 ? -1 : 1 } : { key, dir: key === 'name' ? 1 : -1 }));
+  const sortMark = (key: CustSortKey) => (custSort.key === key ? (custSort.dir === 1 ? ' ▲' : ' ▼') : '');
   const diff = a && r?.balanceChf !== null && r?.balanceChf !== undefined ? a.totalChf - r.balanceChf : null;
   const custItems = a && cust !== null ? a.items.filter(i => `${i.customerNo}|${i.customerName}` === cust) : [];
   const fileName = `${letter ? `${letter}.x_` : ''}Analyse_Fälligkeit`;
-  const exportParams = { ...params, assigned };
+  const exportParams = { ...params, assigned, groupOverrides };
 
   return (
     <div className="stack" style={{ gap: 10 }}>
@@ -168,12 +143,20 @@ function Receivables({ historyId, docs, decisions, update, letter, defaultRates 
           </div>
           <div>
             <div className="small muted">Abstimmung mit Konto</div>
-            {(info?.accountOptions ?? []).map(o => (
+            {shownAccounts.map(o => (
               <label key={o.accountNumber} className="pick-line">
-                <input type="checkbox" checked={selAccounts.includes(o.accountNumber)} onChange={e => setParams(p => ({ ...p, accounts: e.target.checked ? [...selAccounts, o.accountNumber] : selAccounts.filter(x => x !== o.accountNumber) }))} />
+                <input type="checkbox" checked={selAccounts.includes(o.accountNumber)} onChange={e => setAccounts(e.target.checked ? [...selAccounts, o.accountNumber] : selAccounts.filter(x => x !== o.accountNumber))} />
                 <span>{o.accountNumber} {o.accountName}</span><span className="small muted">CHF {chf(o.balance)}</span>
+                {!o.suggested && <span className="flag" title="Konto gehört nicht zu den Forderungen aus L+L">andere Gruppe</span>}
               </label>
             ))}
+            {otherAccounts.length > 0 && (
+              <select className="add-account" value="" aria-label="Weiteres Konto für die Abstimmung"
+                onChange={e => { if (e.target.value) setAccounts([...selAccounts, e.target.value]); }}>
+                <option value="">+ Weiteres Konto hinzufügen …</option>
+                {otherAccounts.map(o => <option key={o.accountNumber} value={o.accountNumber}>{o.accountNumber} {o.accountName} · CHF {chf(o.balance)}</option>)}
+              </select>
+            )}
           </div>
         </div>
         <div className="row" style={{ marginTop: 8 }}>
@@ -243,12 +226,22 @@ function Receivables({ historyId, docs, decisions, update, letter, defaultRates 
                 <div className="card kpi2"><span className="small muted">Ø Überfälligkeit</span><strong>{a.kpis.avgDaysOverdue} Tage</strong><span className="small muted">gewichtet, überfällige Posten</span></div>
               </div>
               <div className={`result-layout cust-layout ${cust ? 'withpreview' : 'nopanel'}`}>
-                <div className="card" style={{ padding: 0, overflowX: 'auto' }}>
-                  <h3 style={{ padding: '10px 12px 0' }}>Forderungen nach Kunden</h3>
+                <div className="card" style={{ padding: 0 }}>
+                  <div className="row cust-head">
+                    <h3>Forderungen nach Kunden</h3>
+                    <span className="small muted">{custFilter ? `${customers.length} von ${a.customers.length}` : a.customers.length} Kunden</span>
+                    <input className="ml-auto w-md" type="search" placeholder="Kunde suchen …" value={custFilter} onChange={e => setCustFilter(e.target.value)} aria-label="Kunde suchen" />
+                  </div>
+                  <div className="cust-scroll">
                   <table className="grid clickable kunden">
-                    <thead><tr><th>Kunde</th><th className="num">Total CHF</th>{BUCKETS.map(b => <th key={b} className="num">{b.replace(' Tage', ' T')}</th>)}</tr></thead>
+                    <thead><tr>
+                      <th className="sortable" onClick={() => sortBy('name')} aria-sort={custSort.key === 'name' ? (custSort.dir === 1 ? 'ascending' : 'descending') : undefined}>Kunde{sortMark('name')}</th>
+                      <th className="num sortable" onClick={() => sortBy('total')}>Total CHF{sortMark('total')}</th>
+                      {BUCKETS.map((b, i) => <th key={b} className="num sortable" onClick={() => sortBy(i)}>{b.replace(' Tage', ' T')}{sortMark(i)}</th>)}
+                    </tr></thead>
                     <tbody>
-                      {top.map(c => {
+                      {customers.length === 0 && <tr className="muted-row"><td colSpan={2 + BUCKETS.length}>Kein Kunde gefunden.</td></tr>}
+                      {customers.map(c => {
                         const k = `${c.customerNo}|${c.customerName}`;
                         return (
                           <tr key={k} data-kunde={c.customerName} className={cust === k ? 'selected' : ''} onClick={() => { setCust(k); setItem(null); }}>
@@ -258,11 +251,13 @@ function Receivables({ historyId, docs, decisions, update, letter, defaultRates 
                           </tr>
                         );
                       })}
-                      {rest.length > 0 && (
+                    </tbody>
+                    <tfoot>
+                      {custFilter && customers.length > 0 && (
                         <tr className="muted-row">
-                          <td>Andere ({rest.length})</td>
-                          <td className="num">{chf(rest.reduce((s, c) => s + c.totalChf, 0))}</td>
-                          {BUCKETS.map((_, i) => <td key={i} className="num">{chf(rest.reduce((s, c) => s + c.buckets[i]!, 0))}</td>)}
+                          <td>Summe Auswahl ({customers.length})</td>
+                          <td className="num">{chf(customers.reduce((s, c) => s + c.totalChf, 0))}</td>
+                          {BUCKETS.map((_, i) => <td key={i} className="num">{chf(customers.reduce((s, c) => s + c.buckets[i]!, 0))}</td>)}
                         </tr>
                       )}
                       <tr className="total-row">
@@ -270,8 +265,9 @@ function Receivables({ historyId, docs, decisions, update, letter, defaultRates 
                         <td className="num">{chf(a.totalChf)}</td>
                         {a.buckets.map((b, i) => <td key={i} className="num">{chf(b)}</td>)}
                       </tr>
-                    </tbody>
+                    </tfoot>
                   </table>
+                  </div>
                 </div>
                 {cust && <CustomerPanel items={custItems} name={cust.split('|')[1] || cust.split('|')[0]!} fileOf={i => opDocOf(i)?.absPath ?? null} item={item} setItem={setItem} onClose={() => setCust(null)} />}
               </div>
@@ -309,13 +305,13 @@ function Receivables({ historyId, docs, decisions, update, letter, defaultRates 
                 </label>
               ))}
               <div className="row">
-                <input className="grow" placeholder="Neue Feststellung, z. B. Saldenbestätigung Muster AG einholen" value={newFinding} onChange={e => setNewFinding(e.target.value)}
-                  onKeyDown={e => { if (e.key === 'Enter' && newFinding.trim()) { setParams(p => ({ ...p, findings: [...p.findings, { text: newFinding.trim(), status: 'offen' }] })); setNewFinding(''); } }} />
+                <AutoTextarea className="grow" placeholder="Neue Feststellung, z. B. Saldenbestätigung Muster AG einholen" value={newFinding} onChange={e => setNewFinding(e.target.value)}
+                  submitOnEnter onSubmit={() => { if (newFinding.trim()) { setParams(p => ({ ...p, findings: [...p.findings, { text: newFinding.trim(), status: 'offen' }] })); setNewFinding(''); } }} />
                 <button className="btn" disabled={!newFinding.trim()} onClick={() => { setParams(p => ({ ...p, findings: [...p.findings, { text: newFinding.trim(), status: 'offen' }] })); setNewFinding(''); }}>+ Feststellung erfassen</button>
               </div>
               <label className="field note-field" style={{ marginTop: 8 }}>
                 <span>Notiz zum Prüfgebiet (erscheint in Excel und PowerPoint)</span>
-                <textarea rows={4} maxLength={2000} value={params.note ?? ''} onChange={e => setParams(p => ({ ...p, note: e.target.value }))} placeholder="z. B. Delkredere pauschal 5 % auf Inland, 10 % auf Ausland; Einzelwertberichtigung Muster AG geprüft." />
+                <AutoTextarea minRows={3} maxLength={2000} value={params.note ?? ''} onChange={e => setParams(p => ({ ...p, note: e.target.value }))} placeholder="z. B. Delkredere pauschal 5 % auf Inland, 10 % auf Ausland; Einzelwertberichtigung Muster AG geprüft." />
               </label>
               <p className="small muted">Feststellungen und Notiz erscheinen in der Analyse ({fileName}.xlsx und .pptx), die beim Abschliessen als Nachweis abgelegt wird.</p>
             </div>
@@ -370,15 +366,15 @@ function Donut({ values, total }: { values: number[]; total: number }) {
   return (
     <div className="donut">
       <svg viewBox="0 0 140 140" width="150" height="150" aria-label="Verteilung">
-        <circle cx="70" cy="70" r={R} fill="none" stroke="#eef1f5" strokeWidth="22" />
+        <circle cx="70" cy="70" r={R} fill="none" style={{ stroke: 'var(--grey-bg)' }} strokeWidth="22" />
         {values.map((v, i) => {
           const len = total > 0 ? (Math.max(0, v) / total) * C : 0;
           const el = <circle key={i} cx="70" cy="70" r={R} fill="none" stroke={SHADES[i]} strokeWidth="22" strokeDasharray={`${len} ${C - len}`} strokeDashoffset={-off} transform="rotate(-90 70 70)" />;
           off += len;
           return el;
         })}
-        <text x="70" y="66" textAnchor="middle" fontSize="10" fill="#737b8c">CHF</text>
-        <text x="70" y="82" textAnchor="middle" fontSize="13" fontWeight="600" fill="#222936">{chf(total).replace(/\.\d\d$/, '')}</text>
+        <text x="70" y="66" textAnchor="middle" fontSize="10" style={{ fill: 'var(--muted)' }}>CHF</text>
+        <text x="70" y="82" textAnchor="middle" fontSize="13" fontWeight="600" style={{ fill: 'var(--text)' }}>{chf(total).replace(/\.\d\d$/, '')}</text>
       </svg>
       <ul className="legend">
         {values.map((v, i) => <li key={i}><span className="dot" style={{ background: SHADES[i] }} /> {BUCKETS[i]} <strong>{total ? ((v / total) * 100).toFixed(1) : '0.0'} %</strong></li>)}

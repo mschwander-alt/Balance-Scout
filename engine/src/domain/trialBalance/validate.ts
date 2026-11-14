@@ -1,5 +1,5 @@
 import { formatChf, type Cents } from '../amount.js';
-import { classify, type Category } from './accountGroups.js';
+import { classify, type AutoGroup, type Category } from './accountGroups.js';
 import type { RowIssue, TrialBalanceRow } from './parser.js';
 
 /**
@@ -14,8 +14,10 @@ export interface ClassifiedAccount extends TrialBalanceRow {
   groupCode: string | null;
   groupName: string | null;
   category: Category;
-  /** Woher die Gruppe stammt: Kontonummer (KMU-Kontenrahmen) oder Bezeichnung (prüfen) */
-  groupSource: 'nummer' | 'bezeichnung' | null;
+  /** Woher die Gruppe stammt: Kontonummer (KMU-Kontenrahmen), Bezeichnung (prüfen) oder vom Prüfer verschoben */
+  groupSource: 'nummer' | 'bezeichnung' | 'manuell' | null;
+  /** Automatisch erkannte Gruppe, falls der Prüfer das Konto verschoben hat (für „zurücksetzen“) */
+  autoGroup?: AutoGroup;
 }
 
 export interface Totals {

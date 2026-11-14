@@ -27,6 +27,10 @@ export interface RunInput {
   accountDigits?: { min: number; max: number };
   /** Teile der Saldobilanz (Datei bzw. "Datei#Blatt"), die der Prüfer ab- bzw. trotz Doppel zuwählt */
   skipParts?: string[];
+  /** Konten mit Saldo null (beide Jahre bzw. laufendes Jahr ohne Vorjahr) nicht importieren */
+  skipZeroBalances?: boolean;
+  /** Verwendung je Saldobilanz-Teil (Datei/Blatt-ID): Bilanz, Erfolgsrechnung, beides, nicht verwenden */
+  partRoles?: Record<string, import('./domain/trialBalance/load.js').PartRole>;
   forceParts?: string[];
   signConvention?: SignConvention;
   /** Ein oder mehrere Ordner (inkl. Unterordner) und/oder einzelne Dateien */
@@ -113,13 +117,13 @@ export const tbPaths = (input: Pick<RunInput, 'trialBalancePath' | 'trialBalance
 
 /** Saldobilanz aus allen Dateien laden; die alte Einzel-Zuordnung gilt für den ersten Teil. */
 export async function loadTrialBalanceFor(
-  input: Pick<RunInput, 'trialBalancePath' | 'trialBalancePaths' | 'trialBalanceMapping' | 'trialBalanceMappings' | 'accountDigits' | 'skipParts' | 'forceParts'>,
+  input: Pick<RunInput, 'trialBalancePath' | 'trialBalancePaths' | 'trialBalanceMapping' | 'trialBalanceMappings' | 'accountDigits' | 'skipParts' | 'forceParts' | 'skipZeroBalances' | 'partRoles'>,
   ocr?: LocalOcr,
 ): Promise<LoadedTrialBalance> {
   const paths = tbPaths(input);
   // Alte Einzel-Zuordnung: gilt für den ersten Teil der ersten Datei (Schlüssel = Pfad)
   const mappings = input.trialBalanceMappings ?? (input.trialBalanceMapping ? { [paths[0]!]: input.trialBalanceMapping } : undefined);
-  const tb = await loadTrialBalance(paths, { mappings, accountDigits: input.accountDigits, ocr, skipParts: input.skipParts, forceParts: input.forceParts });
+  const tb = await loadTrialBalance(paths, { mappings, accountDigits: input.accountDigits, ocr, skipParts: input.skipParts, forceParts: input.forceParts, skipZeroBalances: input.skipZeroBalances, partRoles: input.partRoles });
   const err = tb.parts.find(p => p.status === 'zuordnen');
   if (err && !tb.rows.length) {
     const { MappingError } = await import('./domain/trialBalance/parser.js');
@@ -177,7 +181,11 @@ export async function runAudit(input: RunInput): Promise<RunResult> {
     // Kontoblätter im Kundenordner bleiben im Belegverzeichnis, werden aber nicht für den Abgleich verwendet
     const ledgerIds = new Set<string>();
     for (const d of docs) if (looksLikeLedger(d.lines)) { ledgerIds.add(d.id); ledgerDocs.push(d); }
-    const ledgers = ledgerDocs.map(d => parseLedger(d.lines, { pageLabels: d.pageLabels, source: d.filename }));
+    const ledgers = ledgerDocs.map(d => {
+      const l = parseLedger(d.lines, { pageLabels: d.pageLabels, source: d.filename });
+      for (const a of l.accounts) a.sourcePath = d.absPath; // für die Vorschau im Reiter „Kontoblatt“
+      return l;
+    });
     const ledgerFiles = ledgerDocs.map((d, i) => {
       const l = ledgers[i]!;
       const dates = l.accounts.flatMap(a => a.postings.map(p => p.date)).sort();
@@ -308,4 +316,25 @@ export async function runAudit(input: RunInput): Promise<RunResult> {
   } finally {
     await ocr.close();
   }
+}
+
+/**
+ * Nachträglich vom Prüfer hochgeladener Nachweis (z. B. Saldobestätigung): Zusammenfassung wie bei den Kundenbelegen
+ * (erkanntes Datum, massgebender Betrag, Beträge für Vorschläge, Suchtext). Die Zuordnung zum Konto erfolgt als
+ * manueller Entscheid der Durchsicht.
+ */
+export function summarizeUploadedDocument(d: EvidenceDocument, closingDate: string | null): DocumentSummary {
+  const facts = detectBalanceDate(d, closingDate);
+  const a = extractAmounts(d.id, d.lines);
+  const kw = a.filter(x => x.context.balanceKeyword);
+  const pick = kw.length ? kw[kw.length - 1]! : [...a].sort((x, y) => Math.abs(y.cents) - Math.abs(x.cents))[0];
+  return {
+    doc: d, docType: guessDocType(d), balanceDate: facts?.date ?? null, balanceDateEvidence: facts?.evidence ?? null,
+    amountCount: a.length,
+    keyAmount: pick ? { cents: pick.cents, page: pick.page, lineNo: pick.lineNo, line: pick.line, bbox: pick.bbox } : null,
+    keyDate: facts?.date ?? findDates(d)[0]?.iso ?? null,
+    amountSet: [...new Set(a.map(x => Math.abs(x.cents)))].slice(0, 400),
+    searchText: d.lines.map(l => l.text).join(' ').toLowerCase().slice(0, 8000),
+    assignedAccounts: [], assigned: false, targetName: d.filename, placement: null,
+  };
 }

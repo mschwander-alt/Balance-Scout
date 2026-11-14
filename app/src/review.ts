@@ -3,7 +3,7 @@
  * Analyse-Ergebnis an (gleiche Regeln wie die Engine beim Abschluss).
  */
 import type { ReviewDecisions } from '../electron/shared';
-import type { AccountRow, AuditResult, DocRow, Status } from './types';
+import type { AccountRow, AuditResult, AutoGroup, DocRow, Status } from './types';
 
 /** Zuordnung „Allgemeine Prüfungen“ (Register A) für Belege ohne Konto */
 export const GENERAL_ACCOUNT = '@allgemein';
@@ -35,9 +35,25 @@ export interface View {
   open: { pruefen: number; unassignedDocs: number };
 }
 
-export function deriveView(r: AuditResult, d: ReviewDecisions): View {
+/** Gruppe des KMU-Kontenrahmens (für das Verschieben von Konten) */
+export interface GroupDef { code: string; name: string; category: string }
+
+/**
+ * Vom Prüfer verschobene Konten: neue Gruppe (gleiche Regeln wie die Engine beim Abschluss).
+ * Ohne Verschiebung gilt die automatische Gruppe – auch wenn das Ergebnis bereits eine verschobene Gruppe enthält.
+ */
+export function regroup<T extends AccountRow>(a: T, d: ReviewDecisions, groups: GroupDef[]): T {
+  const auto: AutoGroup = a.autoGroup ?? { code: a.groupCode ?? null, name: a.groupName, category: a.category, source: a.groupSource === 'manuell' ? null : a.groupSource ?? null };
+  const o = d.groupOverrides?.[a.accountNumber];
+  const g = o ? groups.find(x => x.code === o.groupCode) : undefined;
+  if (g && g.code !== auto.code) return { ...a, groupCode: g.code, groupName: g.name, category: g.category, groupSource: 'manuell', autoGroup: auto };
+  if (!a.autoGroup) return a;
+  return { ...a, groupCode: auto.code, groupName: auto.name, category: auto.category, groupSource: auto.source, autoGroup: null };
+}
+
+export function deriveView(r: AuditResult, d: ReviewDecisions, groups: GroupDef[] = []): View {
   const asg = d.assignments ?? {};
-  const accounts: ViewAccount[] = r.accounts.map(a => ({ ...a, autoStatus: a.status, manual: null, docId: a.best && (a.status === 'BELEGT' || a.status === 'PRUEFEN') ? a.best.documentId : null }));
+  const accounts: ViewAccount[] = r.accounts.map(a0 => regroup(a0, d, groups)).map(a => ({ ...a, autoStatus: a.status, manual: null, docId: a.best && (a.status === 'BELEGT' || a.status === 'PRUEFEN') ? a.best.documentId : null }));
   const byNum = new Map(accounts.map(a => [a.accountNumber, a]));
   for (const [docId, x] of Object.entries(asg)) {
     const targets = targetsOf(x);

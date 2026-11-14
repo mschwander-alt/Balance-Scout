@@ -1,15 +1,19 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { bsb } from '../bridge';
 import type { AccountRow, AuditResult, Best, DocRow, Status } from '../types';
 import type { GroupsInfo, ReviewDecisions } from '../../electron/shared';
 import { chf, date, pct } from '../format';
-import { FLAG_LABEL, Info, Modal, Spinner, StatusBadge, WarnIcon, useToast } from '../components/ui';
+import { AutoTextarea, FLAG_LABEL, Info, Modal, Spinner, StatusBadge, WarnIcon, useToast } from '../components/ui';
 import { DocumentPreview } from '../components/DocumentPreview';
 import { Documents } from './Documents';
-import { AuditAreas } from './AuditAreas';
+import { useDragAutoScroll } from '../components/dragScroll';
+import { LedgerView } from '../components/LedgerView';
+import { FocusExam, procedureDefs } from './FocusExam';
+import { areaOverview } from '../areas';
 import { GENERAL_ACCOUNT, accountLabel, targetsOf, deriveView, groupAccounts, type ViewAccount, type ViewDoc } from '../review';
 
-type Tab = 'konten' | 'erfolg' | 'belege' | 'gebiete' | 'saldobilanz' | 'diagnose';
+type Tab = 'konten' | 'erfolg' | 'belege' | 'saldobilanz' | 'diagnose';
+type Step = 'abstimmung' | 'fokus';
 const isER = (a: { category: string }) => a.category === 'aufwand' || a.category === 'ertrag' || a.category === 'abschluss';
 
 export function Result({ result: initial, onRepeat }: { result: AuditResult; onRepeat?: () => void }) {
@@ -28,6 +32,19 @@ export function Result({ result: initial, onRepeat }: { result: AuditResult; onR
   const [busy, setBusy] = useState(false);
   const [search, setSearch] = useState('');
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  // Schritt 1 Abstimmung (Bilanz / Erfolgsrechnung, Werkzeuge) oder Schritt 2 Fokus-Prüfung (Position, Konto)
+  const [step, setStep] = useState<Step>('abstimmung');
+  const [examArea, setExamArea] = useState<string>('');
+  const [examAcc, setExamAcc] = useState<string | null>(null);
+  const [tools, setTools] = useState(false);
+  // Reiter im Konto-Panel – bleibt beim Blättern ‹ › stehen (z. B. Konto für Konto durch die Kontoblätter)
+  const [panelTab, setPanelTab] = useState<PanelTab>('beleg');
+  // Drag & Drop: Konto in eine andere Gruppe verschieben
+  const [dragAcc, setDragAcc] = useState<string | null>(null);
+  const [dropGroup, setDropGroup] = useState<string | null>(null);
+  // Beim Ziehen am Rand der Kontentabelle automatisch scrollen (auch von ganz oben nach ganz unten)
+  const tableWrap = useRef<HTMLDivElement>(null);
+  useDragAutoScroll(tableWrap, !!dragAcc);
   const id = result.historyId;
 
   useEffect(() => {
@@ -49,7 +66,7 @@ export function Result({ result: initial, onRepeat }: { result: AuditResult; onR
     });
   }, [id]);
 
-  const view = useMemo(() => deriveView(result, decisions), [result, decisions]);
+  const view = useMemo(() => deriveView(result, decisions, groups?.groups ?? []), [result, decisions, groups]);
   const matchesSearch = (a: ViewAccount) => {
     const t = search.trim().toLowerCase();
     return !t || a.accountNumber.includes(t) || a.accountName.toLowerCase().includes(t) || (a.groupName ?? '').toLowerCase().includes(t);
@@ -63,6 +80,16 @@ export function Result({ result: initial, onRepeat }: { result: AuditResult; onR
     [view.docs, docFilter],
   );
   const sel = view.accounts.find(a => a.accountNumber === open) ?? null;
+  // Positionen der Fokus-Prüfung (Bilanzgruppen mit Konten, Erfolgsrechnung)
+  const areas = useMemo(() => areaOverview(view.accounts, groups?.groups ?? [], decisions), [view.accounts, groups, decisions]);
+  const doneAreas = areas.filter(a => a.status === 'erledigt').length;
+  /** Fokus-Prüfung öffnen: Position (Gruppencode oder „ER“), optional Konto */
+  const openExam = (code: string, acc: string | null = null) => {
+    const area = areas.find(a => a.code === code) ?? areas[0];
+    if (!area) return;
+    setExamArea(area.code); setExamAcc(acc); setStep('fokus'); setTools(false);
+  };
+  const areaOf = (a: ViewAccount) => (isER(a) ? 'ER' : a.groupCode ?? '');
   const flatList = () => (grouped ? groupAccounts(accounts, order).flatMap(g => g.items) : accounts);
   const navInfo = (num: string) => {
     const list = flatList();
@@ -79,7 +106,7 @@ export function Result({ result: initial, onRepeat }: { result: AuditResult; onR
   const filed = (docId: string | null) => (docId ? result.filed?.[docId] : undefined);
 
   useEffect(() => {
-    if (tab !== 'konten' && tab !== 'erfolg') return;
+    if ((tab !== 'konten' && tab !== 'erfolg') || step !== 'abstimmung') return;
     const h = (e: KeyboardEvent) => {
       const tag = (e.target as HTMLElement)?.tagName;
       if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
@@ -96,7 +123,7 @@ export function Result({ result: initial, onRepeat }: { result: AuditResult; onR
     };
     window.addEventListener('keydown', h);
     return () => window.removeEventListener('keydown', h);
-  }, [tab, accounts, open, grouped, order]);
+  }, [tab, accounts, open, grouped, order, step]);
 
   const now = () => new Date().toISOString();
   const needVisum = () => visum.trim();
@@ -128,10 +155,55 @@ export function Result({ result: initial, onRepeat }: { result: AuditResult; onR
     const next = cur ? targetsOf(cur).filter(n => n !== num) : [];
     assign(docId, next.length ? next : undefined);
   };
+  /** Konto in eine Gruppe verschieben (Code) oder auf die automatische Gruppe zurücksetzen (null); Belege folgen dem Konto */
+  const moveAccount = (num: string, code: string | null, quiet = false) => {
+    const a = view.accounts.find(x => x.accountNumber === num);
+    if (!a) return;
+    const auto = a.autoGroup ? a.autoGroup.code : a.groupCode ?? null;
+    // „Ohne Gruppe“ ('~') ist keine Gruppe des Kontenrahmens: nur als Rückkehr zur automatischen Gruppe möglich
+    if (code === '~') {
+      if (auto !== null) { toast('error', '„Ohne Gruppe“ ist keine Gruppe des KMU-Kontenrahmens – bitte eine Gruppe wählen.'); return; }
+      code = null;
+    }
+    const target = code ?? auto;
+    if (target === (a.groupCode ?? null)) return;
+    const g = groups?.groups.find(x => x.code === target);
+    update(d => {
+      const { [num]: _old, ...rest } = d.groupOverrides ?? {};
+      const next = code === null || code === auto ? rest : { ...rest, [num]: { groupCode: code, at: now(), visum: needVisum() } };
+      return { ...d, groupOverrides: next };
+    });
+    const nDocs = view.docs.filter(x => x.accounts.includes(num)).length;
+    if (!quiet) toast('ok', `Konto ${num} → ${g?.name ?? 'Ohne Gruppe'}${code === null || code === auto ? ' (automatische Gruppe)' : ''}${nDocs ? ` · ${nDocs} Beleg${nDocs > 1 ? 'e' : ''} mitgenommen` : ''}`);
+  };
+  const dnd: Dnd = {
+    enabled: grouped && !!groups, dragging: dragAcc, over: dropGroup,
+    start: num => setDragAcc(num), end: () => { setDragAcc(null); setDropGroup(null); },
+    overGroup: code => setDropGroup(code),
+    drop: code => { if (dragAcc) moveAccount(dragAcc, code); setDragAcc(null); setDropGroup(null); },
+  };
   const setNote = (num: string, text: string) => update(d => {
     const { [num]: _x, ...rest } = d.notes ?? {};
     return { ...d, notes: text.trim() ? { ...rest, [num]: { text, at: now(), visum: needVisum() } } : rest };
   });
+
+  /** Nachweis zum Konto hochladen: Datei lesen (inkl. Texterkennung), ins Belegverzeichnis aufnehmen und dem Konto zuordnen */
+  const addEvidence = async (num: string, files: { path: string; name: string }[]) => {
+    if (!id) return;
+    needVisum();
+    let n = 0;
+    for (const f of files) {
+      try {
+        const doc = await bsb().review.addDocument(id, f.path);
+        setResult(r => ({ ...r, documents: [...r.documents.filter(d => d.id !== doc.id), doc as unknown as AuditResult['documents'][number]] }));
+        update(d => ({ ...d, assignments: { ...d.assignments, [doc.id]: { accountNumber: num, at: now(), visum: needVisum() } } }));
+        n++;
+      } catch (e) {
+        toast('error', `${f.name}: ${(e as Error).message}`);
+      }
+    }
+    if (n) toast('ok', `${n} Nachweis${n > 1 ? 'e' : ''} hochgeladen und Konto ${num} zugeordnet.`);
+  };
 
   const finalize = async () => {
     if (!id) return;
@@ -161,76 +233,111 @@ export function Result({ result: initial, onRepeat }: { result: AuditResult; onR
   return (
     <div className="page stack">
       <div className="review-head">
-        <div className="title">
-          <h1>{result.finalized ? 'Ergebnis' : 'Durchsicht'}</h1>
-          <p>{result.finalized
-            ? <>Abgeschlossen{result.finalizedAt ? ` am ${date(result.finalizedAt.slice(0, 10))}` : ''} · <span title={result.excelPath}>{result.excelPath.split(/[\\/]/).pop()}</span></>
-            : 'Konten prüfen, Belege zuordnen, Notizen erfassen. Ablage und Excel entstehen beim Abschliessen.'}</p>
+        <nav className="steps" aria-label="Arbeitsschritte">
+          <button className={`step ${step === 'abstimmung' ? 'on' : ''}`} onClick={() => setStep('abstimmung')}><span className="n">1</span><span><strong>Abstimmung</strong><small>Belege und Dateien zuordnen</small></span></button>
+          <button className={`step ${step === 'fokus' ? 'on' : ''}`} onClick={() => openExam(examArea || areas.find(x => x.status !== 'erledigt')?.code || '')} disabled={!id || !areas.length}><span className="n">2</span><span><strong>Fokus-Prüfung</strong><small>Position für Position prüfen</small></span></button>
+          <button className={`step ${result.finalized ? 'on done' : ''}`} onClick={() => setShowFinalize(true)}><span className="n">{result.finalized ? '✓' : '3'}</span><span><strong>Abschluss</strong><small>{result.finalized ? `abgeschlossen${result.finalizedAt ? ` am ${date(result.finalizedAt.slice(0, 10))}` : ''}` : 'Ablage und Excel'}</small></span></button>
+        </nav>
+        <div className="head-progress" title={`${doneAreas} von ${areas.length} Positionen als geprüft abgeschlossen`}>
+          <span className="muted small">Fortschritt</span>
+          <span className="bar"><span style={{ width: `${areas.length ? (doneAreas / areas.length) * 100 : 0}%` }} /></span>
+          <span className="small"><strong>{doneAreas}</strong> <span className="muted">von {areas.length} Positionen geprüft</span></span>
         </div>
         {visumField}
-        <button className="btn" onClick={() => setShowLetters(true)}>Register …</button>
-        {result.finalized ? (
-          <>
-            <button className="btn" onClick={() => bsb().app.showInFolder(result.excelPath)}>Zielordner</button>
-            <button className="btn" onClick={() => setShowFinalize(true)} title="Nach weiteren Änderungen: neue Version der Dokumentation">Erneut abschliessen …</button>
-            <button className="btn btn-primary" onClick={() => bsb().app.openPath(result.excelPath)}>Excel-Dokumentation öffnen</button>
-          </>
-        ) : (
-          <button className="btn btn-primary" onClick={() => setShowFinalize(true)}>Abschliessen …</button>
-        )}
-        {onRepeat && result.finalized && <button className="btn" onClick={onRepeat} title="Mit geänderten Unterlagen neu prüfen">Neu prüfen …</button>}
-      </div>
-
-      <div className="summary-line">
-        {sumItem('ALLE', '', 'Konten', view.accounts.length)}
-        <span className="sep" />
-        {sumItem('BELEGT', 'ok', 'belegt', view.counts.BELEGT)}
-        {sumItem('PRUEFEN', 'warn', 'prüfen', view.counts.PRUEFEN)}
-        {sumItem('KEIN_NACHWEIS', 'bad', 'ohne Nachweis', view.counts.KEIN_NACHWEIS)}
-        <span className="sep" />
-        <button className="sum-item" data-k="belege" onClick={() => { setTab('belege'); setDocFilter(view.open.unassignedDocs ? 'offen' : 'alle'); }}>
-          <strong>{view.docs.filter(d => d.assigned || d.irrelevant).length} / {view.docs.length}</strong> Belege zugeordnet
-          {view.open.unassignedDocs > 0 && <span className="warn">({view.open.unassignedDocs} offen)</span>}
-        </button>
-        <span className="sep" />
-        <span className="sum-item" style={{ cursor: 'default' }} title={`${chf(view.confirmedAbsTotal)} von ${chf(view.inScopeAbsTotal)}`}>Abdeckung <strong>{pct(view.coverage)}</strong>
-          <Info label="Details zur Abdeckung"><dl><dt>Belegt</dt><dd>{chf(view.confirmedAbsTotal)}</dd><dt>Prüfumfang</dt><dd>{chf(view.inScopeAbsTotal)}</dd><dt>Texterkennung</dt><dd>{ocrDocs} Belege</dd><dt>Leseprobleme</dt><dd>{problemDocs} Belege</dd></dl></Info>
+        {result.finalized && <button className="btn btn-primary" onClick={() => bsb().app.openPath(result.excelPath)} title={result.excelPath}>Excel-Dokumentation öffnen</button>}
+        <span className="tools-anchor">
+          <button className="btn" aria-expanded={tools} onClick={() => setTools(t => !t)}>⋯ Werkzeuge</button>
+          {tools && (
+            <div className="tools-menu" role="menu" onMouseLeave={() => setTools(false)}>
+              <button role="menuitem" onClick={() => { setStep('abstimmung'); setOpen(null); setTab('belege'); setTools(false); }}>Belegverzeichnis{view.open.unassignedDocs ? <span className="warn"> · {view.open.unassignedDocs} offen</span> : null}</button>
+              <button role="menuitem" onClick={() => { setStep('abstimmung'); setOpen(null); setTab('saldobilanz'); setTools(false); }}>Saldobilanz-Prüfung{result.validation.checks.some(c => !c.passed) ? <span className="warn"> · Hinweise</span> : null}</button>
+              <button role="menuitem" onClick={() => { setStep('abstimmung'); setOpen(null); setTab('diagnose'); setTools(false); }}>Diagnosebericht</button>
+              <button role="menuitem" onClick={() => { setShowLetters(true); setTools(false); }}>Register …</button>
+              {result.finalized && <button role="menuitem" onClick={() => { void bsb().app.showInFolder(result.excelPath); setTools(false); }}>Zielordner öffnen</button>}
+              {onRepeat && result.finalized && <button role="menuitem" onClick={() => { setTools(false); onRepeat(); }}>Neu prüfen …</button>}
+            </div>
+          )}
         </span>
-        <input className="search" type="search" placeholder="Konto, Bezeichnung oder Gruppe suchen …" value={search} onChange={e => { setSearch(e.target.value); setTab('konten'); }} aria-label="Suchen" />
       </div>
 
-      <nav className="tabs" role="tablist" style={{ padding: 0 }}>
-        {([['konten', 'Bilanz'], ...(erCount ? [['erfolg', `Erfolgsrechnung`]] : []), ['belege', 'Belegverzeichnis'], ['gebiete', 'Prüfgebiete'], ['saldobilanz', 'Saldobilanz-Prüfung'], ['diagnose', 'Diagnosebericht']] as [Tab, string][]).map(([k, l]) => (
-          <button key={k} role="tab" aria-selected={tab === k} className={tab === k ? 'active' : ''} onClick={() => { if (k !== tab) setOpen(null); setTab(k); }}>{l}</button>
-        ))}
-      </nav>
+      {step === 'fokus' && id && (
+        <FocusExam areas={areas} area={examArea} setArea={c => { setExamArea(c); setExamAcc(null); }} account={examAcc} setAccount={setExamAcc}
+          groups={groups} decisions={decisions} update={update} visum={visum} needVisum={needVisum}
+          historyId={id} docs={view.docs} closingDate={result.input?.closingDate ?? null} rates={result.fxRates?.rates ?? result.input?.fxRates?.rates ?? {}}
+          onMoveGroup={moveAccount} onAddEvidence={addEvidence} onExit={() => setStep('abstimmung')}
+          renderAccount={num => {
+            const a = view.accounts.find(x => x.accountNumber === num);
+            if (!a) return null;
+            const area = areas.find(x => x.code === examArea);
+            const items = area?.items ?? [a];
+            const i = items.findIndex(x => x.accountNumber === num);
+            return (
+              <AccountPanel key={a.accountNumber} a={a} docs={view.docs} filedPath={filed(a.docId)?.placement?.newPath ?? null}
+                note={decisions.notes?.[a.accountNumber]} accepted={decisions.accepted?.[a.accountNumber]}
+                nav={{ pos: i + 1, count: items.length, prev: () => items[i - 1] && setExamAcc(items[i - 1]!.accountNumber), next: () => items[i + 1] && setExamAcc(items[i + 1]!.accountNumber) }}
+                onAccept={() => accept(a)} onUnaccept={() => unaccept(a)} onNote={t => setNote(a.accountNumber, t)}
+                onAssign={docId => assignAlso(docId, a.accountNumber)} onUnassign={docId => unassignFrom(docId, a.accountNumber)} onClose={() => setExamAcc(null)}
+                tab={panelTab} onTab={setPanelTab} historyId={id} />
+            );
+          }} />
+      )}
 
-      {(tab === 'konten' || tab === 'erfolg') && (
+      {step === 'abstimmung' && (tab === 'konten' || tab === 'erfolg') && (
+        <div className="summary-line">
+          <div className="seg statement" role="tablist" aria-label="Bilanz oder Erfolgsrechnung">
+            <button role="tab" aria-selected={tab === 'konten'} className={tab === 'konten' ? 'active' : ''} onClick={() => { if (tab !== 'konten') setOpen(null); setTab('konten'); }}>Bilanz</button>
+            {erCount > 0 && <button role="tab" aria-selected={tab === 'erfolg'} className={tab === 'erfolg' ? 'active' : ''} onClick={() => { if (tab !== 'erfolg') setOpen(null); setTab('erfolg'); }}>Erfolgsrechnung</button>}
+          </div>
+          <span className="sep" />
+          {sumItem('BELEGT', 'ok', 'belegt', view.counts.BELEGT)}
+          {sumItem('PRUEFEN', 'warn', 'prüfen', view.counts.PRUEFEN)}
+          {sumItem('KEIN_NACHWEIS', 'bad', 'ohne Nachweis', view.counts.KEIN_NACHWEIS)}
+          <span className="sep" />
+          <button className="sum-item" data-k="belege" onClick={() => { setTab('belege'); setDocFilter(view.open.unassignedDocs ? 'offen' : 'alle'); }}>
+            <strong>{view.docs.filter(d => d.assigned || d.irrelevant).length} / {view.docs.length}</strong> Belege zugeordnet
+            {view.open.unassignedDocs > 0 && <span className="warn">({view.open.unassignedDocs} offen)</span>}
+          </button>
+          <Info label="Details zur Abdeckung"><dl><dt>Konten</dt><dd>{view.accounts.length}</dd><dt>Abdeckung</dt><dd>{pct(view.coverage)}</dd><dt>Belegt</dt><dd>{chf(view.confirmedAbsTotal)}</dd><dt>Prüfumfang</dt><dd>{chf(view.inScopeAbsTotal)}</dd><dt>Texterkennung</dt><dd>{ocrDocs} Belege</dd><dt>Leseprobleme</dt><dd>{problemDocs} Belege</dd></dl></Info>
+          <input className="search" type="search" placeholder="Konto, Bezeichnung oder Gruppe suchen …" value={search} onChange={e => { setSearch(e.target.value); setTab(t => (t === 'erfolg' ? t : 'konten')); }} aria-label="Suchen" />
+        </div>
+      )}
+      {step === 'abstimmung' && tab !== 'konten' && tab !== 'erfolg' && (
+        <div className="tool-head"><button className="link" onClick={() => setTab('konten')}>← zurück zur Abstimmung</button><strong>{tab === 'belege' ? 'Belegverzeichnis' : tab === 'saldobilanz' ? 'Saldobilanz-Prüfung' : 'Diagnosebericht'}</strong></div>
+      )}
+
+      {step === 'abstimmung' && (tab === 'konten' || tab === 'erfolg') && (
         <div className={`result-layout ${sel ? 'withpreview' : 'nopanel'}`}>
           <div className="stack" style={{ gap: 6 }}>
             <div className="row small" style={{ justifyContent: 'space-between' }}>
               <span className="muted">{er ? `${accounts.length} Konten der Erfolgsrechnung – Analyse von Vorjahr und Veränderung (keine Saldennachweise nötig)` : filter !== 'ALLE' || search ? `${accounts.length} von ${view.accounts.filter(a => !isER(a)).length} Konten` : ''}{!er && filter !== 'ALLE' && <> · <button className="link" onClick={() => setFilter('ALLE')}>Filter aufheben</button></>}</span>
               <span className="row" style={{ gap: 12 }}>
+                {grouped && !er && <span className="muted small" title="Konto mit der Maus auf eine andere Gruppe ziehen – zugeordnete Belege werden mitgenommen. Im Konto rechts auch über „Gruppe“ wählbar.">Konto per Drag &amp; Drop in eine andere Gruppe ziehen</span>}
+                {er && id && areas.some(x => x.code === 'ER') && (() => { const ar = areas.find(x => x.code === 'ER')!; return (
+                  <button className={`exam-chip st-${ar.status}`} data-pruefung={ar.status} onClick={() => openExam('ER')}>{ar.status === 'erledigt' ? `✓ geprüft ${ar.visum}` : 'Analyse und Prüfung →'}</button>
+                ); })()}
                 {grouped && <button className="link small" onClick={() => setCollapsed(c => (c.size ? new Set() : new Set(groupAccounts(accounts, order).map(g => g.code))))}>{collapsed.size ? 'Alle aufklappen' : 'Alle zuklappen'}</button>}
                 <label className="muted"><input type="checkbox" checked={grouped} onChange={e => setGrouped(e.target.checked)} /> nach KMU-Kontenrahmen gruppieren</label>
               </span>
             </div>
-            <div className="table-wrap">
+            <div className="table-wrap" ref={tableWrap}>
               <table className={`grid clickable konten ${er ? 'er' : ''}`}>
-                <thead><tr><th>Konto</th><th>Bezeichnung</th><th className="num">Vorjahr</th><th className="num">Aktuell</th><th className="num dchf" title="Veränderung des Betrags (bei Passiven und Ertrag: Zunahme = +)">Δ CHF</th><th className="num">Δ %</th><th>Status</th><th>Beleg</th></tr></thead>
+                <thead><tr><th>Konto</th><th>Bezeichnung</th><th className="num">Aktuell</th><th className="num">Vorjahr</th><th className="num dchf" title="Veränderung des Betrags (bei Passiven und Ertrag: Zunahme = +)">Δ CHF</th><th className="num">Δ %</th><th>Status</th><th>Beleg</th></tr></thead>
                 <tbody>
                   {(grouped ? withTotals(groupAccounts(accounts, order)) : [{ code: '', name: '', items: accounts, total: 0 }]).map(g =>
                     'totalOf' in g ? (
                       <tr key={`t-${g.totalOf}`} className="total-row">
                         <td colSpan={2}>{g.name}</td>
-                        <td className="num">{chf(g.vj)}</td><td className="num">{chf(g.cy)}</td>
+                        <td className="num">{chf(g.cy)}</td><td className="num">{chf(g.vj)}</td>
                         <Delta cy={g.cy} vj={g.vj} />
                         <td colSpan={2} />
                       </tr>
                     ) : (
                       <GroupRows key={g.code || 'alle'} g={g} grouped={grouped} collapsed={collapsed.has(g.code)}
                         onToggle={() => setCollapsed(c => { const n = new Set(c); if (n.has(g.code)) n.delete(g.code); else n.add(g.code); return n; })}
-                        letter={decisions.groupLetters?.[g.code]} open={open} setOpen={setOpen} docs={view.docs} notes={decisions.notes ?? {}} />
+                        letter={decisions.groupLetters?.[g.code]} open={open} setOpen={setOpen} docs={view.docs} notes={decisions.notes ?? {}} dnd={dnd}
+                        exam={er ? undefined : (() => { const code = g.code; const ar = areas.find(x => x.code === code); if (!ar || !id) return undefined;
+                          const defs = procedureDefs(code, groups); const items = decisions.procedures?.[code]?.items ?? {};
+                          return { status: ar.status, visum: ar.visum, done: defs.filter(d => items[d.id]?.done).length + (decisions.procedures?.[code]?.custom ?? []).filter(c => items[c.id]?.done).length, total: defs.length - (decisions.procedures?.[code]?.removed?.length ?? 0) + (decisions.procedures?.[code]?.custom?.length ?? 0), open: () => openExam(code) }; })()} />
                     ),
                   )}
                 </tbody>
@@ -244,20 +351,18 @@ export function Result({ result: initial, onRepeat }: { result: AuditResult; onR
               nav={navInfo(sel.accountNumber)}
               onAccept={() => accept(sel)} onUnaccept={() => unaccept(sel)} onNote={t => setNote(sel.accountNumber, t)}
               onAssign={docId => assignAlso(docId, sel.accountNumber)} onUnassign={docId => unassignFrom(docId, sel.accountNumber)} onClose={() => setOpen(null)}
+              groupOptions={groups?.groups ?? []} onGroup={code => moveAccount(sel.accountNumber, code)}
+              tab={panelTab} onTab={setPanelTab} historyId={id} onFocus={id ? () => openExam(areaOf(sel), sel.accountNumber) : undefined}
             />
           )}
         </div>
       )}
 
-      {tab === 'belege' && (
+      {step === 'abstimmung' && tab === 'belege' && (
         <Documents docs={view.docs} accounts={view.accounts} filed={result.filed} initialFilter={docFilter === 'offen' ? 'offen' : undefined} onAssign={(id, n) => assign(id, n)} />
       )}
 
-      {tab === 'gebiete' && (
-        <AuditAreas historyId={id} accounts={view.accounts} docs={view.docs} groups={groups} decisions={decisions} update={update} closingDate={result.input?.closingDate ?? null} rates={result.fxRates?.rates ?? result.input?.fxRates?.rates} />
-      )}
-
-      {tab === 'saldobilanz' && (
+      {step === 'abstimmung' && tab === 'saldobilanz' && (
         <div className="card stack">
           {result.trialBalance && result.trialBalance.parts.length > 0 && (
             <p className="small">Gelesen: {result.trialBalance.parts.map(p => `${p.label} (${p.status === 'ok' ? `${p.accountCount} Konten` : p.status})`).join(' · ')}
@@ -275,7 +380,7 @@ export function Result({ result: initial, onRepeat }: { result: AuditResult; onR
         </div>
       )}
 
-      {tab === 'diagnose' && (
+      {step === 'abstimmung' && tab === 'diagnose' && (
         <div className="card stack">
           <p className="small muted">Dieser Bericht enthält <strong>keine</strong> Beträge, Namen oder Dateinamen. Sie können ihn zur Fehlersuche weitergeben.</p>
           <div><button className="btn btn-sm" onClick={async () => { await bsb().app.copyText(result.diagnostics); toast('ok', 'Diagnosebericht kopiert.'); }}>In Zwischenablage kopieren</button></div>
@@ -354,12 +459,25 @@ function fxProblem(a: { fx?: AccountRow['fx'] }): string | null {
   return null;
 }
 
+const GROUP_CATS: [string, string][] = [['aktiven', 'Aktiven'], ['passiven', 'Passiven'], ['aufwand', 'Aufwand'], ['ertrag', 'Ertrag'], ['abschluss', 'Abschluss']];
+
 const PROBLEM_FLAGS = new Set(['SIGN_CONFLICT', 'AMBIGUOUS', 'CURRENCY_MISMATCH', 'DATE_MISMATCH']);
 
-function GroupRows({ g, grouped, collapsed, onToggle, letter, open, setOpen, docs, notes }: {
+/** Drag & Drop der Konten zwischen Gruppen */
+type Dnd = { enabled: boolean; dragging: string | null; over: string | null; start: (num: string) => void; end: () => void; overGroup: (code: string) => void; drop: (code: string) => void };
+
+function GroupRows({ g, grouped, collapsed, onToggle, letter, open, setOpen, docs, notes, dnd, exam }: {
   g: Group; grouped: boolean; collapsed: boolean; onToggle: () => void; letter?: string; open: string | null;
-  setOpen: (n: string) => void; docs: ViewDoc[]; notes: Record<string, unknown>;
+  setOpen: (n: string) => void; docs: ViewDoc[]; notes: Record<string, unknown>; dnd?: Dnd;
+  /** Fokus-Prüfung der Position: Status, erledigte Handlungen, öffnen */
+  exam?: { status: import('../../electron/shared').AreaState; visum: string; done: number; total: number; open: () => void };
 }) {
+  // Ziel: Gruppenzeile und alle Konten der Gruppe
+  const target = dnd?.enabled && dnd.dragging ? {
+    onDragOver: (e: React.DragEvent) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; if (dnd.over !== g.code) dnd.overGroup(g.code); },
+    onDrop: (e: React.DragEvent) => { e.preventDefault(); dnd.drop(g.code); },
+  } : {};
+  const isOver = !!dnd?.dragging && dnd.over === g.code;
   const docBy = new Map(docs.map(d => [d.id, d]));
   const vj = g.items.reduce((a, x) => a + (x.balancePreviousYear ?? 0), 0);
   const hasVj = g.items.some(x => x.balancePreviousYear !== null);
@@ -367,12 +485,15 @@ function GroupRows({ g, grouped, collapsed, onToggle, letter, open, setOpen, doc
   return (
     <>
       {grouped && (
-        <tr className="group-row" onClick={onToggle} aria-expanded={!collapsed}>
-          <td colSpan={2} title={g.name}><span className="caret">{collapsed ? '›' : '⌄'}</span>{letter ? <span className="register">{letter}</span> : null} {g.name}</td>
-          <td className="num">{hasVj ? chf(vj) : ''}</td>
+        <tr className={`group-row ${isOver ? 'drop-target' : ''}`} onClick={onToggle} aria-expanded={!collapsed} data-gruppe={g.code} {...target}>
+          <td colSpan={2}><button className="caret" aria-label={collapsed ? `${g.name} aufklappen` : `${g.name} zuklappen`} onClick={e => { e.stopPropagation(); onToggle(); }}>{collapsed ? '›' : '⌄'}</button>{letter ? <span className="register">{letter}</span> : null} {g.name}</td>
           <td className="num">{chf(g.total)}</td>
+          <td className="num">{hasVj ? chf(vj) : ''}</td>
           <Delta cy={g.total} vj={hasVj ? vj : null} />
-          <td className="small muted" title={`${g.items.length} Konten, ${nDocs} Belege`}>{g.items.length}</td>
+          <td className="small" title={`${g.items.length} Konten, ${nDocs} Belege`}>{exam && (
+            <button className={`exam-chip st-${exam.status}`} data-pruefung={exam.status} onClick={e => { e.stopPropagation(); exam.open(); }}
+              title="Fokus-Prüfung dieser Position öffnen">{exam.status === 'erledigt' ? `✓ geprüft ${exam.visum}` : exam.status === 'in_arbeit' ? `in Arbeit · ${exam.done}/${exam.total}` : 'Prüfen →'}</button>
+          )}</td>
           <td className="small muted">{nDocs || ''}</td>
         </tr>
       )}
@@ -382,11 +503,14 @@ function GroupRows({ g, grouped, collapsed, onToggle, letter, open, setOpen, doc
         const problems = (a.best?.flags ?? []).filter(f => PROBLEM_FLAGS.has(f)).map(f => FLAG_LABEL[f] ?? f);
         const quiet = a.status === 'NULLSALDO' || a.status === 'NICHT_IM_UMFANG';
         return (
-          <tr key={a.accountNumber} data-konto={a.accountNumber} className={`${open === a.accountNumber ? 'selected' : ''} ${quiet ? 'muted-row' : ''}`} onClick={() => setOpen(a.accountNumber)}>
+          <tr key={a.accountNumber} data-konto={a.accountNumber} className={`${open === a.accountNumber ? 'selected' : ''} ${quiet ? 'muted-row' : ''} ${isOver ? 'drop-target' : ''} ${dnd?.dragging === a.accountNumber ? 'dragging' : ''}`} onClick={() => setOpen(a.accountNumber)}
+            draggable={dnd?.enabled || undefined} {...target}
+            onDragStart={dnd?.enabled ? e => { e.dataTransfer.setData('text/plain', a.accountNumber); e.dataTransfer.effectAllowed = 'move'; dnd.start(a.accountNumber); } : undefined}
+            onDragEnd={dnd?.enabled ? () => dnd.end() : undefined}>
             <td>{a.accountNumber}</td>
-            <td title={a.accountName}>{a.accountName}{notes[a.accountNumber] ? <span className="flag note" title="Notiz vorhanden">Notiz</span> : null}{a.groupSource === 'bezeichnung' && <WarnIcon text={`Gruppe „${a.groupName}“ aus der Bezeichnung abgeleitet – bitte prüfen`} />}</td>
-            <td className="num">{a.balancePreviousYear === null ? '' : chf(a.balancePreviousYear)}</td>
+            <td title={a.accountName}>{a.accountName}{notes[a.accountNumber] ? <span className="flag note" title="Notiz vorhanden">Notiz</span> : null}{a.groupSource === 'bezeichnung' && <WarnIcon text={`Gruppe „${a.groupName}“ aus der Bezeichnung abgeleitet – bitte prüfen`} />}{a.groupSource === 'manuell' && <span className="flag moved" title={`vom Prüfer verschoben (automatisch: ${a.autoGroup?.name ?? 'Ohne Gruppe'})`}>verschoben</span>}</td>
             <td className="num">{chf(a.balance)}{a.fx && a.fx.currency !== 'CHF' && a.fx.closing !== null && <div className="fx-sub">{a.fx.currency} {chf(a.fx.closing)}</div>}</td>
+            <td className="num">{a.balancePreviousYear === null ? '' : chf(a.balancePreviousYear)}</td>
             <Delta cy={a.balance} vj={a.balancePreviousYear} />
             <td><StatusBadge status={a.status} />{fxProblem(a) && <WarnIcon text={fxProblem(a)!} />}{a.manual && <span className="manual" title={a.manual === 'akzeptiert' ? 'manuell akzeptiert' : 'Beleg manuell zugeordnet'}> ✓</span>}{problems.length > 0 && <WarnIcon text={problems.join(', ')} />}</td>
             <td>{hasDoc ? <span className="reg-link" title={doc!.filename}>{doc!.register ?? doc!.filename.slice(0, 18)}</span> : <span className="muted">–</span>}</td>
@@ -443,10 +567,18 @@ function DocLine({ d, accounts, filedInfo, onAssign }: { d: ViewDoc; accounts: V
   );
 }
 
-function AccountPanel({ a, docs, filedPath, note, accepted, nav, onAccept, onUnaccept, onNote, onAssign, onUnassign, onClose }: {
+type PanelTab = 'beleg' | 'kontoblatt';
+const PANEL_TABS: [PanelTab, string][] = [['beleg', 'Beleg'], ['kontoblatt', 'Kontoblatt']];
+
+function AccountPanel({ a, docs, filedPath, note, accepted, nav, onAccept, onUnaccept, onNote, onAssign, onUnassign, onClose, groupOptions = [], onGroup, tab = 'beleg', onTab, historyId, onFocus }: {
   a: ViewAccount; docs: ViewDoc[]; filedPath: string | null; note?: { text: string; at: string; visum: string }; accepted?: { visum: string; at: string; comment?: string };
   nav: { pos: number; count: number; prev: () => void; next: () => void };
   onAccept: () => void; onUnaccept: () => void; onNote: (t: string) => void; onAssign: (docId: string) => void; onUnassign: (docId: string) => void; onClose: () => void;
+  /** Gruppe ändern (Code) bzw. zurücksetzen (null) */
+  groupOptions?: { code: string; name: string; category: string }[]; onGroup?: (code: string | null) => void;
+  tab?: PanelTab; onTab?: (t: PanelTab) => void; historyId?: string;
+  /** Fokus-Prüfung der Position dieses Kontos öffnen */
+  onFocus?: () => void;
 }) {
   const found = a.autoStatus === 'BELEGT' || a.autoStatus === 'PRUEFEN';
   const all: Best[] = found && a.best ? [a.best, ...a.candidates] : a.candidates;
@@ -466,7 +598,10 @@ function AccountPanel({ a, docs, filedPath, note, accepted, nav, onAccept, onUna
   if (a.status === 'PRUEFEN' || a.status === 'KEIN_NACHWEIS') problems.push(...a.reasons.filter(r => !/Texterkennung|Scan/i.test(r)));
   if (c && c.differenceCents !== 0 && Number.isFinite(c.differenceCents)) problems.push(`Differenz zum Saldo: ${chf(c.differenceCents)}`);
   if (c) problems.push(...c.flags.filter(f => PROBLEM_FLAGS.has(f)).map(f => FLAG_LABEL[f] ?? f));
-  if (doc && doc.ocrPages > 0 && (doc.ocrConfidence ?? 100) < 60) problems.push(`Schlechte Texterkennung (${doc.ocrConfidence} %) – Betrag mit dem Original vergleichen`);
+  // Hinweise zur Lesequalität: nur hinter ⓘ (mit Warnsymbol), nicht als Kasten
+  const readHints: string[] = [];
+  if (doc && doc.ocrPages > 0 && (doc.ocrConfidence ?? 100) < 60) readHints.push(`Schlechte Texterkennung (${doc.ocrConfidence} %) – Betrag mit dem Original vergleichen`);
+  if (doc && doc.status !== 'ok') readHints.push('Beleg nicht vollständig gelesen');
   const fxp = fxProblem(a);
   const uniq = [...new Set(problems)].filter(() => !(a.manual && a.status === 'BELEGT'));
   if (fxp) uniq.push(fxp);
@@ -475,14 +610,40 @@ function AccountPanel({ a, docs, filedPath, note, accepted, nav, onAccept, onUna
       <div className="panel-title">
         <h3>{a.accountNumber} · {a.accountName}</h3>
         <StatusBadge status={a.status} />
-        {a.manual && <span className="manual">✓ {a.manual === 'akzeptiert' ? 'akzeptiert' : 'manuell zugeordnet'}</span>}
+        <Info label="Details zum Konto"><dl>
+          <dt>Gruppe</dt><dd>{a.groupName ?? 'Ohne Gruppe'}{a.groupSource === 'manuell' ? ' (vom Prüfer verschoben)' : a.groupSource === 'bezeichnung' ? ' (aus Bezeichnung)' : ''}</dd>
+          <dt>Saldo</dt><dd>{chf(a.balance)}{a.balancePreviousYear !== null ? ` · VJ ${chf(a.balancePreviousYear)}` : ''}</dd>
+          {a.manual && <><dt>Entscheid</dt><dd>{a.manual === 'akzeptiert' ? `manuell akzeptiert${accepted ? ` (${accepted.visum || '–'}, ${date(accepted.at.slice(0, 10))})` : ''}` : 'Beleg manuell zugeordnet'}</dd></>}
+        </dl></Info>
         <span className="panel-nav">
           <button aria-label="vorheriges Konto" onClick={nav.prev} disabled={nav.pos <= 1}>‹</button>
           <span className="small">{nav.pos} / {nav.count}</span>
           <button aria-label="nächstes Konto" onClick={nav.next} disabled={nav.pos >= nav.count}>›</button>
+          {onFocus && <button className="focus-toggle" aria-label="Fokus-Prüfung" title="Fokus-Prüfung der Position öffnen: Lead Schedule, Analyse, Prüfungshandlungen" onClick={onFocus}>⤢ Prüfen</button>}
           <button aria-label="Schliessen (Esc)" onClick={onClose}>✕</button>
         </span>
       </div>
+      {onGroup && groupOptions.length > 0 && (
+        <div className="group-line small">
+          <span className="muted">Gruppe</span>
+          <select value={a.groupCode ?? ''} aria-label="Gruppe des Kontos" onChange={e => onGroup(e.target.value || null)}>
+            {!a.groupCode && <option value="">Ohne Gruppe (nicht im KMU-Kontenrahmen)</option>}
+            {GROUP_CATS.map(([cat, label]) => (
+              <optgroup key={cat} label={label}>
+                {groupOptions.filter(g => g.category === cat).map(g => <option key={g.code} value={g.code}>{g.name}</option>)}
+              </optgroup>
+            ))}
+          </select>
+          {a.groupSource === 'manuell' && <button className="link" onClick={() => onGroup(null)} title={`Automatisch: ${a.autoGroup?.name ?? 'Ohne Gruppe'}`}>zurücksetzen</button>}
+        </div>
+      )}
+      {onTab && (
+        <nav className="tabs panel-tabs" role="tablist" aria-label="Ansicht Konto">
+          {PANEL_TABS.map(([k, l]) => <button key={k} role="tab" aria-selected={tab === k} className={tab === k ? 'active' : ''} onClick={() => onTab(k)}>{l}</button>)}
+        </nav>
+      )}
+      {tab === 'kontoblatt' && historyId && <LedgerView historyId={historyId} accountNumber={a.accountNumber} />}
+      {tab === 'beleg' && (<>
       <div className="doc-line small">
         {doc ? <>{doc.register && <span className="register">{doc.register}</span>}<span>{doc.filename}</span></> : <span>Kein Beleg</span>}
         <Info label="Details zur Fundstelle">
@@ -499,7 +660,9 @@ function AccountPanel({ a, docs, filedPath, note, accepted, nav, onAccept, onUna
             {accepted && <><dt>Akzeptiert</dt><dd>{accepted.visum || '–'}, {date(accepted.at.slice(0, 10))}</dd></>}
           </dl>
           {c && c.reasons.length > 0 && <ul>{c.reasons.map((r, i) => <li key={i}>{r}</li>)}</ul>}
+          {readHints.length > 0 && <ul className="warn">{readHints.map((r, i) => <li key={i}>{r}</li>)}</ul>}
         </Info>
+        {readHints.length > 0 && <WarnIcon text={readHints.join(' · ')} />}
         {file && <button className="link small ml-auto" onClick={() => bsb().app.openPath(filedPath ?? file)}>Beleg öffnen</button>}
       </div>
 
@@ -529,7 +692,7 @@ function AccountPanel({ a, docs, filedPath, note, accepted, nav, onAccept, onUna
       )}
       {showNote && (
         <div className="note-field">
-          <textarea rows={2} maxLength={500} value={noteText} onChange={e => setNoteText(e.target.value)} onBlur={() => noteText !== (note?.text ?? '') && onNote(noteText)} placeholder="z. B. Saldo mit Bankbestätigung abgestimmt." autoFocus={!note?.text} />
+          <AutoTextarea minRows={2} maxLength={500} value={noteText} onChange={e => setNoteText(e.target.value)} onBlur={() => noteText !== (note?.text ?? '') && onNote(noteText)} placeholder="z. B. Saldo mit Bankbestätigung abgestimmt." autoFocus={!note?.text} />
           <div className="note-meta"><span>{a.docId ? 'Wird dem Beleg als erste Seite vorangestellt.' : 'Erscheint in der Excel-Dokumentation.'}</span><span>{note ? `${note.visum || '–'}, ${date(note.at.slice(0, 10))} · ` : ''}{noteText.length} / 500</span></div>
         </div>
       )}
@@ -550,6 +713,7 @@ function AccountPanel({ a, docs, filedPath, note, accepted, nav, onAccept, onUna
       ) : (
         <p className="muted">{a.status === 'KEIN_NACHWEIS' ? 'Kein passender Betrag in den Unterlagen gefunden.' : 'Für dieses Konto ist kein Nachweis nötig.'}</p>
       )}
+      </>)}
     </aside>
   );
 }

@@ -28,7 +28,7 @@ export interface OpItem {
   sourceDocId?: string;
 }
 
-export interface OpCustomerTotal { customerNo: string; customerName: string; currency: string | null; amount: Cents | null; page: number; lineNo: number; line: string }
+export interface OpCustomerTotal { customerNo: string; customerName: string; currency: string | null; amount: Cents | null; page: number; lineNo: number; line: string; sourceDocId?: string }
 
 export interface OpList {
   items: OpItem[];
@@ -40,6 +40,8 @@ export interface OpList {
   baseCurrency: string;
   /** Zeilen, die wie Posten aussehen, aber nicht gelesen werden konnten */
   unreadable: { page: number; lineNo: number; line: string }[];
+  /** Tabellen: Zeilen mit Betrag, aber ohne Datum, die nicht als Posten gelesen wurden (z. B. Zwischensummen ohne „Total“) */
+  skipped?: { page: number; lineNo: number; line: string }[];
 }
 
 const DATE = /(?<!\d)(\d{1,2})\.(\d{1,2})\.(\d{4}|\d{2})(?!\d)/g;
@@ -51,11 +53,19 @@ const TOTAL = /^(total|gesamt|summe|zwischensumme|gesamtsumme|gesamttotal|übert
 const CREDIT = /gutschrift|zahlung|vorauszahlung|anzahlung|erstattung|storno|haben|\bvz\b|\bgs\b/i;
 const TYPE = /\b(Rechnung|Gutschrift|Zahlung|Vorauszahlung|Anzahlung|Erstattung|Mahnung|Zinsen|Storno|Belastung)\b/i;
 
+/** Kalenderdatum (ISO) oder null – auch 31.02. oder 31.04. werden abgelehnt (sonst falsche Altersklasse) */
 const iso = (d: string, m: string, y: string) => {
-  const yy = y.length === 2 ? `20${y}` : y;
+  const yy = Number(y.length === 2 ? `20${y}` : y);
   const mm = Number(m), dd = Number(d);
   if (mm < 1 || mm > 12 || dd < 1 || dd > 31) return null;
+  const t = new Date(Date.UTC(yy, mm - 1, dd));
+  if (t.getUTCFullYear() !== yy || t.getUTCMonth() !== mm - 1 || t.getUTCDate() !== dd) return null;
   return `${yy}-${String(mm).padStart(2, '0')}-${String(dd).padStart(2, '0')}`;
+};
+/** Gültiges ISO-Datum (JJJJ-MM-TT)? */
+const isIsoDate = (s: string | null | undefined): s is string => {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s ?? '');
+  return !!m && iso(m[3]!, m[2]!, m[1]!) === s;
 };
 export function parseCents(raw: string): Cents | null {
   let s = raw.trim();
@@ -94,12 +104,44 @@ function customerHeader(t: string): { no: string; name: string } | null {
   return { no: m[1]!, name };
 }
 
+/** Datum in einer Tabellenzelle: 15.12.2025, 15.12.25, 15/12/2025, 2025-12-15 (auch mit Uhrzeit) */
+export function cellDate(c: string | undefined): string | null {
+  const s = (c ?? '').trim();
+  let m = /^(\d{4})-(\d{1,2})-(\d{1,2})(?:[T ][\d:.]+Z?)?$/.exec(s);
+  if (m) return iso(m[3]!, m[2]!, m[1]!);
+  m = /^(\d{1,2})[./](\d{1,2})[./](\d{4}|\d{2})(?:\s+[\d:]+)?$/.exec(s);
+  if (m) return iso(m[1]!, m[2]!, m[3]!);
+  return null;
+}
+
 /**
- * Tabellen (Excel, CSV, Word): Zellen sind mit " | " getrennt. Kopfzeile bestimmt die Spalten; jede Zeile ist ein Posten
- * (Kunde je Zeile). Totalzeilen werden als Gesamt- bzw. Kundentotal gelesen.
+ * Betrag in einer Tabellenzelle (Rappen). Versteht 1'234.50 · 1’234.50 · 1 234.50 · 1.234,50 · 1,234.50 · 1234,5 ·
+ * -500 · 500- · (500.00) · CHF 500 · 500 EUR. Alles andere (Text, Belegnummern, Prozent) → null.
+ */
+export function cellAmount(c: string | undefined): Cents | null {
+  let s = (c ?? '').replace(/[\s  ]/g, '').replace(/^(CHF|EUR|USD|GBP|JPY|SEK|NOK|DKK|PLN|CZK|CAD|AUD)|(CHF|EUR|USD|GBP|JPY|SEK|NOK|DKK|PLN|CZK|CAD|AUD)$/gi, '');
+  if (!s) return null;
+  let neg = false;
+  if (/^\(.+\)$/.test(s)) { neg = true; s = s.slice(1, -1); }
+  if (/^[-−–]/.test(s)) { neg = !neg; s = s.slice(1); } else if (/[-−–]$/.test(s)) { neg = !neg; s = s.slice(0, -1); }
+  s = s.replace(/['’]/g, '');
+  if (/^\d{1,3}(\.\d{3})+(,\d{1,2})?$/.test(s) || /^\d+,\d{1,2}$/.test(s)) s = s.replace(/\./g, '').replace(',', '.');
+  else if (/^\d{1,3}(,\d{3})+(\.\d{1,2})?$/.test(s)) s = s.replace(/,/g, '');
+  if (!/^\d+(\.\d{1,2})?$/.test(s)) return null;
+  const v = Math.round(Number(s) * 100);
+  return neg ? -v : v;
+}
+
+/**
+ * Tabellen (Excel, CSV): Kopfzeile bestimmt die Spalten, jede Zeile mit Betrag ist ein Posten.
+ * Spalten werden über `cells` (Position je Spalte, leere Zellen erhalten) zugeordnet; ohne `cells` (ältere Stände)
+ * über den Text " | ".
+ * - Kunde nur in der ersten Zeile eines Blocks → gilt für die folgenden Zeilen
+ * - Liste ohne Datumsspalte → Posten ohne Datum (Fälligkeit muss der Prüfer erfassen)
+ * - Totalzeilen nach weiteren Posten bzw. mit dem Namen des Kunden → Kundentotal, übrige am Ende → Gesamttotal
  */
 function parseOpTable(lines: EvidenceLine[], baseCurrency: string): OpList | null {
-  const rows = lines.map(l => ({ l, cells: l.text.split(' | ').map(c => c.trim()) }));
+  const rows = lines.map(l => ({ l, cells: (l.cells ?? l.text.split(' | ')).map(c => c.trim()) }));
   const COL: Record<string, RegExp> = {
     custNo: /^(debitor(en)?(-?nr\.?|nummer)?|kunden?-?nr\.?|kd\.?-?nr\.?|konto)$/i,
     cust: /^(kunde|kundenname|name|debitor(enname)?|firma|bezeichnung)$/i,
@@ -112,54 +154,88 @@ function parseOpTable(lines: EvidenceLine[], baseCurrency: string): OpList | nul
     cur: /^(währung|whg\.?|mw)$/i,
     dunning: /^(mahnstufe|ms|mahn\.?)$/i,
   };
-  let hi = -1;
-  const map: Record<string, number> = {};
-  for (let i = 0; i < Math.min(rows.length, 40) && hi < 0; i++) {
+  const headerOf = (cells: string[]) => {
     const m: Record<string, number> = {};
-    rows[i]!.cells.forEach((c, j) => { for (const [k, rx] of Object.entries(COL)) if (m[k] === undefined && rx.test(c)) { m[k] = j; break; } });
-    if ((m.cust !== undefined || m.custNo !== undefined) && (m.open !== undefined || m.amount !== undefined) && (m.date !== undefined || m.due !== undefined)) { hi = i; Object.assign(map, m); }
+    cells.forEach((c, j) => { for (const [k, rx] of Object.entries(COL)) if (m[k] === undefined && rx.test(c)) { m[k] = j; break; } });
+    return (m.cust !== undefined || m.custNo !== undefined) && (m.open !== undefined || m.amount !== undefined) ? m : null;
+  };
+  // Kopfzeile: Kunde + Betrag; mit Datum/Fälligkeit bevorzugt (sonst Liste ohne Datum)
+  let hi = -1;
+  let map: Record<string, number> = {};
+  for (let i = 0; i < Math.min(rows.length, 40); i++) {
+    const m = headerOf(rows[i]!.cells);
+    if (!m) continue;
+    const dated = m.date !== undefined || m.due !== undefined;
+    if (hi < 0 || dated) { hi = i; map = m; }
+    if (dated) break;
   }
   if (hi < 0) return null;
+  const hasDates = map.date !== undefined || map.due !== undefined;
   const amtCol = map.open ?? map.amount!;
-  const num = (c: string | undefined) => {
-    if (!c) return null;
-    const v = c.replace(/[''’\s]/g, '').replace(/^CHF/i, '');
-    if (!/^-?\d+([.,]\d{1,2})?-?$/.test(v)) return null;
-    return parseCents(/[.,]\d$/.test(v) ? `${v}0` : /[.,]\d{2}-?$/.test(v) ? v : `${v.replace(/-$/, '')}.00${v.endsWith('-') ? '-' : ''}`);
-  };
+  const cell = (cells: string[], k: string) => (map[k] !== undefined ? cells[map[k]!] ?? '' : '');
   const items: OpItem[] = [];
   const grandTotals: OpList['grandTotals'] = [];
   const customerTotals: OpCustomerTotal[] = [];
+  const unreadable: OpList['unreadable'] = [];
+  const skipped: NonNullable<OpList['skipped']> = [];
+  const totals: { l: EvidenceLine; amount: Cents; currency: string | null; itemsBefore: number }[] = [];
   let listDate: string | null = null;
   for (const { l } of rows.slice(0, hi)) {
-    const m = /(?:per|stichtag|saldo am)\s*(\d{1,2}\.\d{1,2}\.\d{2,4})/i.exec(l.text);
-    if (m) listDate = datesIn(m[1]!)[0] ?? listDate;
+    const m = /(?:per|stichtag|saldo am)\s*(\d{1,2}\.\d{1,2}\.\d{2,4}|\d{4}-\d{2}-\d{2})/i.exec(l.text);
+    if (m) listDate = cellDate(m[1]) ?? listDate;
   }
+  let cust = { no: '', name: '' };
   for (const { l, cells } of rows.slice(hi + 1)) {
     const first = cells.find(Boolean) ?? '';
-    if (/^(total|gesamt|summe)/i.test(first)) {
-      const v = [...cells].reverse().map(num).find(x => x !== null) ?? null;
-      if (v !== null) grandTotals.push({ currency: baseCurrency, amount: v, line: l.text });
+    if (/^(übertrag|uebertrag|vortrag)\b/i.test(first)) continue; // Seitenübertrag: weder Posten noch Total
+    if (/^(total|gesamt|summe|zwischensumme)/i.test(first)) {
+      const v = cellAmount(cells[amtCol]) ?? [...cells].reverse().map(cellAmount).find(x => x !== null) ?? null;
+      if (v !== null) totals.push({ l, amount: v, currency: CUR.exec(l.text)?.[1] ?? null, itemsBefore: items.length });
       continue;
     }
-    const amount = num(cells[amtCol]);
-    const date = map.date !== undefined ? datesIn(cells[map.date] ?? '')[0] ?? null : null;
-    const due = map.due !== undefined ? datesIn(cells[map.due] ?? '')[0] ?? null : null;
-    if (amount === null || (!date && !due)) continue;
-    const type = map.type !== undefined ? cells[map.type] ?? '' : '';
+    if (headerOf(cells)) continue; // wiederholte Kopfzeile (z. B. je Blatt)
+    // Kunde: fehlt er in der Zeile, gilt der Kunde der Zeile davor (gruppierte Exporte)
+    const no = cell(cells, 'custNo'), name = cell(cells, 'cust');
+    if (no || name) cust = { no, name };
+    const rawAmt = cells[amtCol] ?? '';
+    const amount = cellAmount(rawAmt);
+    const date = cellDate(cell(cells, 'date'));
+    const due = cellDate(cell(cells, 'due'));
+    if (amount === null) {
+      // Zeile mit Datum, aber unlesbarem Betrag → melden statt stillschweigend weglassen
+      if ((date || due) && rawAmt) unreadable.push({ page: l.page, lineNo: l.lineNo, line: l.text });
+      continue;
+    }
+    if (amount === 0) continue; // ausgeglichener Posten
+    if (hasDates && !date && !due) { skipped.push({ page: l.page, lineNo: l.lineNo, line: l.text }); continue; }
+    const type = cell(cells, 'type');
+    const curCell = cell(cells, 'cur');
+    const dunning = Number(cell(cells, 'dunning'));
     items.push({
-      customerNo: map.custNo !== undefined ? cells[map.custNo] ?? '' : '', customerName: map.cust !== undefined ? cells[map.cust] ?? '' : '',
-      docNo: map.doc !== undefined ? cells[map.doc] ?? '' : '', docType: type || (amount < 0 ? 'Gutschrift' : 'Rechnung'),
-      date, dueDate: due, currency: (map.cur !== undefined && CUR.exec(cells[map.cur] ?? '')?.[1]) || baseCurrency,
-      amount: CREDIT.test(type) && amount > 0 ? -amount : amount, dunningLevel: map.dunning !== undefined ? Number(cells[map.dunning]) || null : null,
+      customerNo: cust.no, customerName: cust.name,
+      docNo: cell(cells, 'doc'), docType: type || (amount < 0 ? 'Gutschrift' : 'Rechnung'),
+      date, dueDate: due, currency: CUR.exec(curCell)?.[1] ?? CUR.exec(rawAmt)?.[1] ?? baseCurrency,
+      amount: CREDIT.test(type) && amount > 0 ? -amount : amount, dunningLevel: Number.isFinite(dunning) && dunning > 0 ? dunning : null,
       page: l.page, lineNo: l.lineNo, line: l.text, bbox: l.bbox,
     });
   }
-  return { items, customerTotals, grandTotals, listDate, baseCurrency, unreadable: [] };
+  // Totalzeilen einordnen: vor weiteren Posten bzw. mit Name/Nummer des Kunden davor → Kundentotal, sonst Gesamttotal
+  const mentions = (t: string, i: OpItem | undefined) => {
+    if (!i) return false;
+    const s = t.toLowerCase();
+    return (!!i.customerNo && new RegExp(`(^|\\D)${i.customerNo.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(\\D|$)`).test(s)) || (!!i.customerName && s.includes(i.customerName.toLowerCase()));
+  };
+  for (const t of totals) {
+    const prev = items[t.itemsBefore - 1];
+    if (prev && (t.itemsBefore < items.length || mentions(t.l.text, prev))) {
+      customerTotals.push({ customerNo: prev.customerNo, customerName: prev.customerName, currency: t.currency, amount: t.amount, page: t.l.page, lineNo: t.l.lineNo, line: t.l.text });
+    } else grandTotals.push({ currency: t.currency ?? baseCurrency, amount: t.amount, line: t.l.text });
+  }
+  return { items, customerTotals, grandTotals, listDate, baseCurrency, unreadable, skipped };
 }
 
 export function parseOpList(lines: EvidenceLine[], opts: { defaultCurrency?: string } = {}): OpList {
-  if (lines.filter(l => l.text.includes(' | ')).length >= Math.max(3, lines.length * 0.5)) {
+  if (lines.filter(l => l.cells || l.text.includes(' | ')).length >= Math.max(3, lines.length * 0.5)) {
     const t = parseOpTable(lines, opts.defaultCurrency ?? 'CHF');
     if (t && t.items.length) return t;
   }
@@ -338,10 +414,10 @@ export function analyzeAging(list: OpList, p: AgingParams): Aging {
     const term = p.customerTerms?.[i.customerNo] ?? p.customerTerms?.[i.customerName] ?? p.termDays;
     const lineDates = [...i.line.matchAll(DATE)].map(m => iso(m[1]!, m[2]!, m[3]!)).filter((x): x is string => !!x);
     let due: string | null; let dueWhy: string;
-    if (c?.due !== undefined) { due = c.due; dueWhy = 'manuell erfasst'; }
+    if (c?.due !== undefined) { due = isIsoDate(c.due) ? c.due : null; dueWhy = due ? 'manuell erfasst' : 'manuell erfasste Fälligkeit ungültig – bitte erfassen'; }
     else if (mode === 'lastDate' && lineDates.length >= 2) { due = lineDates[lineDates.length - 1]!; dueWhy = 'letztes Datum der Zeile (Vorgabe Prüfer)'; }
     else if (mode !== 'term' && i.dueDate) { due = i.dueDate; dueWhy = 'Fälligkeit laut Liste'; }
-    else if (i.date) { due = addDays(i.date, term); dueWhy = `Belegdatum + ${term} Tage${term !== p.termDays ? ' (Frist des Kunden)' : ''}`; }
+    else if (isIsoDate(i.date)) { due = addDays(i.date, term); dueWhy = `Belegdatum + ${term} Tage${term !== p.termDays ? ' (Frist des Kunden)' : ''}`; }
     else { due = null; dueWhy = 'kein Datum – bitte erfassen'; }
     const days = due ? dayDiff(p.closingDate, due) : null;
     const r = rate(i.currency);
@@ -377,9 +453,11 @@ export function analyzeAging(list: OpList, p: AgingParams): Aging {
 
   // Kontrollen: Kundensummen gegen Kundentotale, Summe gegen Gesamttotal, Stichtag der Liste
   const checks: Aging['checks'] = [];
+  // je Liste: derselbe Kunde kann in mehreren Listen (z. B. Inland/Ausland) mit je eigenem Kundentotal stehen
+  const custKey = (x: { sourceDocId?: string; customerNo: string; customerName: string }) => `${x.sourceDocId ?? ''}|${x.customerNo}|${x.customerName}`;
   const sumBy = new Map<string, Cents>();
-  for (const i of list.items) sumBy.set(`${i.customerNo}|${i.customerName}`, (sumBy.get(`${i.customerNo}|${i.customerName}`) ?? 0) + i.amount);
-  const bad = list.customerTotals.filter(t => t.amount === null || Math.abs((sumBy.get(`${t.customerNo}|${t.customerName}`) ?? 0) - t.amount) > 1);
+  for (const i of list.items) sumBy.set(custKey(i), (sumBy.get(custKey(i)) ?? 0) + i.amount);
+  const bad = list.customerTotals.filter(t => t.amount === null || Math.abs((sumBy.get(custKey(t)) ?? 0) - t.amount) > 1);
   if (list.customerTotals.length) checks.push({
     name: 'Kundentotale', passed: bad.length === 0,
     message: bad.length ? `${bad.length} von ${list.customerTotals.length} Kundentotalen weichen von der Summe der Posten ab bzw. sind nicht lesbar (z. B. ${bad.slice(0, 3).map(b => `${b.customerName || b.customerNo}, S. ${b.page}`).join('; ')}).` : `Alle ${list.customerTotals.length} Kundentotale stimmen mit der Summe der Posten überein.`,
@@ -398,6 +476,11 @@ export function analyzeAging(list: OpList, p: AgingParams): Aging {
   // Plausibilität: Fälligkeit vor Belegdatum bzw. sehr lange Frist deutet auf vertauschte Spalten hin
   const odd = items.filter(i => i.date && i.due && (i.due < i.date || dayDiff(i.due, i.date) > 180));
   if (odd.length) checks.push({ name: 'Plausibilität Fälligkeit', passed: false, message: `${odd.length} Posten mit Fälligkeit vor dem Belegdatum oder mehr als 180 Tage danach – Datumsspalten prüfen (Hilfe zur Liste: „Fälligkeit bestimmen“).` });
+  if (list.skipped?.length) {
+    // Stimmt das Gesamttotal, sind es Zwischensummen; sonst fehlen evtl. Posten
+    const totalOk = list.grandTotals.length > 0 && checks.filter(c => c.name.startsWith('Gesamttotal')).every(c => c.passed);
+    checks.push({ name: 'Zeilen ohne Datum', passed: totalOk, message: `${list.skipped.length} Zeile(n) mit Betrag, aber ohne Datum nicht als Posten gelesen (z. B. Zeile ${list.skipped.slice(0, 3).map(s => s.lineNo).join(', ')})${totalOk ? ' – Gesamttotal stimmt, vermutlich Zwischensummen.' : ' – prüfen, ob Posten fehlen.'}` });
+  }
   if (list.unreadable.length) checks.push({ name: 'Lesbarkeit', passed: false, message: `${list.unreadable.length} Postenzeile(n) ohne lesbaren Betrag (S. ${[...new Set(list.unreadable.map(u => u.page))].join(', ')}).` });
   if (missing.size) checks.push({ name: 'Fremdwährungskurse', passed: false, message: `Kurs per Stichtag fehlt für ${[...missing].join(', ')} – diese Posten sind in den CHF-Summen nicht enthalten.` });
 
@@ -455,7 +538,8 @@ export interface ReceivablesResult {
   aging: Aging | null;
   balanceChf: Cents | null;
   balanceAccounts: string;
-  accountOptions: { accountNumber: string; accountName: string; balance: Cents }[];
+  /** Alle Konten für die Abstimmung; `suggested` = Forderungen L+L (ohne Delkredere) */
+  accountOptions: { accountNumber: string; accountName: string; balance: Cents; groupCode: string | null; suggested: boolean }[];
   suggestions: string[];
 }
 
@@ -479,24 +563,31 @@ export function receivablesFor(res: ResLike, p: ReceivablesParams, assignedOverr
   const isWb = (name: string) => /delkredere|wertberichtigung|\bwb\b/i.test(name);
   // Abstimmung: gewählte Konten, sonst die Konten, denen die Listen zugeordnet sind, sonst alle Konten der Gruppe
   const fromDocs = [...new Set(docs.flatMap(d => assignedOf(d).filter(n => groupNums.has(n))))];
-  const accNums = p.accounts?.length ? p.accounts : fromDocs.length ? fromDocs : group.map(a => a.accountNumber);
-  const accs = group.filter(a => accNums.includes(a.accountNumber) && !isWb(a.accountName));
+  // Vom Prüfer gewählte Konten gelten unverändert – aus allen Konten, auch ausserhalb der Gruppe (z. B. falsch gegliedert)
+  const chosen = p.accounts?.length ? res.accounts.filter(a => p.accounts!.includes(a.accountNumber)) : null;
+  const accNums = fromDocs.length ? fromDocs : group.map(a => a.accountNumber);
+  const accs = chosen ?? group.filter(a => accNums.includes(a.accountNumber) && !isWb(a.accountName));
   const balanceChf = accs.length ? accs.reduce((s, a) => s + a.balanceCurrentYear, 0) : null;
+  const byNo = (a: { accountNumber: string }, b: { accountNumber: string }) => a.accountNumber.localeCompare(b.accountNumber, 'de', { numeric: true });
   const base = {
     candidates, docIds: docs.map(d => d.doc.id), docId: docs[0]?.doc.id ?? null, filename: docs.map(d => d.doc.filename).join(', ') || null,
     balanceChf, balanceAccounts: accs.map(a => a.accountNumber).join(', '),
-    accountOptions: group.filter(a => !isWb(a.accountName)).map(a => ({ accountNumber: a.accountNumber, accountName: a.accountName, balance: a.balanceCurrentYear })),
+    // alle Konten; vorgeschlagen = Forderungen L+L ohne Delkredere (zuerst)
+    accountOptions: res.accounts
+      .map(a => ({ accountNumber: a.accountNumber, accountName: a.accountName, balance: a.balanceCurrentYear, groupCode: a.groupCode, suggested: a.groupCode === 'A12' && !isWb(a.accountName) }))
+      .sort((a, b) => Number(b.suggested) - Number(a.suggested) || byNo(a, b)),
   };
   if (!docs.length || !res.input.closingDate) return { ...base, lists: [], listDate: null, currencies: [], aging: null, suggestions: [] };
   // Mehrere Listen (z. B. Inland/Ausland) werden zusammengeführt; Kontrollen je Liste bleiben erhalten
   const parsed = docs.map(d => ({ d, list: parseOpList(d.doc.lines) }));
   const merged: OpList = {
     items: parsed.flatMap(x => x.list.items.map(i => ({ ...i, sourceDocId: x.d.doc.id }))),
-    customerTotals: parsed.flatMap(x => x.list.customerTotals),
+    customerTotals: parsed.flatMap(x => x.list.customerTotals.map(t => ({ ...t, sourceDocId: x.d.doc.id }))),
     grandTotals: parsed.length === 1 ? parsed[0]!.list.grandTotals : [],
     listDate: parsed.map(x => x.list.listDate).find(Boolean) ?? null,
     baseCurrency: parsed[0]!.list.baseCurrency,
     unreadable: parsed.flatMap(x => x.list.unreadable),
+    skipped: parsed.flatMap(x => x.list.skipped ?? []),
   };
   const aging = analyzeAging(merged, { closingDate: res.input.closingDate, termDays: p.termDays ?? 30, rates: p.rates ?? {}, dueMode: p.dueMode, customerTerms: p.customerTerms, corrections: p.corrections, listDate: p.listDate || null });
   if (parsed.length > 1) {

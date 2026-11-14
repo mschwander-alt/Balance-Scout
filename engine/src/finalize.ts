@@ -12,7 +12,7 @@ import type { RunResult, DocumentSummary } from './run.js';
 import type { AccountResult, AccountStatus, MatchSummary } from './domain/matching/engine.js';
 import { placeFiles, type FileMode, type PlacementPlan } from './organize/placeFiles.js';
 import { notePdf, prependNote, type NoteEntry } from './report/notePdf.js';
-import { KMU_GROUPS, GENERAL_ACCOUNT, GENERAL_GROUP } from './domain/trialBalance/accountGroups.js';
+import { KMU_GROUPS, GENERAL_ACCOUNT, GENERAL_GROUP, applyGroupOverrides, type GroupOverrides } from './domain/trialBalance/accountGroups.js';
 
 export const IRRELEVANT_DIR = '03_Nicht_relevant';
 
@@ -25,12 +25,37 @@ export interface ReviewDecisions {
   notes?: Record<string, { text: string; at: string; visum: string }>;
   /** Gruppe (Code, z. B. "A10") -> Registerbuchstabe (z. B. "B"); leer = ohne Präfix */
   groupLetters?: Record<string, string>;
+  /** Beilagen zur vertieften Prüfung je Gruppe (Code) – abgelegt als <Buchstabe>.100.1, .100.2 … (nach denen der Abgrenzungen) */
+  groupAttachments?: Record<string, { id: string; name: string; path: string; account?: string | null }[]>;
+  /** Feststellungen je Gruppe (Code), z. B. aus dem Fokus-Modus */
+  groupFindings?: Record<string, { text: string; status: 'offen' | 'erledigt'; at?: string; visum?: string }[]>;
+  /** Status je Prüfgebiet (Gruppencode, „ER“ = Erfolgsrechnung): offen / in Arbeit / erledigt mit Visum */
+  areaStatus?: Record<string, AreaStatus>;
+  /** Prüfungshandlungen je Prüfgebiet: Erledigt, Notiz/Ergebnis, Referenz, Visum; eigene Handlungen; ausgeblendete Empfehlungen */
+  procedures?: Record<string, AreaProcedures>;
+  /** Konto (Nummer) -> vom Prüfer gewählte Gruppe (Code); Belege und Register folgen dem Konto */
+  groupOverrides?: GroupOverrides;
   /** Vertiefte Prüfungen (Prüfgebiete) */
+  /** Analyse Erfolgsrechnung: Bemerkungen je Konto (Nummer), Untergruppe (U:…), Gruppe (S:…) oder Ergebnis (R:…) */
+  incomeNotes?: Record<string, { text: string; at?: string; visum?: string }>;
+  /** Analyse Erfolgsrechnung: Bezugsgrösse der Prozente und Platzierung verschobener Konten */
+  incomeBase?: import('./analysis/incomeStatement.js').IncomeBase | null;
+  incomePlacements?: import('./analysis/incomeStatement.js').IncomePlacements;
+  incomeRowBases?: Record<string, import('./analysis/incomeStatement.js').IncomeBase>;
   analyses?: {
-    fixedAssets?: { accounts?: string[]; categories?: Record<string, string>; classes?: Record<string, 'zugang' | 'abgang' | 'abschreibung' | 'umbuchung'>; findings: { text: string; status: 'offen' | 'erledigt' }[]; note?: string; visum?: string };
+    accruals?: { accounts?: string[]; classes?: Record<string, 'vorjahr' | 'laufend' | 'unterjaehrig'>; notes?: Record<string, { text: string }>; note?: string; visum?: string;
+      manual?: Record<string, import('./analysis/accruals.js').ManualAccrual[]>; edits?: Record<string, { label?: string; cy?: number; py?: number }>;
+      /** vom Prüfer angehängte Dateien (je Konto bzw. Position) – abgelegt als <Buchstabe>.100.1, .100.2 … */
+      attachments?: { id: string; name: string; path: string; account: string; position?: string | null }[] };
+    fixedAssets?: { manual?: Record<string, import('./analysis/fixedAssets.js').ManualFixedPosting[]>; accounts?: string[]; categories?: Record<string, string>; classes?: Record<string, 'zugang' | 'abgang' | 'abschreibung' | 'umbuchung'>; findings: { text: string; status: 'offen' | 'erledigt' }[]; note?: string; visum?: string };
     receivables?: { docId: string | null; docIds?: string[]; accounts?: string[]; termDays: number; rates: Record<string, number>; findings: { text: string; status: 'offen' | 'erledigt' }[]; visum?: string; note?: string; assigned?: Record<string, string[]> };
   };
 }
+
+export type AreaState = 'offen' | 'in_arbeit' | 'erledigt';
+export interface ProcedureState { done: boolean; note: string; ref?: string; visum?: string; at?: string; /** aus einem automatischen Ergebnis übernommen (nicht vom Prüfer bearbeitet) */ auto?: boolean }
+export interface AreaProcedures { items?: Record<string, ProcedureState>; custom?: { id: string; text: string }[]; removed?: string[] }
+export interface AreaStatus { status: AreaState; at: string; visum: string }
 
 export interface Review {
   decisions: ReviewDecisions;
@@ -50,6 +75,8 @@ const fmt = (iso: string) => iso.slice(0, 10).split('-').reverse().join('.');
 
 /** Wendet die Entscheide auf eine Kopie des Ergebnisses an (Status, Zuordnung, Kennzahlen). */
 export function applyReview(res: RunResult, d: ReviewDecisions): RunResult & { review: Review } {
+  // Vom Prüfer verschobene Konten: neue Gruppe für Register, Excel und Prüfgebiete
+  res = { ...res, accounts: applyGroupOverrides(res.accounts, d.groupOverrides) };
   const results: AccountResult[] = res.match.results.map(r => ({ ...r, reasons: [...r.reasons], candidates: [...r.candidates] }));
   const byNumber = new Map(results.map(r => [r.accountNumber, r]));
   const manual = new Map<string, 'akzeptiert' | 'zugeordnet'>();
@@ -214,17 +241,30 @@ export async function placeReviewed(
       });
     }
   }
+  // Beilagen zu Analysen: fortlaufend je Registerbuchstabe <Buchstabe>.100.1, .100.2 … (immer als Kopie)
+  const attachCount = new Map<string, number>();
+  const placeAttachment = async (letter: string, f: { id: string; name: string; path: string }, docId: string): Promise<string | null> => {
+    let content: Buffer;
+    try { content = await readFile(f.path); } catch { return null; } // Datei inzwischen verschoben/gelöscht
+    const n = (attachCount.get(letter) ?? 0) + 1;
+    attachCount.set(letter, n);
+    const register = letter ? `${letter}.100.${n}` : `Beilage ${n}`;
+    const target = `${letter ? `${letter}.100.${n}` : `Beilage_${n}`}_${f.name}`;
+    plans.push({ docId, absPath: f.path, relPath: target, sha256: '', assigned: true, targetName: target, generated: true, content });
+    return register;
+  };
   // Vertiefte Prüfung Forderungen: Fälligkeitsanalyse als eigener Nachweis (z. B. E.5_Analyse_Fälligkeit.xlsx)
   const rcv = decisions.analyses?.receivables;
   if (rcv) {
     const { receivablesFor } = await import('./analysis/receivables.js');
     const { agingWorkbook } = await import('./report/agingExcel.js');
-    const r = receivablesFor(res, rcv);
+    // dieselbe Zuordnung wie in der Durchsicht (App), damit Nachweis und Anzeige übereinstimmen
+    const r = receivablesFor(res, rcv, rcv.assigned);
     if (r.aging) {
       const { agingPptx } = await import('./report/agingPptx.js');
       const letter = decisions.groupLetters?.A12?.trim() ?? '';
-      const used = [...registers.values()].filter(x => letter && x.startsWith(`${letter}.`)).length;
-      const stem = `${letter ? `${letter}.${used + 1}_` : ''}Analyse_Fälligkeit`;
+      // Analyse des Prüfgebiets: feste Registernummer 100 (kollidiert nie mit den Belegen 1, 2, …)
+      const stem = `${letter ? `${letter}.100_` : ''}Analyse_Fälligkeit`;
       const meta = {
         mandate: res.input.mandate, closingDate: res.input.closingDate!, sourceFile: r.filename ?? '', balanceChf: r.balanceChf,
         balanceAccounts: r.balanceAccounts, findings: rcv.findings, visum: rcv.visum, note: rcv.note, letter: letter || undefined,
@@ -242,17 +282,49 @@ export async function placeReviewed(
     const r = fixedAssetsFor(res, fa);
     if (r.available && r.rows.length) {
       const letter = (decisions.groupLetters?.A21 || decisions.groupLetters?.A22 || '').trim();
-      const used = [...registers.values()].filter(x => letter && x.startsWith(`${letter}.`)).length;
-      const name = `${letter ? `${letter}.${used + 1}_` : ''}Analyse_Anlagespiegel.xlsx`;
+      const name = `${letter ? `${letter}.100_` : ''}Analyse_Anlagespiegel.xlsx`;
       plans.push({ docId: 'analyse:anlagen', absPath: '', relPath: name, sha256: '', assigned: true, targetName: name, generated: true,
         content: await fixedAssetsWorkbook(r, { mandate: res.input.mandate, closingDate: res.input.closingDate ?? '', findings: fa.findings, note: fa.note, visum: fa.visum, sources: res.ledger.sources }) });
     }
   }
+  // Rechnungsabgrenzungen: Vorjahresvergleich als Nachweis (Register der aktiven Rechnungsabgrenzungen, falls vergeben)
+  const acr = decisions.analyses?.accruals;
+  if (acr && res.ledger) {
+    const { accrualsFor } = await import('./analysis/accruals.js');
+    const { accrualsWorkbook } = await import('./report/accrualsExcel.js');
+    const r = accrualsFor(res, acr);
+    if (r.available && r.accounts.length) {
+      const letter = (decisions.groupLetters?.A15 || decisions.groupLetters?.P13 || '').trim();
+      const name = `${letter ? `${letter}.100_` : ''}Analyse_Rechnungsabgrenzungen.xlsx`;
+      // Angehängte Dateien: <Buchstabe>.100.1, .100.2 … (immer als Kopie – das Original bleibt beim Prüfer)
+      const atts: { register: string; name: string; account: string; position?: string | null }[] = [];
+      for (const f of acr.attachments ?? []) {
+        const register = await placeAttachment(letter, f, `analyse:abgrenzungen:beilage:${f.id}`);
+        if (register) atts.push({ register, name: f.name, account: f.account, position: f.position ?? null });
+      }
+      plans.push({ docId: 'analyse:abgrenzungen', absPath: '', relPath: name, sha256: '', assigned: true, targetName: name, generated: true,
+        content: await accrualsWorkbook(r, { mandate: res.input.mandate, closingDate: res.input.closingDate ?? '', notes: acr.notes, note: acr.note, visum: acr.visum, attachments: atts }) });
+    }
+  }
+  // Beilagen der übrigen Prüfgebiete (Fokus-Modus „Beilage zur Analyse“)
+  for (const [group, list] of Object.entries(decisions.groupAttachments ?? {})) {
+    const letter = (decisions.groupLetters?.[group] ?? '').trim();
+    for (const f of list) await placeAttachment(letter, f, `analyse:beilage:${group}:${f.id}`);
+  }
+  // Analyse der Erfolgsrechnung: als Nachweis, sobald Bemerkungen erfasst sind
+  const notes = Object.fromEntries(Object.entries(decisions.incomeNotes ?? {}).filter(([, n]) => n.text.trim()));
+  if (Object.keys(notes).length) {
+    const { analyzeIncomeStatement } = await import('./analysis/incomeStatement.js');
+    const { incomeWorkbook } = await import('./report/incomeExcel.js');
+    const name = 'Analyse_Erfolgsrechnung.xlsx';
+    plans.push({ docId: 'analyse:erfolgsrechnung', absPath: '', relPath: name, sha256: '', assigned: true, targetName: name, generated: true,
+      content: await incomeWorkbook(analyzeIncomeStatement(res.accounts, { base: decisions.incomeBase, placements: decisions.incomePlacements, rowBases: decisions.incomeRowBases }), notes, { mandate: res.input.mandate, closingDate: res.input.closingDate ?? '' }) });
+  }
   const placed = await placeFiles(targetDir, plans, mode);
   const by = new Map(placed.map(p => [p.docId, p]));
-  const analysisFiles = (['analyse:forderungen', 'analyse:forderungen:pptx', 'analyse:anlagen'] as const)
+  const analysisFiles = (['analyse:forderungen', 'analyse:forderungen:pptx', 'analyse:anlagen', 'analyse:abgrenzungen', 'analyse:erfolgsrechnung'] as const)
     .map(k => ({ k, x: by.get(k) })).filter(({ x }) => !!x?.newPath)
-    .map(({ k, x }) => ({ kind: k === 'analyse:anlagen' ? 'anlagen' : 'forderungen', name: path.basename(x!.newPath!), path: x!.newPath!, relPath: x!.newRelPath }));
+    .map(({ k, x }) => ({ kind: k === 'analyse:anlagen' ? 'anlagen' : k === 'analyse:erfolgsrechnung' ? 'erfolgsrechnung' : k === 'analyse:abgrenzungen' ? 'abgrenzungen' : 'forderungen', name: path.basename(x!.newPath!), path: x!.newPath!, relPath: x!.newRelPath }));
   return {
     ...res,
     analysisFiles,

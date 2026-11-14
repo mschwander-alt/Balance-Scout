@@ -154,10 +154,11 @@ function DocPanel({ d, accounts, filed, pos, count, prev, next, onAssign }: {
         </span>
       </div>
       <div className="doc-line small">
-        <span>Erkanntes Datum: <strong>{date(d.keyDate ?? null)}</strong></span>
-        <span>Betrag: <strong>{ka ? `CHF ${chf(Math.abs(ka.cents))}` : '–'}</strong></span>
+        <span>{d.relPath}</span>
         <Info label="Details zum Beleg">
           <dl>
+            <dt>Erkanntes Datum</dt><dd>{date(d.keyDate ?? null)}</dd>
+            <dt>Betrag</dt><dd>{ka ? `CHF ${chf(Math.abs(ka.cents))}` : '–'}</dd>
             <dt>Ablageort</dt><dd>{d.relPath}</dd>
             <dt>Belegart</dt><dd>{d.docType}</dd>
             <dt>Grösse</dt><dd>{kb(d.size)}, {d.pageCount} S.</dd>
@@ -166,10 +167,11 @@ function DocPanel({ d, accounts, filed, pos, count, prev, next, onAssign }: {
             <dt>Beträge</dt><dd>{d.amountCount}</dd>
             {filed?.placement?.newPath && <><dt>Abgelegt</dt><dd>{filed.placement.newPath}</dd></>}
           </dl>
+          {isProblem(d) && <p className="warn">{problemText(d)}{d.ocrPages > 0 ? ' – Beträge mit dem Original vergleichen.' : ''}</p>}
         </Info>
+        {isProblem(d) && <WarnIcon text={problemText(d)} />}
         <button className="link small ml-auto" onClick={() => bsb().app.openPath(file)}>Öffnen</button>
       </div>
-      {isProblem(d) && <div className="problem">{problemText(d)}</div>}
       <DocumentPreview file={file} page={ka?.page ?? 1} lineNo={ka?.lineNo ?? 0} bbox={ka?.bbox} line={ka?.line ?? ''} />
 
       <div className="assign-box">
@@ -180,7 +182,7 @@ function DocPanel({ d, accounts, filed, pos, count, prev, next, onAssign }: {
         <input type="search" placeholder="Konto suchen (Nummer, Bezeichnung oder Gruppe)" value={q} onChange={e => setQ(e.target.value)} aria-label="Konto suchen" />
         <div className="acc-pick">
           <table className="grid clickable">
-            <thead><tr><th>Konto</th><th>Bezeichnung</th><th className="num">Vorjahr</th><th className="num">Aktuell</th><th className="num">Δ</th></tr></thead>
+            <thead><tr><th>Konto</th><th>Bezeichnung</th><th className="num">Aktuell</th><th className="num">Vorjahr</th><th className="num">Δ</th></tr></thead>
             <tbody>
               {rows.map(a => {
                 const match = amounts.has(Math.abs(a.balance)) && a.balance !== 0;
@@ -188,8 +190,8 @@ function DocPanel({ d, accounts, filed, pos, count, prev, next, onAssign }: {
                   <tr key={a.accountNumber} data-pick={a.accountNumber} className={pick.includes(a.accountNumber) ? 'selected' : ''} onClick={() => toggle(a.accountNumber)} onDoubleClick={() => onAssign([...new Set([...pick, a.accountNumber])])}>
                     <td><input type="checkbox" checked={pick.includes(a.accountNumber)} readOnly tabIndex={-1} aria-label={`Konto ${a.accountNumber}`} /> {a.accountNumber}</td>
                     <td title={a.accountName}><span className={`dot ${a.status === 'BELEGT' ? 'ok' : a.status === 'PRUEFEN' ? 'warn' : a.status === 'KEIN_NACHWEIS' ? 'bad' : 'grey'}`} /> {a.accountName}{match && <span className="flag match" title="Dieser Saldo kommt im Beleg vor">Betrag passt</span>}</td>
-                    <td className="num">{a.balancePreviousYear === null ? '' : chf(a.balancePreviousYear)}</td>
                     <td className="num">{chf(a.balance)}</td>
+                    <td className="num">{a.balancePreviousYear === null ? '' : chf(a.balancePreviousYear)}</td>
                     <td className="num">{a.balancePreviousYear === null ? '' : chf(a.balance - a.balancePreviousYear)}</td>
                   </tr>
                 );

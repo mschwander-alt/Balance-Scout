@@ -3,6 +3,7 @@ import { readFile, readdir, stat } from 'node:fs/promises';
 import path from 'node:path';
 import Papa from 'papaparse';
 import type { LocalOcr } from './ocr.js';
+import { loadPdfjs, pdfjsOptions } from './pdfjsAssets.js';
 
 /** Position auf der Seite, relativ zur Seitengrösse (0–1), Ursprung oben links */
 export interface BBox {
@@ -22,6 +23,18 @@ export interface EvidenceLine {
   confidence?: number;
   /** Lage der Zeile auf der Seite (PDF und Texterkennung), für die Vorschau */
   bbox?: BBox;
+  /**
+   * Tabellen (Excel, CSV): Zellen in ihrer Spaltenposition, leere Zellen als ''.
+   * `text` enthält nur die nicht leeren Zellen – Spaltenzuordnungen brauchen diese Positionen.
+   */
+  cells?: string[];
+}
+
+/** Zellen einer Tabellenzeile: Positionen erhalten, leere Zellen am Ende weglassen */
+function rowCells(raw: string[]): string[] {
+  const c = [...raw];
+  while (c.length && !c[c.length - 1]) c.pop();
+  return c;
 }
 
 export type ReadStatus = 'ok' | 'partial' | 'unreadable' | 'unsupported' | 'error';
@@ -147,12 +160,12 @@ export async function readDocument(absPath: string, relPath: string, ctx: ReadCo
 
 // ---------------------------------------------------------------- PDF
 async function readPdf(buf: Buffer, doc: EvidenceDocument, ctx: ReadContext): Promise<void> {
-  const { getDocumentProxy, renderPageAsImage, createIsomorphicCanvasFactory } = await import('unpdf');
+  const { getDocumentProxy, renderPageAsImage, createIsomorphicCanvasFactory } = await loadPdfjs();
   doc.method = 'pdf';
   // Zeichenfläche ausdrücklich aus Node (@napi-rs/canvas): pdf.js hält sich im Electron-Hintergrundprozess
   // sonst für einen Browser und scheitert beim Rendern von Scan-Seiten.
   const CanvasFactory = await createIsomorphicCanvasFactory(() => import('@napi-rs/canvas'));
-  const pdf = await getDocumentProxy(new Uint8Array(buf), { CanvasFactory } as never);
+  const pdf = await getDocumentProxy(new Uint8Array(buf), { CanvasFactory, ...pdfjsOptions() } as never);
   doc.pageCount = pdf.numPages;
   const minChars = ctx.minCharsPerPage ?? 40;
   const maxOcr = ctx.maxOcrPages ?? 30;
@@ -269,10 +282,10 @@ async function readXls(buf: Buffer, doc: EvidenceDocument): Promise<void> {
     doc.pageLabels[page] = `Blatt '${name}'`;
     const rows = XLSX.utils.sheet_to_json<unknown[]>(ws, { header: 1, raw: true, blankrows: false });
     rows.forEach((row, i) => {
-      const cells = row
-        .map(c => (typeof c === 'number' ? numberText(c) : c instanceof Date ? dateText(c) : c === null || c === undefined ? '' : String(c).trim()))
-        .filter(Boolean);
-      if (cells.length) doc.lines.push({ page, lineNo: i + 1, text: cells.join(' | '), source: 'text-layer' });
+      // sheet_to_json liefert für leere Zellen Löcher im Array – Array.from macht daraus undefined
+      const all = rowCells(Array.from(row, c => (typeof c === 'number' ? numberText(c) : c instanceof Date ? dateText(c) : c === null || c === undefined ? '' : String(c).trim())));
+      const cells = all.filter(Boolean);
+      if (cells.length) doc.lines.push({ page, lineNo: i + 1, text: cells.join(' | '), source: 'text-layer', cells: all });
     });
   }
   doc.pageCount = page;
@@ -290,8 +303,9 @@ function readCsv(buf: Buffer, doc: EvidenceDocument): void {
   doc.pageCount = 1;
   const res = Papa.parse<string[]>(decodeText(buf), { delimiter: '', skipEmptyLines: true });
   res.data.forEach((r, i) => {
-    const cells = r.map(c => c.trim()).filter(Boolean);
-    if (cells.length) doc.lines.push({ page: 1, lineNo: i + 1, text: cells.join(' | '), source: 'text-layer' });
+    const all = rowCells(r.map(c => c.trim()));
+    const cells = all.filter(Boolean);
+    if (cells.length) doc.lines.push({ page: 1, lineNo: i + 1, text: cells.join(' | '), source: 'text-layer', cells: all });
   });
 }
 

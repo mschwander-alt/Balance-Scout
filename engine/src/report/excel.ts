@@ -3,6 +3,7 @@ import { mkdir, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import type { RunResult, DocumentSummary } from '../run.js';
 import type { AccountResult } from '../domain/matching/engine.js';
+import { areaOverview, AREA_STATE_LABEL } from '../analysis/areas.js';
 
 const BLUE = 'FF0F5EA8';
 const GREEN_HDR = 'FF1D7A46';
@@ -18,7 +19,7 @@ const STATUS_LABEL: Record<string, string> = {
 const FILL: Record<string, string> = {
   Belegt: 'FFE5F4EA', Prüfen: 'FFFFF4DC', 'Kein Nachweis': 'FFFDE8E7', Nullsaldo: 'FFEEF0F3', 'Nicht im Umfang': 'FFEEF0F3',
   Bestätigt: 'FFE5F4EA', Abweichung: 'FFFDE8E7', Offen: 'FFFFF4DC', 'Nicht anwendbar': 'FFEEF0F3',
-  Zugeordnet: 'FFE5F4EA', 'Nicht zugeordnet': 'FFFDE8E7', 'Nicht relevant': 'FFEEF0F3',
+  Zugeordnet: 'FFE5F4EA', 'Nicht zugeordnet': 'FFFDE8E7', 'Nicht relevant': 'FFEEF0F3', erledigt: 'FFE5F4EA', 'in Arbeit': 'FFFFF4DC', offen: 'FFEEF0F3',
 };
 const FLAG_TEXT: Record<string, string> = {
   SIGN_CONFLICT: 'Vorzeichen prüfen',
@@ -190,7 +191,7 @@ export async function writeExcelReport(res: RunResult, filePath: string): Promis
   ov.getCell(`B${r}`).value = res.documents.filter(d => d.doc.ocrPages > 0).length;
   for (const f of res.analysisFiles ?? []) {
     r++;
-    ov.getCell(`A${r}`).value = f.kind === 'forderungen' ? 'Vertiefte Prüfung Forderungen L+L' : f.kind === 'anlagen' ? 'Vertiefte Prüfung Sachanlagen (Anlagespiegel)' : 'Analyse';
+    ov.getCell(`A${r}`).value = f.kind === 'forderungen' ? 'Vertiefte Prüfung Forderungen L+L' : f.kind === 'anlagen' ? 'Vertiefte Prüfung Sachanlagen (Anlagespiegel)' : f.kind === 'erfolgsrechnung' ? 'Analyse Erfolgsrechnung (Vorjahresvergleich)' : f.kind === 'abgrenzungen' ? 'Rechnungsabgrenzungen (Vorjahresvergleich)' : 'Analyse';
     ov.getCell(`B${r}`).value = f.relPath ? { text: f.name, hyperlink: f.relPath } : f.name;
   }
   r += 2;
@@ -217,6 +218,50 @@ export async function writeExcelReport(res: RunResult, filePath: string): Promis
   ov.mergeCells(`A${r}:C${r}`);
   ov.getRow(r).height = 32;
   ov.getCell('B6').numFmt = DATE;
+
+  // ---------------- Prüfgebiete: Status, Visum, Feststellungen (Inhaltsverzeichnis der Prüfung) ----------------
+  if (res.review) {
+    const pa = wb.addWorksheet('Prüfgebiete', { pageSetup: { orientation: 'landscape', paperSize: 9, fitToPage: true, fitToWidth: 1, fitToHeight: 0 } });
+    header(pa, [
+      { name: 'Register', width: 9 }, { name: 'Prüfgebiet', width: 40 }, { name: 'Konten', width: 8 }, { name: 'Saldo Vorjahr CHF', width: 16 }, { name: 'Saldo Stichtag CHF', width: 16 },
+      { name: 'Abdeckung', width: 11 }, { name: 'Vertiefte Prüfung / Referenz', width: 24 }, { name: 'Status', width: 12 }, { name: 'Visum', width: 8 }, { name: 'Datum', width: 11 },
+      { name: 'Offene Feststellungen', width: 12 }, { name: 'Feststellungen / Notiz zur Prüfungshandlung', width: 70 },
+    ]);
+    const rows = areaOverview(res.accounts.map(a => ({
+      accountNumber: a.accountNumber, groupCode: a.groupCode, category: a.category, balance: a.balanceCurrentYear, balancePreviousYear: a.balancePreviousYear,
+      status: res.byAccount.get(`${a.accountNumber}#${a.rowIndex}`)?.status ?? 'NICHT_IM_UMFANG',
+    })), res.review.decisions);
+    let row = 1;
+    rows.forEach(x => {
+      row++;
+      pa.getRow(row).values = [
+        x.letter || '–', x.name, x.accounts, x.py / 100, x.cy / 100, x.coverage, x.analysis ?? '–', AREA_STATE_LABEL[x.status], x.visum || null, isoToDate(x.at?.slice(0, 10) ?? null),
+        x.findings.filter(f => f.status === 'offen').length || null,
+        x.findings.map(f => `${f.status === 'erledigt' ? '☑' : '☐'} ${f.text}`).join('\n') || null,
+      ];
+      pa.getCell(row, 4).numFmt = CHF; pa.getCell(row, 5).numFmt = CHF; pa.getCell(row, 6).numFmt = '0%'; pa.getCell(row, 10).numFmt = DATE;
+      pa.getCell(row, 12).alignment = { wrapText: true, vertical: 'top' };
+      pa.getRow(row).alignment = { vertical: 'top' };
+      pa.getCell(row, 12).alignment = { wrapText: true, vertical: 'top' };
+      pa.getRow(row).font = { bold: true };
+      pa.getRow(row).eachCell(c => (c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF1F4F8' } }));
+      // Prüfungshandlungen der Position
+      for (const h of x.procedures) {
+        row++;
+        pa.getRow(row).values = [null, `${h.done ? '☑' : '☐'} ${h.text}`, null, null, null, null, h.ref || null, h.done ? 'erledigt' : 'offen', h.visum || null, null, null, h.note || null];
+        pa.getCell(row, 2).alignment = { wrapText: true, vertical: 'top', indent: 1 };
+        pa.getCell(row, 12).alignment = { wrapText: true, vertical: 'top' };
+        pa.getRow(row).alignment = { vertical: 'top' };
+        pa.getRow(row).outlineLevel = 1;
+      }
+    });
+    colorRule(pa, `H2:H${Math.max(row, 2)}`, ['erledigt', 'in Arbeit', 'offen']);
+    pa.properties.outlineProperties = { summaryBelow: false, summaryRight: false };
+    const done = rows.filter(x => x.status === 'erledigt').length;
+    r += 2;
+    ov.getCell(`A${r}`).value = 'Prüfgebiete erledigt';
+    ov.getCell(`B${r}`).value = { text: `${done} von ${rows.length} (offene Feststellungen: ${rows.reduce((s, x) => s + x.findings.filter(f => f.status === 'offen').length, 0)})`, hyperlink: "#'Prüfgebiete'!A1" };
+  }
 
   // ---------------- Saldenabstimmung ----------------
   const ws = wb.addWorksheet(S, { pageSetup: { orientation: 'landscape', paperSize: 9, fitToPage: true, fitToWidth: 1, fitToHeight: 0 } });
@@ -266,7 +311,7 @@ export async function writeExcelReport(res: RunResult, filePath: string): Promis
       ws.getCell(row, 18).value = isoToDate(who.at.slice(0, 10));
     }
     ws.getCell(row, 19).value = b ? rv?.registers.get(b.documentId) ?? null : null;
-    ws.getCell(row, 20).value = a.groupName ? `${a.groupName}${a.groupSource === 'bezeichnung' ? ' (aus Bezeichnung)' : ''}` : null;
+    ws.getCell(row, 20).value = a.groupName ? `${a.groupName}${a.groupSource === 'bezeichnung' ? ' (aus Bezeichnung)' : a.groupSource === 'manuell' ? ` (vom Prüfer verschoben, automatisch: ${a.autoGroup?.name ?? 'ohne Gruppe'})` : ''}` : null;
     // Fremdwährung (aus dem Kontoblatt): Abgleich in Fremdwährung, Bewertung zum Stichtagskurs
     const fx = res.accountLedger?.[a.accountNumber];
     const isFx = !!fx && fx.currency !== 'CHF';

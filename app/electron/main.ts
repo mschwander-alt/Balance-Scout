@@ -161,7 +161,7 @@ function allowPreviewFor(result: unknown): void {
 function createWindow(): void {
   win = new BrowserWindow({
     width: 1400, height: 900, minWidth: 1050, minHeight: 680, show: false, title: 'Balance Scout',
-    icon: res('build', 'icon.png'), backgroundColor: '#f6f7f9',
+    icon: res('build', 'icon.png'), backgroundColor: settings().theme === 'light' ? '#f4f6f8' : '#0b1015',
     webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false, sandbox: true, spellcheck: true },
   });
   win.setMenuBarVisibility(false);
@@ -248,7 +248,7 @@ function registerIpc(): void {
     const o: TbPreviewOptions = opts && 'mapping' in opts && typeof (opts as { headerRowIndex?: number }).headerRowIndex === 'number' ? { mapping: opts as TbPreview['detected'] } : ((opts ?? {}) as TbPreviewOptions);
     return call<TbPreview>({
       type: 'previewTrialBalance', paths: Array.isArray(p) ? p : [p], signConvention: sign, mapping: o.mapping ?? undefined,
-      mappings: o.mappings ?? undefined, accountDigits: o.accountDigits ?? undefined, ocr: { langPath: tessdata() },
+      mappings: o.mappings ?? undefined, accountDigits: o.accountDigits ?? undefined, skipZeroBalances: o.skipZeroBalances || undefined, partRoles: o.partRoles ?? undefined, ocr: { langPath: tessdata() },
     });
   });
   ipcMain.handle('engine:run', async (_e, input: JobInput) => {
@@ -322,6 +322,38 @@ function registerIpc(): void {
     const r = await dialog.showSaveDialog(win!, { title: 'Anlagespiegel speichern', defaultPath: path.join(saved?.input?.targetDir ?? app.getPath('documents'), suggestedName), filters: [{ name: 'Excel', extensions: ['xlsx'] }] });
     if (r.canceled || !r.filePath) return null;
     await call<unknown>({ type: 'fixedAssets', snapshotPath: userFile(`snapshot-${id}.json`), ...params, exportPath: r.filePath });
+    shell.showItemInFolder(r.filePath);
+    return r.filePath;
+  });
+  // Weitere Analysen (Erfolgsrechnung, Rechnungsabgrenzungen): Anzeige bzw. Export als Excel
+  const ANALYSES: Record<string, string> = { income: 'Analyse Erfolgsrechnung speichern', accruals: 'Rechnungsabgrenzungen speichern' };
+  ipcMain.handle('review:analysis', (_e, id: string, type: string, params: Record<string, unknown>) => {
+    if (!ANALYSES[type]) throw new Error(`Unbekannte Analyse: ${type}`);
+    if (!existsSync(userFile(`snapshot-${id}.json`))) throw new Error('Analysedaten fehlen – bitte die Prüfung erneut starten.');
+    return call<unknown>({ ...params, type, snapshotPath: userFile(`snapshot-${id}.json`) });
+  });
+  // Fokus-Modus: vom Prüfer hochgeladener Nachweis – gelesen (auch Scan), in die Prüfung aufgenommen, für die Vorschau freigegeben
+  ipcMain.handle('review:addDocument', async (_e, id: string, filePath: string) => {
+    if (!existsSync(userFile(`snapshot-${id}.json`))) throw new Error('Analysedaten fehlen – bitte die Prüfung erneut starten.');
+    const doc = await call<{ absPath: string }>({ type: 'addDocument', snapshotPath: userFile(`snapshot-${id}.json`), path: filePath, ocr: { langPath: tessdata() } });
+    const saved = readJson<{ documents?: unknown[] } & Record<string, unknown> | null>(`result-${id}.json`, null);
+    if (saved) writeJson(`result-${id}.json`, { ...saved, documents: [...(saved.documents ?? []), doc] });
+    previewAllowed.add(path.resolve(doc.absPath));
+    return doc;
+  });
+  // Reiter „Kontoblatt“: Kontoblatt eines Kontos; die Datei wird für die Vorschau freigegeben
+  ipcMain.handle('review:ledgerAccount', async (_e, id: string, accountNumber: string) => {
+    if (!existsSync(userFile(`snapshot-${id}.json`))) throw new Error('Analysedaten fehlen – bitte die Prüfung erneut starten.');
+    const r = await call<{ sourcePath?: string | null }>({ type: 'ledgerAccount', snapshotPath: userFile(`snapshot-${id}.json`), accountNumber });
+    if (r.sourcePath) previewAllowed.add(path.resolve(r.sourcePath));
+    return r;
+  });
+  ipcMain.handle('review:exportAnalysis', async (_e, id: string, type: string, params: Record<string, unknown>, suggestedName: string) => {
+    if (!ANALYSES[type]) throw new Error(`Unbekannte Analyse: ${type}`);
+    const saved = readJson<{ input?: JobInput } | null>(`result-${id}.json`, null);
+    const r = await dialog.showSaveDialog(win!, { title: ANALYSES[type], defaultPath: path.join(saved?.input?.targetDir ?? app.getPath('documents'), suggestedName), filters: [{ name: 'Excel', extensions: ['xlsx'] }] });
+    if (r.canceled || !r.filePath) return null;
+    await call<unknown>({ ...params, type, snapshotPath: userFile(`snapshot-${id}.json`), exportPath: r.filePath });
     shell.showItemInFolder(r.filePath);
     return r.filePath;
   });
