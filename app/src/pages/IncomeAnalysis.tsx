@@ -1,4 +1,5 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
+import type { AutoResults } from '../procedureAuto';
 import { bsb } from '../bridge';
 import { chf } from '../format';
 import { AutoTextarea, Modal, Spinner, useToast } from '../components/ui';
@@ -14,14 +15,21 @@ const SECTION_GROUP: Record<string, string | null> = { ertrag: 'E30', material: 
  * Analyse der Erfolgsrechnung: Staffel nach KMU-Kontenrahmen mit Margen, Relationszahlen zu einer wählbaren Bezugsgrösse,
  * Vorjahresvergleich, Bemerkungen und Verschieben von Konten per Drag & Drop (mit automatischem Scrollen).
  */
-export function IncomeAnalysisView({ historyId, decisions, update, visum, closingDate, onMoveGroup }: {
+export function IncomeAnalysisView({ historyId, decisions, update, visum, closingDate, onMoveGroup, onSummary }: {
   historyId: string; decisions: ReviewDecisions; update: (fn: (d: ReviewDecisions) => ReviewDecisions) => void; visum: string; closingDate: string | null;
   /** Konto in eine Gruppe des KMU-Kontenrahmens verschieben (null = automatische Gruppe) */
   onMoveGroup: (accountNumber: string, groupCode: string | null, quiet?: boolean) => void;
+  /** Ergebnis für die Prüfungshandlungen (analytischer Vorjahresvergleich) */
+  onSummary?: (s: AutoResults) => void;
 }) {
   const toast = useToast();
   const [a, setA] = useState<IncomeAnalysis | null>(null);
   const [open, setOpen] = useState<Set<string>>(new Set());
+  useEffect(() => {
+    if (!a || !onSummary) return;
+    const commented = Object.values(decisions.incomeNotes ?? {}).filter(n => n.text.trim()).length;
+    onSummary({ 'er-analyse': { done: true, note: `Staffel mit Margen und Vorjahresvergleich erstellt${commented ? `, ${commented} Bemerkung${commented > 1 ? 'en' : ''} erfasst` : ''}`, ref: 'Analyse ER' } });
+  }, [a, decisions.incomeNotes, onSummary]);
   const [drag, setDrag] = useState<string | null>(null);
   const [over, setOver] = useState<string | null>(null);
   const [pickBase, setPickBase] = useState(false);

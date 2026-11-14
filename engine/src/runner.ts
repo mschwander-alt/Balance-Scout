@@ -119,7 +119,10 @@ export type SerializedResult = ReturnType<typeof serializeResult>;
 async function handle(req: Request): Promise<unknown> {
   if (req.type === 'previewTrialBalance') return previewTrialBalance(req);
   if (req.type === 'preview') return renderPreview(req.absPath, req.page);
-  if (req.type === 'groups') return { groups: KMU_GROUPS.map(g => ({ code: g.code, name: g.name, category: g.category, subcategory: g.subcategory })), letters: defaultGroupLetters(), general: { code: 'ALLG', name: 'Allgemeine Prüfungen (Belege ohne Konto)', account: '@allgemein' } };
+  if (req.type === 'groups') {
+    const { DEFAULT_PROCEDURES, GENERIC_PROCEDURES } = await import('./analysis/procedures.js');
+    return { procedures: DEFAULT_PROCEDURES, genericProcedures: GENERIC_PROCEDURES, groups: KMU_GROUPS.map(g => ({ code: g.code, name: g.name, category: g.category, subcategory: g.subcategory })), letters: defaultGroupLetters(), general: { code: 'ALLG', name: 'Allgemeine Prüfungen (Belege ohne Konto)', account: '@allgemein' } };
+  }
   if (req.type === 'fixedAssets') {
     // vom Prüfer verschobene Konten (Gruppe) gelten auch für die Prüfgebiete
     const snap = await loadSnapshot(req.snapshotPath);

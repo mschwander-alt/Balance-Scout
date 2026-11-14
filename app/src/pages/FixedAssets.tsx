@@ -1,4 +1,5 @@
 import { Fragment, useEffect, useState } from 'react';
+import { fixedAssetsAuto, type AutoResults } from '../procedureAuto';
 import { bsb } from '../bridge';
 import { chf, parseChf } from '../format';
 import { AutoTextarea, Modal, Spinner, WarnIcon, useToast } from '../components/ui';
@@ -8,7 +9,11 @@ const CLS: [MoveClass, string][] = [['zugang', 'Zugang'], ['abgang', 'Abgang'], 
 const pct = (x: number | null) => (x === null ? '–' : `${(x * 100).toFixed(1)} %`);
 
 /** Prüfgebiet Sachanlagen: Anlagespiegel aus den Kontoblättern, Abschreibungen vs. ESTV-Normalsätze */
-export function FixedAssets({ historyId, decisions, update }: { historyId: string; decisions: ReviewDecisions; update: (fn: (d: ReviewDecisions) => ReviewDecisions) => void }) {
+export function FixedAssets({ historyId, decisions, update, refLetter = '', onSummary }: {
+  historyId: string; decisions: ReviewDecisions; update: (fn: (d: ReviewDecisions) => ReviewDecisions) => void;
+  /** Ergebnis für die Prüfungshandlungen (Anlagespiegel abgestimmt) */
+  refLetter?: string; onSummary?: (s: AutoResults) => void;
+}) {
   const toast = useToast();
   const saved = decisions.analyses?.fixedAssets;
   const [params, setParams] = useState<FixedAssetsDecision>(saved ?? { findings: [] });
@@ -21,6 +26,7 @@ export function FixedAssets({ historyId, decisions, update }: { historyId: strin
   const [additionsOf, setAdditionsOf] = useState<string | null>(null);
   // neue manuelle Buchung (je aufgeklapptem Konto)
   const [neu, setNeu] = useState({ date: '', text: '', amount: '', cls: 'zugang' as MoveClass });
+  useEffect(() => { if (r && onSummary) onSummary(fixedAssetsAuto(r, refLetter ? `${refLetter}.100` : '')); }, [r, refLetter, onSummary]);
 
   useEffect(() => {
     setBusy(true);

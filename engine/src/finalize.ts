@@ -31,6 +31,8 @@ export interface ReviewDecisions {
   groupFindings?: Record<string, { text: string; status: 'offen' | 'erledigt'; at?: string; visum?: string }[]>;
   /** Status je Prüfgebiet (Gruppencode, „ER“ = Erfolgsrechnung): offen / in Arbeit / erledigt mit Visum */
   areaStatus?: Record<string, AreaStatus>;
+  /** Prüfungshandlungen je Prüfgebiet: Erledigt, Notiz/Ergebnis, Referenz, Visum; eigene Handlungen; ausgeblendete Empfehlungen */
+  procedures?: Record<string, AreaProcedures>;
   /** Konto (Nummer) -> vom Prüfer gewählte Gruppe (Code); Belege und Register folgen dem Konto */
   groupOverrides?: GroupOverrides;
   /** Vertiefte Prüfungen (Prüfgebiete) */
@@ -51,6 +53,8 @@ export interface ReviewDecisions {
 }
 
 export type AreaState = 'offen' | 'in_arbeit' | 'erledigt';
+export interface ProcedureState { done: boolean; note: string; ref?: string; visum?: string; at?: string; /** aus einem automatischen Ergebnis übernommen (nicht vom Prüfer bearbeitet) */ auto?: boolean }
+export interface AreaProcedures { items?: Record<string, ProcedureState>; custom?: { id: string; text: string }[]; removed?: string[] }
 export interface AreaStatus { status: AreaState; at: string; visum: string }
 
 export interface Review {

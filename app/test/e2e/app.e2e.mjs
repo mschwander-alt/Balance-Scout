@@ -42,6 +42,21 @@ const showLog = async () => {
 const page = await app.firstWindow();
 page.setDefaultTimeout(30_000);
 await page.setViewportSize({ width: 1400, height: 900 });
+// Navigation: Schritt 1 Abstimmung (Bilanz / Erfolgsrechnung), Werkzeuge-Menü, Schritt 2 Fokus-Prüfung je Position
+const toAbstimmung = async () => {
+  await page.locator('.steps .step').first().click();
+  if (await page.locator('.tool-head').count()) await page.getByRole('button', { name: '← zurück zur Abstimmung' }).click();
+};
+const tool = async name => {
+  await page.getByRole('button', { name: '⋯ Werkzeuge' }).click();
+  await page.getByRole('menuitem', { name: new RegExp(`^${name}`) }).click();
+};
+const exam = async code => {
+  await toAbstimmung();
+  await page.getByRole('tab', { name: code === 'ER' ? 'Erfolgsrechnung' : 'Bilanz', exact: true }).click();
+  await page.locator(code === 'ER' ? '[data-pruefung]' : `tr.group-row[data-gruppe="${code}"] [data-pruefung]`).first().click({ timeout: 10_000 }).catch(async e => { await page.screenshot({ path: `${shots}-debug-exam.png` }); throw e; });
+  await page.locator('.exam').waitFor();
+};
 await page.screenshot({ path: `${shots}-1-start.png` });
 step('App gestartet');
 
@@ -77,7 +92,7 @@ step('Prüfung gestartet');
 await page.getByText(/Belege lesen|Saldobilanz lesen|Unterlagen suchen/).first().waitFor({ timeout: 10_000 }).catch(() => {});
 await page.screenshot({ path: `${shots}-3-lauf.png` });
 await Promise.race([
-  page.getByRole('button', { name: 'Abschliessen …' }).waitFor({ timeout: Number(process.env.RUN_TIMEOUT ?? 180000) }),
+  page.locator('.steps').waitFor({ timeout: Number(process.env.RUN_TIMEOUT ?? 180000) }),
   page.getByText(/konnte nicht abgeschlossen werden|unerwartet beendet/).waitFor({ timeout: Number(process.env.RUN_TIMEOUT ?? 180000) }).then(() => { throw new Error('Prüfung abgebrochen'); }),
 ]).catch(async e => { await page.screenshot({ path: `${shots}-err.png` }); await showLog(); throw e; });
 step('Analyse abgeschlossen – Durchsicht');
@@ -129,16 +144,17 @@ assert.equal(await page.locator('.preview-panel .hl-box').count(), 0);
 await page.getByText('zur Fundstelle').click();
 await page.locator('.preview-panel .hl-box').waitFor();
 step('Seitenwechsel und zurück zur Fundstelle');
-await page.getByRole('tab', { name: 'Belegverzeichnis' }).click();
+await tool('Belegverzeichnis');
 await page.getByRole('button', { name: /^Alle \(/ }).click();
 await page.locator('tr[data-beleg="Kasse/IMG_4471.jpg"]').waitFor();
 await page.screenshot({ path: `${shots}-6-belege.png` });
-await page.getByRole('tab', { name: 'Diagnosebericht' }).click();
+await tool('Diagnosebericht');
 assert.match(await page.locator('pre.diag').innerText(), /DIAGNOSEBERICHT/);
 
 // ---------------- Durchsicht: akzeptieren, Notiz, Belege zuordnen ----------------
-await page.getByRole('tab', { name: 'Erfolgsrechnung' }).click();
-// Analyse (Standard): Staffel mit Margen, Jahresgewinn = Total der Kontenansicht; Bemerkung erfassen
+await exam('ER');
+await page.locator('.exam-pos.active', { hasText: 'Erfolgsr' }).waitFor();
+// Fokus-Prüfung der Erfolgsrechnung: Analyse (Standard): Staffel mit Margen, Jahresgewinn = Total der Kontenansicht; Bemerkung erfassen
 await page.locator('table.income tr[data-inc="R:gewinn"]').waitFor();
 const histId = readdirSync(userData).find(f => f.startsWith('result-')).slice(7, -5);
 const inc = await page.evaluate(id => window.bsb.review.analysis(id, 'income', {}), histId);
@@ -147,7 +163,7 @@ assert.equal(inc.rows.find(r => r.key === 'R:gewinn').cy, inc.check.total);
 await page.locator('table.income tr[data-inc="S:personal"] ~ tr.inc-sub').first().locator('td').nth(1).click();
 await page.getByLabel('Bemerkung Bruttoergebnis nach Material- und Warenaufwand').fill('Marge stabil');
 await page.getByLabel('Bemerkung Bruttoergebnis nach Material- und Warenaufwand').press('Enter');
-await page.getByText('1 Bemerkung erfasst').waitFor();
+await page.locator('.exam-top-body').getByText('1 Bemerkung erfasst').waitFor();
 // Langer Kommentar bricht um (Feld wächst mit)
 const longNote = page.getByLabel('Bemerkung Betriebsertrag');
 const h0 = await longNote.evaluate(e => e.getBoundingClientRect().height);
@@ -162,8 +178,9 @@ assert.equal((await page.locator('table.income tr[data-inc="U:personal/lohn"] td
 // Drag & Drop in der Analyse: Raumaufwand (6000) in den Personalaufwand ziehen, Jahresgewinn unverändert, dann zurücksetzen
 const gewinn0 = await page.locator('table.income tr[data-inc="R:gewinn"] td.cur').innerText();
 await page.locator('table.income tr[data-inc="U:betrieb/raum"] td').nth(1).click();
+await page.locator('table.income tr[data-inc="S:personal"]').evaluate(e => { const b = e.closest('.exam-top-body'); b.scrollTop += e.getBoundingClientRect().top - b.getBoundingClientRect().top - 60; });
 await page.locator('table.income tr[data-inc="6000"]').dragTo(page.locator('table.income tr[data-inc="S:personal"]'));
-await page.locator('table.income tr[data-inc="6000"] .flag.moved').waitFor();
+await page.locator('table.income tr[data-inc="6000"] .flag.moved').waitFor({ timeout: 8000 }).catch(async e => { console.log('DEBUG', await page.locator('table.income tr[data-inc="6000"]').count(), await page.locator('table.income tr[data-inc="6000"]').innerText().catch(()=>'-'), await page.locator('table.income tr[data-inc="S:personal"]').innerText()); await page.screenshot({ path: `${shots}-debug-dnd.png` }); throw e; });
 assert.equal(await page.locator('table.income tr[data-inc="R:gewinn"] td.cur').innerText(), gewinn0);
 await page.locator('table.income tr[data-inc="S:personal"]', { hasText: "-208'400.00" }).waitFor(); // Neuberechnung abwarten
 await page.screenshot({ path: `${shots}-5g-er-analyse.png` });
@@ -180,7 +197,7 @@ const own = await page.locator('table.income tr[data-inc="6800"] td.pct-own').fi
 assert.match(own, /7\.8 %[\s\S]*v\. Übriger betriebl/, `eigene Bezugsgrösse: ${own}`);
 assert.equal((await page.locator('table.income tr[data-inc="S:abschreibungen"] td.pct').first().innerText()).trim(), '-0.4 %', 'übrige Zeilen beim Betriebsertrag');
 // Kopfzeile bleibt beim Scrollen stehen
-const iw = page.locator('.table-wrap:has(table.income)');
+const iw = page.locator('.exam-top-body');
 await iw.evaluate(e => { e.scrollTop = 400; });
 const [wrapTop, headTop] = await Promise.all([iw.evaluate(e => e.getBoundingClientRect().top), page.locator('table.income thead th').first().evaluate(e => e.getBoundingClientRect().top)]);
 assert.ok(Math.abs(headTop - wrapTop) <= 2, `Kopfzeile eingefroren (${headTop} vs ${wrapTop})`);
@@ -189,7 +206,11 @@ await iw.evaluate(e => { e.scrollTop = 0; });
 step(`ER-Analyse: Bezugsgrösse je Zeile (6800 ${own.split('\n')[0]} v. Übriger betrieblicher Aufwand), Kopfzeile eingefroren`);
 step('ER-Analyse: Bezugsgrösse Lohnaufwand = 100 %, Konto per Drag & Drop verschoben und zurückgesetzt, Kommentar bricht um');
 step(`Erfolgsrechnung-Analyse: Staffel bis Jahresgewinn CHF ${inc.check.total / 100}, Bemerkung erfasst`);
-await page.getByRole('tab', { name: 'Konten', exact: true }).click();
+// Analytische Prüfungshandlung wird aus der Analyse abgehakt
+await page.locator('table.proc tr[data-handlung="analyse"] .auto-tag').waitFor();
+assert.ok(await page.locator('table.proc tr[data-handlung="analyse"] input[type=checkbox]').isChecked(), 'ER-Analyse hakt die analytische Handlung ab');
+await toAbstimmung();
+await page.getByRole('tab', { name: 'Erfolgsrechnung', exact: true }).click();
 assert.equal(await page.locator('table.konten.er tr[data-konto]').count(), 5, 'Erfolgsrechnung: 5 Konten');
 await page.locator('table.konten.er tr.total-row', { hasText: 'Jahres' }).waitFor();
 await page.screenshot({ path: `${shots}-5f-erfolgsrechnung.png` });
@@ -251,7 +272,7 @@ assert.ok(scrolled > 50, `Tabelle scrollt beim Ziehen (${scrolled} px)`);
 assert.equal(await page.locator('tr[data-konto="1000"] .flag.moved').count(), 0, 'abgebrochenes Ziehen verschiebt nichts');
 step(`Auto-Scroll beim Ziehen: ${scrolled} px`);
 // Belege ohne Zuordnung: einen Beleg einem Konto ohne Nachweis zuordnen, übrige als nicht relevant
-await page.getByRole('tab', { name: 'Belegverzeichnis' }).click();
+await tool('Belegverzeichnis');
 await page.getByRole('button', { name: /Ohne Zuordnung/ }).click();
 const open0 = await page.locator('tr[data-beleg]').count();
 assert.ok(open0 >= 2, 'es gibt Belege ohne Zuordnung');
@@ -275,6 +296,7 @@ for (let i = 0; i < 30 && (await page.locator('tr[data-beleg]').count()) > 0; i+
   await page.locator(`tr[data-beleg="${r}"]`).waitFor({ state: 'detached' });
 }
 assert.equal(await page.locator('tr[data-beleg]').count(), 0, 'alle Belege haben eine Zuordnung');
+await toAbstimmung();
 assert.match(await kz('BELEGT'), /12 belegt/);
 assert.match(await kz('belege'), /20 \/ 20 Belege zugeordnet/);
 step(`${open0} Belege zugeordnet bzw. als nicht relevant markiert`);
@@ -284,50 +306,45 @@ const savedDec = JSON.parse(readFileSync(readdirSync(userData).filter(f => f.sta
 assert.equal(Object.keys(savedDec.accepted).length, 1);
 assert.ok(Object.keys(savedDec.assignments).length >= 2);
 
-// ---------------- Gruppen-Arbeitsbereich: Klick auf die Gruppenzeile ----------------
+// ---------------- Fokus-Prüfung: Flüssige Mittel – Lead Schedule und Prüfungshandlungen ----------------
+await toAbstimmung();
 await page.getByRole('tab', { name: 'Bilanz', exact: true }).click();
-await page.locator('tr.group-row[data-gruppe="A10"]').click();
-const gp = page.locator('aside.group-panel');
-await gp.waitFor();
-assert.match(await gp.locator('h3').innerText(), /Flüssige Mittel/);
-const nGp = await gp.locator('tr[data-gruppenkonto]').count();
-assert.ok(nGp >= 2, `Konten in der Gruppe: ${nGp}`);
-await gp.getByRole('radio', { name: 'erledigt' }).click();
-await gp.getByText('Visum MS').waitFor();
-await gp.getByLabel('Neue Feststellung').fill('Bankbestätigung UBS per Stichtag nachfordern');
-await gp.getByLabel('Neue Feststellung').press('Enter');
-await gp.locator('.finding', { hasText: 'Bankbestätigung UBS' }).waitFor();
-await page.locator('tr.group-row[data-gruppe="A10"] [data-areastatus="erledigt"]').waitFor();
-await page.screenshot({ path: `${shots}-6b-gruppe.png` });
-// Konto aus der Gruppe öffnen, Esc führt zurück zur Gruppe, nochmals Esc schliesst
-await gp.locator('tr[data-gruppenkonto]').first().click();
-await page.locator('aside.preview-panel:not(.group-panel)').waitFor();
-await page.keyboard.press('Escape');
-await gp.waitFor();
-await page.keyboard.press('Escape');
-await gp.waitFor({ state: 'detached' });
-// Zuklappen über den Pfeil öffnet keinen Arbeitsbereich
-await page.getByRole('button', { name: 'Flüssige Mittel zuklappen' }).click();
-assert.equal(await gp.count(), 0);
-await page.getByRole('button', { name: 'Flüssige Mittel aufklappen' }).click();
-step(`Gruppen-Arbeitsbereich: ${nGp} Konten, Status erledigt mit Visum, Feststellung erfasst`);
+assert.equal(await page.locator('tr.group-row[data-gruppe="A10"] [data-pruefung]').innerText(), 'Prüfen →');
+await exam('A10');
+const ex = page.locator('.exam');
+await ex.locator('.exam-pos.active', { hasText: 'Flüssige Mittel' }).waitFor();
+const nLead = await ex.locator('.lead tr[data-lead]').count();
+assert.ok(nLead >= 2, `Lead Schedule: ${nLead} Konten`);
+await ex.locator('.exam-account .preview-panel h3').waitFor();
+// automatischer Vorschlag aus dem Belegstatus, dann eigene Eingaben
+await ex.locator('table.proc tr[data-handlung="bank"] .auto-tag').waitFor();
+assert.match(await ex.locator('table.proc tr[data-handlung="bank"] textarea').inputValue(), /Konten (mit Nachweis )?belegt/);
+await ex.getByLabel('erledigt: Kassenbestand per Stichtag mit Kassenprotokoll oder Kassabuch belegen').check();
+const kNote = ex.getByLabel('Notiz: Kassenbestand per Stichtag mit Kassenprotokoll oder Kassabuch belegen');
+await kNote.fill('Kassensturz per 31.12. vorhanden, Bestand stimmt');
+await kNote.blur();
+await ex.getByLabel('Referenz: Kassenbestand per Stichtag mit Kassenprotokoll oder Kassabuch belegen').fill('B.1');
+await ex.getByLabel('Eigene Prüfungshandlung').fill('Festgeldkonten mit Bankbestätigung abstimmen');
+await ex.getByLabel('Eigene Prüfungshandlung').press('Enter');
+await ex.locator('table.proc tr', { hasText: 'Festgeldkonten mit Bankbestätigung abstimmen' }).waitFor();
+await ex.getByLabel('Handlung entfernen: Konten in Fremdwährung zum Stichtagskurs (z. B. ESTV-Kursliste) umgerechnet').click();
+await ex.getByRole('button', { name: /1 ausgeblendete Empfehlung/ }).waitFor();
+await ex.getByRole('button', { name: 'Position abschliessen ✓' }).click();
+await ex.getByRole('button', { name: '✓ Geprüft MS' }).waitFor();
+await ex.locator('.exam-pos.active .ok-text').waitFor();
+// Konto wechseln über den Lead Schedule
+const lead2 = await ex.locator('.lead tr[data-lead]').nth(1).getAttribute('data-lead');
+await ex.locator(`.lead tr[data-lead="${lead2}"]`).click();
+await ex.locator('.exam-account .preview-panel h3', { hasText: lead2 }).waitFor();
+await page.screenshot({ path: `${shots}-6b-fokus-pruefung.png` });
+// zurück: Status in der Gruppenzeile, Fortschritt im Kopf
+await ex.getByRole('button', { name: '⇤ zur Abstimmung' }).click();
+assert.equal(await page.locator('tr.group-row[data-gruppe="A10"] [data-pruefung]').innerText(), '✓ geprüft MS');
+assert.match(await page.locator('.head-progress').innerText(), /1\s+von \d+ Positionen geprüft/);
+step(`Fokus-Prüfung Flüssige Mittel: ${nLead} Konten, Handlungen abgehakt, eigene Handlung, Position abgeschlossen`);
 
-// ---------------- Prüfgebiete: Übersicht, danach Forderungen L+L – Fälligkeitsanalyse ----------------
-await page.getByRole('tab', { name: 'Prüfgebiete' }).click();
-const ovA10 = page.locator('table.area-overview tr[data-gebiet="A10"]');
-await ovA10.waitFor();
-assert.equal(await ovA10.locator('select').inputValue(), 'erledigt');
-assert.match(await ovA10.innerText(), /MS[\s\S]*1 offen/);
-await page.getByLabel('Status Forderungen aus Lieferungen und Leistungen').selectOption('in_arbeit');
-assert.equal(await page.locator('.area-kpis .warn strong').first().innerText(), '1');
-assert.ok(await page.locator('table.area-overview tr[data-gebiet="ER"]').count() === 1, 'Erfolgsrechnung als Prüfgebiet');
-await page.screenshot({ path: `${shots}-6c-pruefgebiete.png` });
-// Klick auf die Zeile → Bilanz mit Gruppen-Arbeitsbereich
-await ovA10.locator('td').nth(1).click();
-await page.locator('aside.group-panel h3', { hasText: 'Flüssige Mittel' }).waitFor();
-await page.getByRole('tab', { name: 'Prüfgebiete' }).click();
-await page.locator('.area-item', { hasText: 'Forderungen aus Lieferungen' }).click();
-step('Übersicht Prüfgebiete: Status setzbar, Klick führt zur Gruppe');
+// ---------------- Fokus-Prüfung Forderungen: Fälligkeitsanalyse ----------------
+await exam('A12');
 // Nur Belege, die Forderungskonten zugeordnet sind, stehen zur Auswahl; die Analyse startet erst auf Knopfdruck
 await page.locator('.pick-line', { hasText: 'OP_Debitoren' }).waitFor();
 assert.equal(await page.locator('.recon').count(), 0, 'Analyse darf nicht automatisch laufen');
@@ -357,8 +374,8 @@ assert.equal(await page.locator('.pick-line', { hasText: 'andere Gruppe' }).coun
 await page.locator('.recon', { hasText: /87'640\.20[\s\S]*✓ abgestimmt/ }).waitFor();
 step('Kunden durchsuchbar und sortierbar, Abstimmungskonto aus allen Konten');
 await page.locator('table.kunden tr[data-kunde="Meier AG"]').click();
-await page.locator('.preview-panel .viewer').waitFor();
-await page.locator('.preview-panel tr.hl-row').first().waitFor({ timeout: 20_000 });
+await page.locator('.exam-top-body .preview-panel .viewer').waitFor();
+await page.locator('.exam-top-body .preview-panel tr.hl-row').first().waitFor({ timeout: 20_000 });
 await page.screenshot({ path: `${shots}-8-pruefgebiete.png` });
 await page.getByRole('tab', { name: /Feststellungen/ }).click();
 await page.locator('.note-field textarea').fill('Delkredere pauschal 5 % – angemessen.');
@@ -368,7 +385,7 @@ await page.locator('.finding', { hasText: 'Meier AG' }).waitFor();
 step('Prüfgebiet Forderungen: OP-Liste abgestimmt, Kunden, Vorschau, Feststellung');
 
 // ---------------- Abschliessen ----------------
-await page.getByRole('button', { name: 'Abschliessen …' }).click();
+await page.locator('.steps .step').nth(2).click();
 await page.getByRole('button', { name: 'Ablegen und Excel erstellen' }).click();
 await page.getByText('Excel-Dokumentation öffnen').waitFor({ timeout: 120_000 });
 step('Abgeschlossen');
@@ -384,8 +401,9 @@ assert.equal(excel.length, 1);
   assert.match(await z.file('xl/workbook.xml').async('string'), /name="Übersicht"[\s\S]*name="Prüfgebiete"/);
   const strings = await z.file('xl/sharedStrings.xml')?.async('string') ?? '';
   const sheets = await Promise.all(Object.keys(z.files).filter(f => /^xl\/worksheets\/sheet\d+\.xml$/.test(f)).map(f => z.file(f).async('string')));
-  assert.ok((strings + sheets.join('')).includes('Bankbestätigung UBS per Stichtag nachfordern'), 'Feststellung im Blatt Prüfgebiete');
-  step('Excel: Blatt „Prüfgebiete“ mit Status und Feststellungen');
+  assert.ok((strings + sheets.join('')).includes('Kassensturz per 31.12. vorhanden, Bestand stimmt'), 'Notiz zur Prüfungshandlung im Blatt Prüfgebiete');
+  assert.ok((strings + sheets.join('')).includes('Festgeldkonten mit Bankbestätigung abstimmen'), 'eigene Prüfungshandlung im Excel');
+  step('Excel: Blatt „Prüfgebiete“ mit Prüfungshandlungen, Notizen und eigener Handlung');
 }
 assert.equal(unassigned.length, 0);
 assert.ok(assigned.filter(f => /^[A-Z]+\d*\.\d+_/.test(f)).length >= 12, 'Dateinamen mit Register');
@@ -397,7 +415,7 @@ const ubs = assigned.find(f => /^B\.\d+_Bank_UBS_Kontoauszug\.pdf$/.test(f));
 assert.ok(ubs, 'Bankauszug mit Register B');
 assert.ok(readFileSync(path.join(target, '01_Zugeordnet', ubs)).length > readFileSync(path.join(FIX, 'Kunde_Upload', 'Bank', 'UBS', 'Kontoauszug.pdf')).length, 'Notizseite vorangestellt');
 assert.ok(existsSync(path.join(FIX, 'Kunde_Upload', 'Bank', 'UBS', 'Kontoauszug.pdf')), 'Original muss beim Kopieren bleiben');
-await page.getByRole('tab', { name: 'Diagnosebericht' }).click();
+await tool('Diagnosebericht');
 assert.match(await page.locator('pre.diag').innerText(), /DIAGNOSEBERICHT/);
 
 // Fremdwährung: Kontoblätter + Kurse -> Abgleich in EUR/USD, Bewertung
@@ -436,10 +454,9 @@ assert.equal(fb.expense.diff, 0);
 // Oberfläche: Prüfgebiet Mobile Sachanlagen
 await page.getByRole('button', { name: 'Übersicht', exact: true }).click();
 await page.locator('.hist > div', { hasText: 'Muster Maschinen AG' }).first().getByRole('button', { name: /Durchsicht fortsetzen|Ergebnis/ }).click();
-await page.getByRole('tab', { name: 'Prüfgebiete' }).click();
-await page.locator('.area-item', { hasText: 'Mobile Sachanlagen' }).click();
+await exam('A21');
 await page.locator('.pick-line', { hasText: 'Wertberichtigung zu 1500' }).waitFor();
-await page.getByRole('button', { name: 'Anlagespiegel erstellen' }).click();
+await page.getByRole('button', { name: 'Anlagespiegel erstellen', exact: true }).click();
 await page.locator('tr[data-anlage="1500"]', { hasText: '+ 1501 WB' }).waitFor();
 assert.match(await page.locator('.expense-check').innerText(), /✓ stimmt überein/);
 await page.locator('tr[data-anlage="1500"]').click();
@@ -459,12 +476,14 @@ await page.getByLabel('Manuelle Buchung löschen Werkzeugmaschine (nicht aktivie
 await page.locator('table.anlagen td[title="manuell erfasst (Prüfer)"]', { hasText: 'Werkzeugmaschine (nicht aktiviert)' }).waitFor({ state: 'detached' });
 step(`Anlagespiegel: manuelle Buchung erfasst (Zugänge ${addTotal0} → ${addTotal1}) und gelöscht`);
 // Reiter „Kontoblatt“ im Konto-Panel: springt an den Anfang des Kontos, Abgleich zur Saldobilanz, Buchung anklicken, Reiter bleibt beim Blättern
+await toAbstimmung();
 await page.getByRole('tab', { name: 'Bilanz', exact: true }).click();
 await page.locator('tr[data-konto="1500"]').click();
 await page.getByRole('tab', { name: 'Kontoblatt' }).click();
 await page.locator('.ledger-kpis .ok', { hasText: 'Saldobilanz ✓' }).waitFor({ timeout: 20_000 });
 await page.locator('.ledger-view .viewer').waitFor();
 await page.locator('.ledger-view .hl-row, .ledger-view .hl-box').first().waitFor({ timeout: 20_000 });
+await page.getByRole('button', { name: /^Buchungen \(/ }).click();
 const nPost = await page.locator('.ledger-postings tbody tr[data-buchung]').count();
 assert.ok(nPost >= 3, `Buchungen im Kontoblatt: ${nPost}`);
 await page.locator('.ledger-postings tbody tr[data-buchung="2"]').click();
@@ -476,8 +495,7 @@ await page.locator('[role="tab"][aria-selected="true"]', { hasText: 'Kontoblatt'
 await page.locator('.ledger-kpis').waitFor();
 await page.getByRole('tab', { name: 'Beleg', exact: true }).click();
 step(`Reiter Kontoblatt: Konto 1500 am Kontoanfang, ${nPost} Buchungen, Abgleich ✓, Reiter bleibt beim Blättern`);
-await page.getByRole('tab', { name: 'Prüfgebiete' }).click();
-await page.locator('.area-item', { hasText: 'Mobile Sachanlagen' }).click();
+await exam('A21');
 await page.locator('table.anlagen').waitFor();
 step('Business Central: Wertberichtigungen zugeordnet, Brutto-Anlagespiegel, Abschreibungen = Aufwand');
 // Zugänge anklicken → Zugangsliste (Summe = Total Zugänge)
@@ -498,9 +516,8 @@ const rap = await page.evaluate(F => window.bsb.engine.run({
 }), RAP);
 await page.getByRole('button', { name: 'Übersicht', exact: true }).click();
 await page.locator('.hist > div', { hasText: 'Muster Treuhand AG' }).first().getByRole('button', { name: /Durchsicht fortsetzen|Ergebnis/ }).click();
-await page.getByRole('tab', { name: 'Prüfgebiete' }).click();
-await page.locator('.area-item', { hasText: 'Aktive Rechnungsabgrenzungen' }).click();
-await page.getByRole('button', { name: 'Vorjahresvergleich erstellen' }).click();
+await exam('A15');
+await page.getByRole('button', { name: 'Vorjahresvergleich erstellen', exact: true }).click();
 const acr = page.locator('[data-abgrenzung="1300"]');
 await acr.waitFor();
 assert.match(await acr.locator('tfoot').innerText(), /139'514\.45[\s\S]*104'811\.00/);
@@ -527,35 +544,29 @@ await page.screenshot({ path: `${shots}-9d-abgrenzungen-manuell.png` });
 step('Rechnungsabgrenzungen manuell: Position korrigiert, Position hinzugefügt, Beleg angehängt');
 step('Rechnungsabgrenzungen: Vorjahresvergleich 139\'514.45 / 104\'811.00, 12 Positionen zugeordnet, 2 neu');
 
-// Fokus-Modus: Bilanz eingeklappt – links Prüfung der Gruppe, rechts das Konto, unten Notiz/Feststellungen/Dateien
-await page.getByRole('tab', { name: 'Bilanz', exact: true }).click();
-await page.locator('tr[data-konto="1300"]').click();
-await page.getByRole('button', { name: 'Fokus-Modus', exact: true }).click();
-const focusL = page.locator('.focus-layout');
-await focusL.waitFor();
-await focusL.locator('.focus-rail .rail-acc.active', { hasText: '1300' }).waitFor();
-await focusL.locator('.focus-analysis', { hasText: 'Vorjahresvergleich der Abgrenzungen' }).waitFor();
-await focusL.locator('.preview-panel h3', { hasText: '1300' }).waitFor();
-await page.getByLabel('Neue Feststellung').fill('Police Swiss Life 2026 nachfordern');
-await page.getByLabel('Neue Feststellung').press('Enter');
-await focusL.locator('.finding', { hasText: 'Police Swiss Life 2026 nachfordern' }).waitFor();
-await page.getByLabel('Notiz zum Konto').fill('Abgrenzungen mit Kontoblatt abgestimmt.');
-await page.getByRole('tab', { name: /Nachweise & Dateien/ }).click();
+// Fokus-Prüfung Abgrenzungen: Handlungen aus der Analyse, Dateien (Beilage, Nachweis), Vollbild, Position wechseln
+const ex2 = page.locator('.exam');
+await ex2.locator('table.proc tr[data-handlung="vj"] .auto-tag').waitFor();
+assert.match(await ex2.locator('table.proc tr[data-handlung="vj"] textarea').inputValue(), /Positionen, Vorjahr/);
+await ex2.getByRole('button', { name: /📎 Dateien/ }).click();
 await page.getByRole('button', { name: 'Beilage anhängen …' }).click();
-await focusL.locator('.file-line', { hasText: 'Beilage Analyse' }).waitFor();
+await page.locator('.files-pop .file-line', { hasText: 'Beilage' }).waitFor();
 await page.getByRole('button', { name: 'Nachweis hochladen …' }).click();
-await focusL.locator('.file-line', { hasText: 'hochgeladen' }).waitFor({ timeout: 30_000 });
+await page.locator('.files-pop .file-line', { hasText: 'Nachweis' }).waitFor({ timeout: 30_000 });
 await page.screenshot({ path: `${shots}-9f-fokus.png` });
-// Blättern in der Kontoleiste: nächstes Konto, Analyse wechselt mit
-await focusL.locator('.focus-rail .rail-acc', { hasText: '2300' }).click();
-await focusL.locator('.preview-panel h3', { hasText: '2300' }).waitFor();
-await page.getByRole('tab', { name: 'Verlauf' }).click();
-await focusL.locator('.history-list').waitFor();
-await page.getByRole('button', { name: '⇥ Bilanz einblenden' }).click();
+await page.locator('.files-pop').getByRole('button', { name: 'Schliessen' }).click();
+await ex2.getByRole('button', { name: '⤢ Vollbild' }).click();
+assert.equal(await ex2.locator('.exam-account').count(), 0, 'Vollbild blendet das Konto aus');
+await ex2.getByRole('button', { name: '⤡ Konto einblenden' }).click();
+await ex2.locator('.exam-pos', { hasText: 'Passive' }).click();
+await ex2.locator('.exam-pos.active', { hasText: 'Passive' }).waitFor();
+await ex2.locator('.exam-account .preview-panel h3', { hasText: '2300' }).waitFor();
+await ex2.getByRole('button', { name: '⇤ zur Abstimmung' }).click();
 await page.locator('table.konten').waitFor();
 const persisted = readFileSync(path.join(userData, `result-${rap.historyId}.json`), 'utf8');
 assert.ok(persisted.includes('Nachweise Prüfer/Police_SwissLife_2026.pdf'), 'hochgeladener Nachweis im Ergebnis gespeichert');
-step('Fokus-Modus: Kontoleiste, Prüfung links, Konto rechts, Feststellung, Notiz, Beilage und Nachweis hochgeladen');
+assert.ok(JSON.parse(persisted).decisions.procedures.A15.items.vj.auto, 'automatisches Ergebnis gespeichert');
+step('Fokus-Prüfung Abgrenzungen: Handlungen aus der Analyse, Beilage und Nachweis hochgeladen, Vollbild, Position gewechselt');
 
 // Bilanz und Erfolgsrechnung getrennt, mit Zwischensummen: Vorschau über die Schnittstelle
 const SPLIT = path.resolve(root, '..', 'engine', 'test', 'fixtures', 'tb_split');

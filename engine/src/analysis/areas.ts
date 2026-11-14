@@ -1,5 +1,6 @@
 import { KMU_GROUPS } from '../domain/trialBalance/accountGroups.js';
 import type { ReviewDecisions, AreaState } from '../finalize.js';
+import { proceduresFor, DEFAULT_PROCEDURES, type ProcedureCatalog } from './procedures.js';
 
 /** Prüfgebiete mit eigener vertiefter Prüfung */
 export const AREA_ANALYSIS: Record<string, string> = {
@@ -16,6 +17,19 @@ export interface AreaRow {
   coverage: number | null;
   analysis: string | null; status: AreaState; visum: string; at: string | null;
   findings: { text: string; status: 'offen' | 'erledigt' }[];
+  /** Prüfungshandlungen (Katalog ohne ausgeblendete, dann eigene) mit Ergebnis */
+  procedures: { id: string; text: string; done: boolean; note: string; ref: string; visum: string; custom: boolean }[];
+}
+
+/** Prüfungshandlungen eines Gebiets mit den Entscheiden der Prüferin / des Prüfers */
+export function areaProcedures(code: string, d: ReviewDecisions, catalog: ProcedureCatalog = DEFAULT_PROCEDURES): AreaRow['procedures'] {
+  const ap = d.procedures?.[code];
+  const removed = new Set(ap?.removed ?? []);
+  const list = [...proceduresFor(code, catalog).filter(x => !removed.has(x.id)).map(x => ({ ...x, custom: false })), ...(ap?.custom ?? []).map(x => ({ ...x, custom: true }))];
+  return list.map(x => {
+    const st = ap?.items?.[x.id];
+    return { id: x.id, text: x.text, done: !!st?.done, note: st?.note ?? '', ref: st?.ref ?? '', visum: st?.visum ?? '', custom: x.custom };
+  });
 }
 
 /**
@@ -23,7 +37,7 @@ export interface AreaRow {
  * Feststellungen aus der Gruppe sowie aus den vertieften Prüfungen (Forderungen, Anlagespiegel).
  * Beträge in Rappen (wie die Konten).
  */
-export function areaOverview(accounts: AreaAccount[], d: ReviewDecisions): AreaRow[] {
+export function areaOverview(accounts: AreaAccount[], d: ReviewDecisions, catalog: ProcedureCatalog = DEFAULT_PROCEDURES): AreaRow[] {
   const rows: AreaRow[] = [];
   const firstFixed = FIXED.find(c => accounts.some(a => a.groupCode === c));
   const make = (code: string, name: string, items: AreaAccount[]): AreaRow => {
@@ -40,7 +54,7 @@ export function areaOverview(accounts: AreaAccount[], d: ReviewDecisions): AreaR
       code, name, letter: (d.groupLetters?.[code] ?? '').trim(), accounts: items.length,
       cy: items.reduce((s, a) => s + a.balance, 0), py: items.reduce((s, a) => s + (a.balancePreviousYear ?? 0), 0),
       coverage: code === 'ER' || !abs ? null : ok / abs, analysis: AREA_ANALYSIS[code] ?? null,
-      status: st?.status ?? 'offen', visum: st?.visum ?? '', at: st?.at ?? null, findings,
+      status: st?.status ?? 'offen', visum: st?.visum ?? '', at: st?.at ?? null, findings, procedures: areaProcedures(code, d, catalog),
     };
   };
   for (const g of KMU_GROUPS) {

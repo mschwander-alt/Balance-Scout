@@ -1,4 +1,5 @@
 import { Fragment, useEffect, useState } from 'react';
+import { accrualsAuto, type AutoResults } from '../procedureAuto';
 import { bsb } from '../bridge';
 import { chf, date, parseChf } from '../format';
 import { AutoTextarea, Spinner, useToast } from '../components/ui';
@@ -12,8 +13,10 @@ const amountText = (c: number) => (c / 100).toFixed(2);
  * Prüfgebiet Rechnungsabgrenzungen: Vorjahresvergleich aus den Kontoblättern (aktive und passive Abgrenzungen),
  * mit manuellen Positionen, Korrekturen und angehängten Belegen (beim Abschluss <Buchstabe>.100.1, .100.2 …).
  */
-export function Accruals({ historyId, decisions, update, closingDate, visum }: {
+export function Accruals({ historyId, decisions, update, closingDate, visum, side, refLetter = '', onSummary }: {
   historyId: string; decisions: ReviewDecisions; update: (fn: (d: ReviewDecisions) => ReviewDecisions) => void; closingDate: string | null; visum?: string;
+  /** Ergebnis für die Prüfungshandlungen der aktiven bzw. passiven Abgrenzungen */
+  side?: 'aktiv' | 'passiv'; refLetter?: string; onSummary?: (s: AutoResults) => void;
 }) {
   const toast = useToast();
   const saved = decisions.analyses?.accruals;
@@ -23,6 +26,7 @@ export function Accruals({ historyId, decisions, update, closingDate, visum }: {
   const [busy, setBusy] = useState(false);
   const [open, setOpen] = useState<string | null>(null);
   const overridesKey = JSON.stringify(decisions.groupOverrides ?? {});
+  useEffect(() => { if (r && started && side && onSummary) onSummary(accrualsAuto(r, refLetter ? `${refLetter}.100` : '', side)); }, [r, started, side, refLetter, onSummary]);
   const calcKey = JSON.stringify([params.accounts, params.classes, params.manual, params.edits]);
   useEffect(() => {
     setBusy(true);

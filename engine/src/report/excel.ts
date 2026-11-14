@@ -224,15 +224,16 @@ export async function writeExcelReport(res: RunResult, filePath: string): Promis
     const pa = wb.addWorksheet('Prüfgebiete', { pageSetup: { orientation: 'landscape', paperSize: 9, fitToPage: true, fitToWidth: 1, fitToHeight: 0 } });
     header(pa, [
       { name: 'Register', width: 9 }, { name: 'Prüfgebiet', width: 40 }, { name: 'Konten', width: 8 }, { name: 'Saldo Vorjahr CHF', width: 16 }, { name: 'Saldo Stichtag CHF', width: 16 },
-      { name: 'Abdeckung', width: 11 }, { name: 'Vertiefte Prüfung', width: 24 }, { name: 'Status', width: 12 }, { name: 'Visum', width: 8 }, { name: 'Datum', width: 11 },
-      { name: 'Offene Feststellungen', width: 12 }, { name: 'Feststellungen', width: 70 },
+      { name: 'Abdeckung', width: 11 }, { name: 'Vertiefte Prüfung / Referenz', width: 24 }, { name: 'Status', width: 12 }, { name: 'Visum', width: 8 }, { name: 'Datum', width: 11 },
+      { name: 'Offene Feststellungen', width: 12 }, { name: 'Feststellungen / Notiz zur Prüfungshandlung', width: 70 },
     ]);
     const rows = areaOverview(res.accounts.map(a => ({
       accountNumber: a.accountNumber, groupCode: a.groupCode, category: a.category, balance: a.balanceCurrentYear, balancePreviousYear: a.balancePreviousYear,
       status: res.byAccount.get(`${a.accountNumber}#${a.rowIndex}`)?.status ?? 'NICHT_IM_UMFANG',
     })), res.review.decisions);
-    rows.forEach((x, i) => {
-      const row = i + 2;
+    let row = 1;
+    rows.forEach(x => {
+      row++;
       pa.getRow(row).values = [
         x.letter || '–', x.name, x.accounts, x.py / 100, x.cy / 100, x.coverage, x.analysis ?? '–', AREA_STATE_LABEL[x.status], x.visum || null, isoToDate(x.at?.slice(0, 10) ?? null),
         x.findings.filter(f => f.status === 'offen').length || null,
@@ -242,8 +243,20 @@ export async function writeExcelReport(res: RunResult, filePath: string): Promis
       pa.getCell(row, 12).alignment = { wrapText: true, vertical: 'top' };
       pa.getRow(row).alignment = { vertical: 'top' };
       pa.getCell(row, 12).alignment = { wrapText: true, vertical: 'top' };
+      pa.getRow(row).font = { bold: true };
+      pa.getRow(row).eachCell(c => (c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF1F4F8' } }));
+      // Prüfungshandlungen der Position
+      for (const h of x.procedures) {
+        row++;
+        pa.getRow(row).values = [null, `${h.done ? '☑' : '☐'} ${h.text}`, null, null, null, null, h.ref || null, h.done ? 'erledigt' : 'offen', h.visum || null, null, null, h.note || null];
+        pa.getCell(row, 2).alignment = { wrapText: true, vertical: 'top', indent: 1 };
+        pa.getCell(row, 12).alignment = { wrapText: true, vertical: 'top' };
+        pa.getRow(row).alignment = { vertical: 'top' };
+        pa.getRow(row).outlineLevel = 1;
+      }
     });
-    colorRule(pa, `H2:H${Math.max(rows.length + 1, 2)}`, ['erledigt', 'in Arbeit', 'offen']);
+    colorRule(pa, `H2:H${Math.max(row, 2)}`, ['erledigt', 'in Arbeit', 'offen']);
+    pa.properties.outlineProperties = { summaryBelow: false, summaryRight: false };
     const done = rows.filter(x => x.status === 'erledigt').length;
     r += 2;
     ov.getCell(`A${r}`).value = 'Prüfgebiete erledigt';

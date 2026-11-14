@@ -6,8 +6,6 @@ export const AREA_ANALYSIS: Record<string, string> = {
   A12: 'Fälligkeitsanalyse', A15: 'Vorjahresvergleich TA', P13: 'Vorjahresvergleich TP',
   A21: 'Anlagespiegel', A22: 'Anlagespiegel', A23: 'Anlagespiegel', ER: 'Analyse mit Margen',
 };
-export const AREA_STATES: [AreaState, string][] = [['offen', 'offen'], ['in_arbeit', 'in Arbeit'], ['erledigt', 'erledigt']];
-export const areaStateLabel = (s: AreaState) => AREA_STATES.find(x => x[0] === s)![1];
 const FIXED = ['A21', 'A22', 'A23'];
 const isER = (a: { category: string }) => a.category === 'aufwand' || a.category === 'ertrag';
 

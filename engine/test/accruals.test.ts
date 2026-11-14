@@ -168,7 +168,7 @@ describe('Abschluss: Aufstellung <Buchstabe>.100, Anhänge <Buchstabe>.100.1 …
       { id: 'a2', name: 'Vertrag_Abacus.pdf', path: ver, account: '1300' },
       { id: 'a3', name: 'weg.pdf', path: path.join(tmp, 'gibt-es-nicht.pdf'), account: '1300' },
     ] } }, groupAttachments: { P13: [{ id: 'g1', name: 'Mail_Revision.msg', path: mail }] },
-      areaStatus: { A15: { status: 'erledigt', at: '2026-08-01T09:00:00Z', visum: 'MS' } }, groupFindings: { A15: [{ text: 'Police 2026 nachfordern', status: 'offen' }] } }, { targetDir: target, fileMode: 'move', reportDir: tmp });
+      areaStatus: { A15: { status: 'erledigt', at: '2026-08-01T09:00:00Z', visum: 'MS' } }, groupFindings: { A15: [{ text: 'Police 2026 nachfordern', status: 'offen' }] }, procedures: { A15: { items: { vj: { done: true, note: 'alle 12 VJ-Positionen aufgelöst', ref: 'Q.100', visum: 'MS' } } } } }, { targetDir: target, fileMode: 'move', reportDir: tmp });
     const L = letters.A15 || letters.P13; // wie beim Abschluss: Buchstabe der aktiven, sonst der passiven Abgrenzungen
     const files = (await readdir(path.join(target, '01_Zugeordnet'))).filter(f => f.startsWith(`${L}.100`)).sort();
     expect(files).toEqual([`${L}.100.1_Police_SwissLife.pdf`, `${L}.100.2_Vertrag_Abacus.pdf`, `${L}.100.3_Mail_Revision.msg`, `${L}.100_Analyse_Rechnungsabgrenzungen.xlsx`]);
@@ -190,6 +190,7 @@ describe('Abschluss: Aufstellung <Buchstabe>.100, Anhänge <Buchstabe>.100.1 …
     const rows: string[] = [];
     pa.eachRow(r => rows.push((r.values as unknown[]).slice(1).map(v => (v instanceof Date ? v.toISOString().slice(0, 10) : String(v ?? ''))).join('|')));
     const ta = rows.find(r => r.includes('Aktive Rechnungsabgrenzungen'))!;
+    expect(rows).toContain('|☑ Vorjahresabgrenzungen auf Auflösung im laufenden Jahr prüfen|||||Q.100|erledigt|MS|||alle 12 VJ-Positionen aufgelöst');
     expect(ta).toMatch(/\|Vorjahresvergleich TA\|erledigt\|MS\|2026-08-01\|1\|☐ Police 2026 nachfordern$/);
   }, 60_000);
 });

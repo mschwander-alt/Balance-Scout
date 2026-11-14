@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { bsb } from '../bridge';
 import { chf, date } from '../format';
 import { DocumentPreview } from './DocumentPreview';
-import { Spinner } from './ui';
+import { Info, Spinner } from './ui';
 import type { LedgerAccountView } from '../../electron/shared';
 
 /**
@@ -15,6 +15,7 @@ export function LedgerView({ historyId, accountNumber }: { historyId: string; ac
   const [error, setError] = useState<string | null>(null);
   // gewählte Stelle: null = Kontokopf, sonst Index der Buchung
   const [sel, setSel] = useState<number | null>(null);
+  const [showPostings, setShowPostings] = useState(false);
   useEffect(() => {
     let alive = true;
     setV(null); setError(null); setSel(null);
@@ -31,23 +32,25 @@ export function LedgerView({ historyId, accountNumber }: { historyId: string; ac
   const cur = chfAccount ? '' : `${v.currency} `;
   return (
     <div className="ledger-view">
-      <div className="doc-line small">
-        <span>{v.source} · Konto {v.accountNumber}{v.pages.length ? ` · Seite ${v.pages[0]}${v.pages.length > 1 ? `–${v.pages[v.pages.length - 1]}` : ''}` : ''}</span>
+      <div className="ledger-kpis small">
+        <span className={tbDiff === null ? 'muted' : Math.abs(tbDiff) <= 1 ? 'ok' : 'bad'}>
+          {tbDiff === null ? `Schlusssaldo ${v.closing === null ? '–' : `${cur}${chf(v.closing)}`}` : Math.abs(tbDiff) <= 1 ? 'Saldo = Saldobilanz ✓' : `Saldo ≠ Saldobilanz (Δ ${chf(tbDiff)})`}
+        </span>
+        <Info label="Details zum Kontoblatt"><dl>
+          <dt>Quelle</dt><dd>{v.source}{v.pages.length ? ` · Seite ${v.pages[0]}${v.pages.length > 1 ? `–${v.pages[v.pages.length - 1]}` : ''}` : ''}</dd>
+          <dt>Saldovortrag</dt><dd>{v.opening === null ? '–' : `${cur}${chf(v.opening)}`}</dd>
+          <dt>Soll</dt><dd>{cur}{chf(v.debitTotal)}</dd>
+          <dt>Haben</dt><dd>{cur}{chf(v.creditTotal)}</dd>
+          <dt>Schlusssaldo</dt><dd>{v.closing === null ? '–' : `${cur}${chf(v.closing)}`}</dd>
+          {v.tbBalance !== null && <><dt>Saldobilanz</dt><dd>{chf(v.tbBalance)}</dd></>}
+        </dl></Info>
         {sel !== null && <button className="link small" onClick={() => setSel(null)}>↑ zum Kontoanfang</button>}
         <button className="link small ml-auto" onClick={() => void bsb().app.openPath(v.sourcePath!)}>Kontoblatt öffnen</button>
       </div>
-      <div className="ledger-kpis">
-        <div><span>Saldovortrag</span><strong>{v.opening === null ? '–' : `${cur}${chf(v.opening)}`}</strong></div>
-        <div><span>Soll</span><strong>{cur}{chf(v.debitTotal)}</strong></div>
-        <div><span>Haben</span><strong>{cur}{chf(v.creditTotal)}</strong></div>
-        <div className={tbDiff === null ? '' : Math.abs(tbDiff) <= 1 ? 'ok' : 'bad'}>
-          <span>{tbDiff === null ? 'Schlusssaldo' : Math.abs(tbDiff) <= 1 ? 'Schlusssaldo = Saldobilanz ✓' : `≠ Saldobilanz (Δ ${chf(tbDiff)})`}</span>
-          <strong>{v.closing === null ? '–' : `${cur}${chf(v.closing)}`}</strong>
-        </div>
-      </div>
       {!v.consistent && <div className="problem">Kontoblatt: Saldovortrag + Buchungen ergeben nicht den Schlusssaldo – Lesefehler oder unvollständiges Kontoblatt.</div>}
       <DocumentPreview file={v.sourcePath} page={at.page} lineNo={at.lineNo} bbox={at.bbox} line={at.line} />
-      <div className="ledger-postings">
+      <button className="link small postings-toggle" aria-expanded={showPostings} onClick={() => setShowPostings(x => !x)}>Buchungen ({v.postings.length}) {showPostings ? '▴' : '▾'}</button>
+      {showPostings && <div className="ledger-postings">
         <table className="grid small">
           <thead><tr><th>Datum</th><th>Text</th><th>Gegenkonto</th><th className="num">Betrag</th><th className="num">Saldo</th></tr></thead>
           <tbody>
@@ -60,7 +63,7 @@ export function LedgerView({ historyId, accountNumber }: { historyId: string; ac
             {!v.postings.length && <tr><td colSpan={5} className="muted">Keine Buchungen im Geschäftsjahr.</td></tr>}
           </tbody>
         </table>
-      </div>
+      </div>}
     </div>
   );
 }

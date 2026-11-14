@@ -121,6 +121,7 @@ export interface ReviewDecisions {
   groupFindings?: Record<string, { text: string; status: 'offen' | 'erledigt'; at?: string; visum?: string }[]>;
   /** Status je Prüfgebiet (Gruppencode, „ER“ = Erfolgsrechnung) mit Visum */
   areaStatus?: Record<string, { status: AreaState; at: string; visum: string }>;
+  procedures?: Record<string, AreaProcedures>;
   /** Konto (Nummer) -> vom Prüfer gewählte Gruppe (Code); zugeordnete Belege und Register folgen dem Konto */
   groupOverrides?: Record<string, { groupCode: string; at: string; visum: string }>;
   analyses?: { receivables?: ReceivablesDecision; fixedAssets?: FixedAssetsDecision; accruals?: AccrualsDecision };
@@ -177,7 +178,14 @@ export interface GroupsInfo {
   letters: Record<string, string>;
   /** Allgemeine Prüfungen (Belege ohne Konto) */
   general?: { code: string; name: string; account: string };
+  /** Empfohlene Prüfungshandlungen je Prüfgebiet (Gruppencode, „ER“) und allgemeine für übrige Bilanzpositionen */
+  procedures?: Record<string, ProcedureDef[]>;
+  genericProcedures?: ProcedureDef[];
 }
+export type ProcedureAuto = 'belege' | 'vorjahr' | 'op-abstimmung' | 'op-alter' | 'anlagespiegel' | 'abgrenzungen' | 'er-analyse';
+export interface ProcedureDef { id: string; text: string; auto?: ProcedureAuto }
+export interface ProcedureState { done: boolean; note: string; ref?: string; visum?: string; at?: string; auto?: boolean }
+export interface AreaProcedures { items?: Record<string, ProcedureState>; custom?: { id: string; text: string }[]; removed?: string[] }
 
 export type FilePreview =
   | { kind: 'image'; dataUrl: string; width: number; height: number; page: number; pageCount: number; pageLabel?: string }
