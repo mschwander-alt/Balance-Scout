@@ -598,7 +598,10 @@ function AccountPanel({ a, docs, filedPath, note, accepted, nav, onAccept, onUna
   if (a.status === 'PRUEFEN' || a.status === 'KEIN_NACHWEIS') problems.push(...a.reasons.filter(r => !/Texterkennung|Scan/i.test(r)));
   if (c && c.differenceCents !== 0 && Number.isFinite(c.differenceCents)) problems.push(`Differenz zum Saldo: ${chf(c.differenceCents)}`);
   if (c) problems.push(...c.flags.filter(f => PROBLEM_FLAGS.has(f)).map(f => FLAG_LABEL[f] ?? f));
-  if (doc && doc.ocrPages > 0 && (doc.ocrConfidence ?? 100) < 60) problems.push(`Schlechte Texterkennung (${doc.ocrConfidence} %) – Betrag mit dem Original vergleichen`);
+  // Hinweise zur Lesequalität: nur hinter ⓘ (mit Warnsymbol), nicht als Kasten
+  const readHints: string[] = [];
+  if (doc && doc.ocrPages > 0 && (doc.ocrConfidence ?? 100) < 60) readHints.push(`Schlechte Texterkennung (${doc.ocrConfidence} %) – Betrag mit dem Original vergleichen`);
+  if (doc && doc.status !== 'ok') readHints.push('Beleg nicht vollständig gelesen');
   const fxp = fxProblem(a);
   const uniq = [...new Set(problems)].filter(() => !(a.manual && a.status === 'BELEGT'));
   if (fxp) uniq.push(fxp);
@@ -657,7 +660,9 @@ function AccountPanel({ a, docs, filedPath, note, accepted, nav, onAccept, onUna
             {accepted && <><dt>Akzeptiert</dt><dd>{accepted.visum || '–'}, {date(accepted.at.slice(0, 10))}</dd></>}
           </dl>
           {c && c.reasons.length > 0 && <ul>{c.reasons.map((r, i) => <li key={i}>{r}</li>)}</ul>}
+          {readHints.length > 0 && <ul className="warn">{readHints.map((r, i) => <li key={i}>{r}</li>)}</ul>}
         </Info>
+        {readHints.length > 0 && <WarnIcon text={readHints.join(' · ')} />}
         {file && <button className="link small ml-auto" onClick={() => bsb().app.openPath(filedPath ?? file)}>Beleg öffnen</button>}
       </div>
 

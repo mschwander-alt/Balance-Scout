@@ -154,10 +154,11 @@ function DocPanel({ d, accounts, filed, pos, count, prev, next, onAssign }: {
         </span>
       </div>
       <div className="doc-line small">
-        <span>Erkanntes Datum: <strong>{date(d.keyDate ?? null)}</strong></span>
-        <span>Betrag: <strong>{ka ? `CHF ${chf(Math.abs(ka.cents))}` : '–'}</strong></span>
+        <span>{d.relPath}</span>
         <Info label="Details zum Beleg">
           <dl>
+            <dt>Erkanntes Datum</dt><dd>{date(d.keyDate ?? null)}</dd>
+            <dt>Betrag</dt><dd>{ka ? `CHF ${chf(Math.abs(ka.cents))}` : '–'}</dd>
             <dt>Ablageort</dt><dd>{d.relPath}</dd>
             <dt>Belegart</dt><dd>{d.docType}</dd>
             <dt>Grösse</dt><dd>{kb(d.size)}, {d.pageCount} S.</dd>
@@ -166,10 +167,11 @@ function DocPanel({ d, accounts, filed, pos, count, prev, next, onAssign }: {
             <dt>Beträge</dt><dd>{d.amountCount}</dd>
             {filed?.placement?.newPath && <><dt>Abgelegt</dt><dd>{filed.placement.newPath}</dd></>}
           </dl>
+          {isProblem(d) && <p className="warn">{problemText(d)}{d.ocrPages > 0 ? ' – Beträge mit dem Original vergleichen.' : ''}</p>}
         </Info>
+        {isProblem(d) && <WarnIcon text={problemText(d)} />}
         <button className="link small ml-auto" onClick={() => bsb().app.openPath(file)}>Öffnen</button>
       </div>
-      {isProblem(d) && <div className="problem">{problemText(d)}</div>}
       <DocumentPreview file={file} page={ka?.page ?? 1} lineNo={ka?.lineNo ?? 0} bbox={ka?.bbox} line={ka?.line ?? ''} />
 
       <div className="assign-box">
