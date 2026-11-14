@@ -222,6 +222,8 @@ export interface AppSettings {
   accountDigits: { min: number; max: number } | null;
   /** Geladene Kurslisten (ESTV per 31.12.) je Stichtag */
   fxRateLists: Record<string, FxRateList>;
+  /** Darstellung: dunkel (Standard) oder hell */
+  theme?: 'dark' | 'light';
 }
 
 export interface BsbBridge {

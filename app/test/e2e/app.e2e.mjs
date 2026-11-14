@@ -57,8 +57,17 @@ const exam = async code => {
   await page.locator(code === 'ER' ? '[data-pruefung]' : `tr.group-row[data-gruppe="${code}"] [data-pruefung]`).first().click({ timeout: 10_000 }).catch(async e => { await page.screenshot({ path: `${shots}-debug-exam.png` }); throw e; });
   await page.locator('.exam').waitFor();
 };
+// Darstellung zu Beginn wählbar: hell (gespeichert), Umschalter oben wechselt
+await page.getByRole('radio', { name: '☀ Hell' }).click();
+assert.equal(await page.evaluate(() => document.documentElement.dataset.theme), 'light');
+assert.equal(await page.evaluate(() => getComputedStyle(document.body).backgroundColor), 'rgb(244, 246, 248)');
+await page.getByRole('button', { name: 'Dunkle Darstellung' }).click();
+assert.equal(await page.evaluate(() => document.documentElement.dataset.theme), 'dark');
+await page.getByRole('button', { name: 'Helle Darstellung' }).click();
+await page.waitForTimeout(300);
+assert.equal(JSON.parse(readFileSync(path.join(userData, 'settings.json'), 'utf8')).theme, 'light', 'Darstellung gespeichert');
 await page.screenshot({ path: `${shots}-1-start.png` });
-step('App gestartet');
+step('App gestartet, helle Darstellung gewählt und gespeichert');
 
 await page.getByText('+ Neue Prüfung starten').click();
 await page.getByPlaceholder('z. B. Muster AG').fill('Alpenblick Treuhand AG');

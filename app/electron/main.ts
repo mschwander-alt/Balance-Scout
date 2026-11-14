@@ -161,7 +161,7 @@ function allowPreviewFor(result: unknown): void {
 function createWindow(): void {
   win = new BrowserWindow({
     width: 1400, height: 900, minWidth: 1050, minHeight: 680, show: false, title: 'Balance Scout',
-    icon: res('build', 'icon.png'), backgroundColor: '#0b1015',
+    icon: res('build', 'icon.png'), backgroundColor: settings().theme === 'light' ? '#f4f6f8' : '#0b1015',
     webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false, sandbox: true, spellcheck: true },
   });
   win.setMenuBarVisibility(false);

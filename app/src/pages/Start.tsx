@@ -3,7 +3,7 @@ import { bsb } from '../bridge';
 import type { HistoryEntry } from '../../electron/shared';
 import { date, dateTime, pct } from '../format';
 
-export function Start({ onNew, onOpen }: { onNew: () => void; onOpen: (h: HistoryEntry) => void }) {
+export function Start({ onNew, onOpen, theme, onTheme }: { onNew: () => void; onOpen: (h: HistoryEntry) => void; theme: 'dark' | 'light'; onTheme: (t: 'dark' | 'light') => void }) {
   const [hist, setHist] = useState<HistoryEntry[] | null>(null);
   useEffect(() => void bsb().app.history().then(setHist), []);
   return (
@@ -15,7 +15,16 @@ export function Start({ onNew, onOpen }: { onNew: () => void; onOpen: (h: Histor
           erstellt die Excel-Dokumentation und legt die Belege in <code>01_Zugeordnet</code> / <code>02_Nicht_zugeordnet</code> ab.
           Alles läuft auf diesem PC; es werden keine Daten übertragen.
         </p>
-        <button className="btn btn-primary btn-lg" onClick={onNew}>+ Neue Prüfung starten</button>
+        <div className="row" style={{ justifyContent: 'space-between', flexWrap: 'wrap', gap: 12 }}>
+          <button className="btn btn-primary btn-lg" onClick={onNew}>+ Neue Prüfung starten</button>
+          <div className="row" style={{ gap: 8 }}>
+            <span className="muted small">Darstellung</span>
+            <div className="seg theme-seg" role="radiogroup" aria-label="Darstellung">
+              <button role="radio" aria-checked={theme === 'light'} className={theme === 'light' ? 'active' : ''} onClick={() => onTheme('light')}>☀ Hell</button>
+              <button role="radio" aria-checked={theme === 'dark'} className={theme === 'dark' ? 'active' : ''} onClick={() => onTheme('dark')}>☾ Dunkel</button>
+            </div>
+          </div>
+        </div>
       </div>
       <div className="card">
         <h3>Letzte Prüfungen</h3>
